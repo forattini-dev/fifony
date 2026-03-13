@@ -119,10 +119,13 @@ export async function startApiServer(
       : events;
   };
 
+  const dashboardHtml = indexHtml || fallback;
+
   const apiPlugin = new ApiPlugin({
     port,
     host: "0.0.0.0",
     versionPrefix: false,
+    rootRoute: (c: any) => c.html(dashboardHtml),
     docs: { enabled: true, title: "Symphifo API", version: "1.0.0", description: "Local orchestration API for Symphifo" },
     cors: { enabled: true, origin: "*" },
     logging: { enabled: true, excludePaths: ["/health", "/api/health"] },
@@ -287,8 +290,7 @@ export async function startApiServer(
         return { ok: true, issue };
       },
       "GET /state": async (c: any) => c.redirect("/api/state"),
-      "GET /": async (c: any) => c.html(indexHtml || fallback),
-      "GET /index.html": async (c: any) => c.html(indexHtml || fallback),
+      "GET /index.html": async (c: any) => c.html(dashboardHtml),
       "GET /assets/app.js": async (c: any) => c.body(appJs || "console.log('Dashboard script not found.');", 200, {
         "content-type": "application/javascript; charset=utf-8",
       }),
