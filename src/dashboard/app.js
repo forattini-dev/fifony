@@ -595,7 +595,7 @@ async function loadSessionsForPanel(issueId, panelElementId) {
   if (!panel) return;
 
   try {
-    const data = await fetchJSON(`/issue/${encodeURIComponent(issueId)}/sessions`);
+    const data = await fetchJSON(`/issues/${encodeURIComponent(issueId)}/sessions`);
     let html = "";
 
     if (data.pipeline) {
@@ -662,7 +662,7 @@ async function loadSessionsForIssue(issueId) {
   if (!panel) return;
 
   try {
-    const data = await fetchJSON(`/issue/${encodeURIComponent(issueId)}/sessions`);
+    const data = await fetchJSON(`/issues/${encodeURIComponent(issueId)}/sessions`);
     let html = "";
 
     if (data.pipeline) {
@@ -793,7 +793,7 @@ async function addNote(issueId, target) {
 
   await withLoading(target, async () => {
     try {
-      await post(`/issue/${encodeURIComponent(issueId)}/state`, { state: currentState, reason: note });
+      await post(`/issues/${encodeURIComponent(issueId)}/state`, { state: currentState, reason: note });
       input.value = "";
       showToast("Note added", "success", 2000);
       await loadState();
@@ -916,21 +916,21 @@ function renderEvents(events = []) {
 
 async function setIssueState(issueId, nextState, target) {
   await withLoading(target, async () => {
-    await post(`/issue/${encodeURIComponent(issueId)}/state`, { state: nextState });
+      await post(`/issues/${encodeURIComponent(issueId)}/state`, { state: nextState });
     await loadState();
   });
 }
 
 async function retryIssue(issueId, target) {
   await withLoading(target, async () => {
-    await post(`/issue/${encodeURIComponent(issueId)}/retry`);
+    await post(`/issues/${encodeURIComponent(issueId)}/retry`);
     await loadState();
   });
 }
 
 async function cancelIssue(issueId, target) {
   await withLoading(target, async () => {
-    await post(`/issue/${encodeURIComponent(issueId)}/cancel`);
+    await post(`/issues/${encodeURIComponent(issueId)}/cancel`);
     await loadState();
   });
 }
@@ -1159,7 +1159,7 @@ function wireActions() {
     if (target.id === "batch-retry") {
       const ids = [...selectedIssues];
       for (const id of ids) {
-        try { await post(`/issue/${encodeURIComponent(id)}/retry`); } catch {}
+        try { await post(`/issues/${encodeURIComponent(id)}/retry`); } catch {}
       }
       selectedIssues.clear();
       showToast(`Retried ${ids.length} issues`, "success");
@@ -1167,7 +1167,7 @@ function wireActions() {
     } else if (target.id === "batch-cancel") {
       const ids = [...selectedIssues];
       for (const id of ids) {
-        try { await post(`/issue/${encodeURIComponent(id)}/cancel`); } catch {}
+        try { await post(`/issues/${encodeURIComponent(id)}/cancel`); } catch {}
       }
       selectedIssues.clear();
       showToast(`Cancelled ${ids.length} issues`, "success");

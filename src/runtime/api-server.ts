@@ -1,5 +1,4 @@
 import type {
-  IssueEntry,
   JsonRecord,
   RuntimeEvent,
   RuntimeState,
@@ -9,40 +8,24 @@ import {
   FRONTEND_INDEX,
   FRONTEND_APP_JS,
   FRONTEND_STYLES_CSS,
-  S3DB_RUNTIME_RESOURCE,
-  S3DB_ISSUE_RESOURCE,
-  S3DB_EVENT_RESOURCE,
-  S3DB_AGENT_SESSION_RESOURCE,
-  S3DB_AGENT_PIPELINE_RESOURCE,
-  TERMINAL_STATES,
-  ALLOWED_STATES,
 } from "./constants.ts";
-import { now, toStringValue, normalizeState, readTextOrNull, clamp } from "./helpers.ts";
+import { NATIVE_RESOURCE_CONFIGS } from "./resources/index.ts";
+import { now, readTextOrNull, clamp } from "./helpers.ts";
 import { logger } from "./logger.ts";
 import {
   loadS3dbModule,
   getStateDb,
-  getIssueStateResource,
   getEventStateResource,
   setActiveApiPlugin,
   persistState,
 } from "./store.ts";
 import {
   addEvent,
-  createIssueFromPayload,
   computeCapabilityCounts,
-  handleStatePatch,
-  transition,
 } from "./issues.ts";
-import {
-  getEffectiveAgentProviders,
-  detectAvailableProviders,
-} from "./providers.ts";
-import {
-  loadAgentPipelineSnapshotForIssue,
-  loadAgentSessionSnapshotsForIssue,
-} from "./agent.ts";
+import { detectAvailableProviders } from "./providers.ts";
 import { analyzeParallelizability } from "./scheduler.ts";
+import { setApiRuntimeContext } from "./api-runtime-context.ts";
 
 export async function startApiServer(
   state: RuntimeState,
@@ -60,36 +43,7 @@ export async function startApiServer(
   const stylesCss = readTextOrNull(FRONTEND_STYLES_CSS) ?? "";
 
   const fallback = `<!doctype html><html><body><pre>Unable to load Symphifo dashboard assets.</pre></body></html>`;
-  const findIssue = (issueId: string) =>
-    state.issues.find((c) => c.id === issueId || c.identifier === issueId);
-
-  const issueResource = getIssueStateResource();
   const eventResource = getEventStateResource();
-
-  const listIssues = async (filters: { state?: string; capabilityCategory?: string } = {}): Promise<IssueEntry[]> => {
-    const { state: issueState, capabilityCategory } = filters;
-
-    if (issueResource?.list) {
-      const partition = issueState && capabilityCategory
-        ? "byStateAndCapability"
-        : issueState ? "byState"
-        : capabilityCategory ? "byCapabilityCategory"
-        : null;
-      const partitionValues = issueState && capabilityCategory
-        ? { state: issueState, capabilityCategory }
-        : issueState ? { state: issueState }
-        : capabilityCategory ? { capabilityCategory }
-        : {};
-      const records = await issueResource.list({ partition, partitionValues, limit: 500 });
-      return records.map((record) => record as IssueEntry);
-    }
-
-    return state.issues.filter((issue) => {
-      if (issueState && issue.state !== issueState) return false;
-      if (capabilityCategory && issue.capabilityCategory !== capabilityCategory) return false;
-      return true;
-    });
-  };
 
   const listEvents = async (filters: { issueId?: string; kind?: string; since?: string } = {}): Promise<RuntimeEvent[]> => {
     const { issueId, kind, since } = filters;
@@ -119,22 +73,27 @@ export async function startApiServer(
       : events;
   };
 
-  const resourceConfigs: Record<string, Record<string, unknown>> = {
-    [S3DB_RUNTIME_RESOURCE]: { auth: false, methods: ["GET", "HEAD", "OPTIONS"] },
-    [S3DB_ISSUE_RESOURCE]: { auth: false, methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] },
-    [S3DB_EVENT_RESOURCE]: { auth: false, methods: ["GET", "HEAD", "OPTIONS"] },
-    [S3DB_AGENT_SESSION_RESOURCE]: { auth: false, methods: ["GET", "HEAD", "OPTIONS"] },
-    [S3DB_AGENT_PIPELINE_RESOURCE]: { auth: false, methods: ["GET", "HEAD", "OPTIONS"] },
-  };
+  const resourceConfigs: Record<string, Record<string, unknown>> = Object.fromEntries(
+    NATIVE_RESOURCE_CONFIGS.map((resourceConfig) => [
+      resourceConfig.name,
+      resourceConfig.api ?? {},
+    ]),
+  );
+  const nativeResourceNames = new Set(Object.keys(resourceConfigs));
 
   const existingResources = await (stateDb as { listResources?: () => Promise<Array<{ name: string }>> }).listResources?.();
   for (const item of existingResources || []) {
-    if (typeof item?.name === "string" && item.name.startsWith("symphifo_") && !resourceConfigs[item.name]) {
+    if (
+      typeof item?.name === "string" &&
+      item.name.startsWith("symphifo_") &&
+      !nativeResourceNames.has(item.name)
+    ) {
       resourceConfigs[item.name] = { enabled: false };
     }
   }
 
   const dashboardHtml = indexHtml || fallback;
+  setApiRuntimeContext(state, workflowDefinition);
 
   const apiPlugin = new ApiPlugin({
     port,
@@ -189,64 +148,6 @@ export async function startApiServer(
           kind: typeof kind === "string" && kind ? kind : undefined,
         });
         return { events: events.slice(0, 200) };
-      },
-      "GET /issue/:id/pipeline": async (c: any) => {
-        const issue = findIssue(c.req.param("id"));
-        if (!issue) return c.json({ ok: false, error: "Issue not found" }, 404);
-
-        const providers = getEffectiveAgentProviders(state, issue, workflowDefinition);
-        const pipeline = await loadAgentPipelineSnapshotForIssue(issue, providers);
-        return { ok: true, issueId: issue.id, pipeline };
-      },
-      "GET /issue/:id/sessions": async (c: any) => {
-        const issue = findIssue(c.req.param("id"));
-        if (!issue) return c.json({ ok: false, error: "Issue not found" }, 404);
-
-        const providers = getEffectiveAgentProviders(state, issue, workflowDefinition);
-        const pipeline = await loadAgentPipelineSnapshotForIssue(issue, providers);
-        const sessions = await loadAgentSessionSnapshotsForIssue(issue, providers, pipeline, workflowDefinition);
-        return { ok: true, issueId: issue.id, pipeline, sessions };
-      },
-      "POST /issue/:id/state": async (c: any) => {
-        const issue = findIssue(c.req.param("id"));
-        if (!issue) return c.json({ ok: false, error: "Issue not found" }, 404);
-
-        const payload = await c.req.json() as JsonRecord;
-        try {
-          handleStatePatch(state, issue, payload);
-          await persistState(state);
-          return { ok: true, issue };
-        } catch (error) {
-          return c.json({ ok: false, error: String(error) }, 400);
-        }
-      },
-      "POST /issue/:id/retry": async (c: any) => {
-        const issue = findIssue(c.req.param("id"));
-        if (!issue) return c.json({ ok: false, error: "Issue not found" }, 404);
-
-        if (TERMINAL_STATES.has(issue.state)) {
-          issue.state = "Todo";
-          issue.attempts = Math.max(0, issue.attempts - 1);
-          issue.lastError = undefined;
-          issue.nextRetryAt = undefined;
-          transition(issue, "Todo", "Manual retry requested.");
-        } else {
-          issue.nextRetryAt = undefined;
-          issue.lastError = undefined;
-        }
-
-        addEvent(state, issue.id, "manual", `Manual retry requested for ${issue.id}.`);
-        await persistState(state);
-        return { ok: true, issue };
-      },
-      "POST /issue/:id/cancel": async (c: any) => {
-        const issue = findIssue(c.req.param("id"));
-        if (!issue) return c.json({ ok: false, error: "Issue not found" }, 404);
-
-        transition(issue, "Cancelled", "Manual cancel requested.");
-        addEvent(state, issue.id, "manual", `Manual cancel requested for ${issue.id}.`);
-        await persistState(state);
-        return { ok: true, issue };
       },
       "GET /index.html": async (c: any) => c.html(dashboardHtml),
       "GET /assets/app.js": async (c: any) => c.body(appJs || "console.log('Dashboard script not found.');", 200, {

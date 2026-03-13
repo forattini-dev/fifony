@@ -81,6 +81,10 @@ export type RuntimeMetrics = {
   done: number;
   cancelled: number;
   activeWorkers: number;
+  avgCompletionMs?: number;
+  medianCompletionMs?: number;
+  fastestCompletionMs?: number;
+  slowestCompletionMs?: number;
 };
 
 export type RuntimeState = {
@@ -248,6 +252,8 @@ export type S3dbDatabase = {
     paranoid?: boolean;
     partitions?: Record<string, unknown>;
     asyncPartitions?: boolean;
+    api?: Record<string, unknown>;
+    description?: string;
   }) => Promise<unknown>;
   getResource: (name: string) => Promise<S3dbResource>;
 };

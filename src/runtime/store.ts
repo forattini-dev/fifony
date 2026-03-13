@@ -1,5 +1,4 @@
 import { mkdirSync } from "node:fs";
-import { pathToFileURL } from "node:url";
 import type {
   RuntimeState,
   RuntimeStateRecord,
@@ -13,17 +12,14 @@ import {
   S3DB_DATABASE_PATH,
   S3DB_BUCKET,
   S3DB_KEY_PREFIX,
-  S3DB_RUNTIME_RESOURCE,
-  S3DB_ISSUE_RESOURCE,
-  S3DB_EVENT_RESOURCE,
-  S3DB_AGENT_SESSION_RESOURCE,
-  S3DB_AGENT_PIPELINE_RESOURCE,
   S3DB_RUNTIME_RECORD_ID,
   S3DB_RUNTIME_SCHEMA_VERSION,
 } from "./constants.ts";
 import { now, debugBoot, fail } from "./helpers.ts";
 import { logger } from "./logger.ts";
 import { computeMetrics } from "./issues.ts";
+import { clearApiRuntimeContext } from "./api-runtime-context.ts";
+import { NATIVE_RESOURCE_CONFIGS, NATIVE_RESOURCE_NAMES } from "./resources/index.ts";
 
 let loadedS3dbModule: S3dbModule | null = null;
 let stateDb: S3dbDatabase | null = null;
@@ -90,138 +86,22 @@ export async function initStateStore(): Promise<void> {
   await stateDb.connect();
   debugBoot("initStateStore:connected");
 
-  await stateDb.createResource({
-    name: S3DB_RUNTIME_RESOURCE,
-    attributes: {
-      id: "string|required",
-      schemaVersion: "number|required",
-      trackerKind: "string|required",
-      runtimeTag: "string|optional",
-      updatedAt: "datetime|required",
-      state: "json|required",
-    },
-    behavior: "body-overflow",
-    paranoid: false,
-    timestamps: false,
-  });
+  for (const resourceConfig of NATIVE_RESOURCE_CONFIGS) {
+    await stateDb.createResource(resourceConfig);
+  }
 
-  await stateDb.createResource({
-    name: S3DB_ISSUE_RESOURCE,
-    attributes: {
-      id: "string|required",
-      identifier: "string|required",
-      title: "string|required",
-      description: "string|optional",
-      priority: "number|required",
-      state: "string|required",
-      branchName: "string|optional",
-      url: "string|optional",
-      assigneeId: "string|optional",
-      labels: "json|required",
-      paths: "json|optional",
-      inferredPaths: "json|optional",
-      capabilityCategory: "string|optional",
-      capabilityOverlays: "json|optional",
-      capabilityRationale: "json|optional",
-      blockedBy: "json|required",
-      assignedToWorker: "boolean|required",
-      createdAt: "datetime|required",
-      updatedAt: "datetime|required",
-      history: "json|required",
-      startedAt: "datetime|optional",
-      completedAt: "datetime|optional",
-      attempts: "number|required",
-      maxAttempts: "number|required",
-      nextRetryAt: "datetime|optional",
-      workspacePath: "string|optional",
-      workspacePreparedAt: "datetime|optional",
-      lastError: "string|optional",
-      durationMs: "number|optional",
-      commandExitCode: "number|optional",
-      commandOutputTail: "string|optional",
-    },
-    partitions: {
-      byState: { fields: { state: "string" } },
-      byCapabilityCategory: { fields: { capabilityCategory: "string" } },
-      byStateAndCapability: {
-        fields: { state: "string", capabilityCategory: "string" },
-      },
-    },
-    asyncPartitions: true,
-    behavior: "body-overflow",
-    paranoid: false,
-    timestamps: false,
-  });
-
-  await stateDb.createResource({
-    name: S3DB_EVENT_RESOURCE,
-    attributes: {
-      id: "string|required",
-      issueId: "string|optional",
-      kind: "string|required",
-      message: "string|required",
-      at: "datetime|required",
-    },
-    partitions: {
-      byIssueId: { fields: { issueId: "string" } },
-      byKind: { fields: { kind: "string" } },
-      byIssueIdAndKind: { fields: { issueId: "string", kind: "string" } },
-    },
-    asyncPartitions: true,
-    behavior: "body-overflow",
-    paranoid: false,
-    timestamps: false,
-  });
-
-  await stateDb.createResource({
-    name: S3DB_AGENT_SESSION_RESOURCE,
-    attributes: {
-      id: "string|required",
-      issueId: "string|required",
-      issueIdentifier: "string|required",
-      attempt: "number|required",
-      cycle: "number|required",
-      provider: "string|required",
-      role: "string|required",
-      updatedAt: "datetime|required",
-      session: "json|required",
-    },
-    partitions: {
-      byIssueId: { fields: { issueId: "string" } },
-      byIssueAttempt: { fields: { issueId: "string", attempt: "number" } },
-      byProviderRole: { fields: { provider: "string", role: "string" } },
-    },
-    asyncPartitions: true,
-    behavior: "body-overflow",
-    paranoid: false,
-    timestamps: false,
-  });
-
-  await stateDb.createResource({
-    name: S3DB_AGENT_PIPELINE_RESOURCE,
-    attributes: {
-      id: "string|required",
-      issueId: "string|required",
-      issueIdentifier: "string|required",
-      attempt: "number|required",
-      updatedAt: "datetime|required",
-      pipeline: "json|required",
-    },
-    partitions: {
-      byIssueId: { fields: { issueId: "string" } },
-      byIssueAttempt: { fields: { issueId: "string", attempt: "number" } },
-    },
-    asyncPartitions: true,
-    behavior: "body-overflow",
-    paranoid: false,
-    timestamps: false,
-  });
-
-  runtimeStateResource = await stateDb.getResource(S3DB_RUNTIME_RESOURCE);
-  issueStateResource = await stateDb.getResource(S3DB_ISSUE_RESOURCE);
-  eventStateResource = await stateDb.getResource(S3DB_EVENT_RESOURCE);
-  agentSessionResource = await stateDb.getResource(S3DB_AGENT_SESSION_RESOURCE);
-  agentPipelineResource = await stateDb.getResource(S3DB_AGENT_PIPELINE_RESOURCE);
+  const [
+    runtimeStateResourceName,
+    issueResourceName,
+    eventResourceName,
+    agentSessionResourceName,
+    agentPipelineResourceName,
+  ] = NATIVE_RESOURCE_NAMES;
+  runtimeStateResource = await stateDb.getResource(runtimeStateResourceName);
+  issueStateResource = await stateDb.getResource(issueResourceName);
+  eventStateResource = await stateDb.getResource(eventResourceName);
+  agentSessionResource = await stateDb.getResource(agentSessionResourceName);
+  agentPipelineResource = await stateDb.getResource(agentPipelineResourceName);
   debugBoot("initStateStore:resources-ready");
 }
 
@@ -286,6 +166,7 @@ export async function persistState(state: RuntimeState): Promise<void> {
 }
 
 export async function closeStateStore(): Promise<void> {
+  clearApiRuntimeContext();
   if (activeApiPlugin?.stop) {
     try {
       await activeApiPlugin.stop();
