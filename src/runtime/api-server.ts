@@ -128,7 +128,7 @@ export async function startApiServer(
     rootRoute: (c: any) => c.html(dashboardHtml),
     docs: { enabled: true, title: "Symphifo API", version: "1.0.0", description: "Local orchestration API for Symphifo" },
     cors: { enabled: true, origin: "*" },
-    logging: { enabled: true, excludePaths: ["/health", "/api/health"] },
+    logging: { enabled: true, excludePaths: ["/health"] },
     compression: { enabled: true, threshold: 1024 },
     health: { enabled: true },
     resources: {
@@ -139,24 +139,24 @@ export async function startApiServer(
       [S3DB_AGENT_PIPELINE_RESOURCE]: { auth: false, methods: ["GET", "HEAD", "OPTIONS"] },
     },
     routes: {
-      "GET /api/state": async () => ({
+      "GET /state": async () => ({
         ...state,
         capabilities: computeCapabilityCounts(state.issues),
       }),
-      "GET /api/health": async () => ({
+      "GET /health": async () => ({
         status: "ok",
         updatedAt: state.updatedAt,
         config: state.config,
         trackerKind: state.trackerKind,
       }),
-      "GET /api/providers": async () => {
+      "GET /providers": async () => {
         const providers = detectAvailableProviders();
         return { providers };
       },
-      "GET /api/parallelism": async () => {
+      "GET /parallelism": async () => {
         return analyzeParallelizability(state.issues);
       },
-      "POST /api/config/concurrency": async (c: any) => {
+      "POST /config/concurrency": async (c: any) => {
         const payload = await c.req.json() as JsonRecord;
         const value = typeof payload.concurrency === "number" ? payload.concurrency : undefined;
         if (!value || value < 1 || value > 16) {
@@ -168,7 +168,7 @@ export async function startApiServer(
         await persistState(state);
         return { ok: true, workerConcurrency: state.config.workerConcurrency };
       },
-      "GET /api/events": async (c: any) => {
+      "GET /events/feed": async (c: any) => {
         const since = c.req.query("since");
         const issueId = c.req.query("issueId");
         const kind = c.req.query("kind");
@@ -179,7 +179,7 @@ export async function startApiServer(
         });
         return { events: events.slice(0, 200) };
       },
-      "GET /api/issue/:id/pipeline": async (c: any) => {
+      "GET /issue/:id/pipeline": async (c: any) => {
         const issue = findIssue(c.req.param("id"));
         if (!issue) return c.json({ ok: false, error: "Issue not found" }, 404);
 
@@ -187,7 +187,7 @@ export async function startApiServer(
         const pipeline = await loadAgentPipelineSnapshotForIssue(issue, providers);
         return { ok: true, issueId: issue.id, pipeline };
       },
-      "GET /api/issue/:id/sessions": async (c: any) => {
+      "GET /issue/:id/sessions": async (c: any) => {
         const issue = findIssue(c.req.param("id"));
         if (!issue) return c.json({ ok: false, error: "Issue not found" }, 404);
 
@@ -196,7 +196,7 @@ export async function startApiServer(
         const sessions = await loadAgentSessionSnapshotsForIssue(issue, providers, pipeline, workflowDefinition);
         return { ok: true, issueId: issue.id, pipeline, sessions };
       },
-      "POST /api/issue/:id/state": async (c: any) => {
+      "POST /issue/:id/state": async (c: any) => {
         const issue = findIssue(c.req.param("id"));
         if (!issue) return c.json({ ok: false, error: "Issue not found" }, 404);
 
@@ -209,7 +209,7 @@ export async function startApiServer(
           return c.json({ ok: false, error: String(error) }, 400);
         }
       },
-      "POST /api/issue/:id/retry": async (c: any) => {
+      "POST /issue/:id/retry": async (c: any) => {
         const issue = findIssue(c.req.param("id"));
         if (!issue) return c.json({ ok: false, error: "Issue not found" }, 404);
 
@@ -228,7 +228,7 @@ export async function startApiServer(
         await persistState(state);
         return { ok: true, issue };
       },
-      "POST /api/issue/:id/cancel": async (c: any) => {
+      "POST /issue/:id/cancel": async (c: any) => {
         const issue = findIssue(c.req.param("id"));
         if (!issue) return c.json({ ok: false, error: "Issue not found" }, 404);
 
@@ -237,7 +237,6 @@ export async function startApiServer(
         await persistState(state);
         return { ok: true, issue };
       },
-      "GET /state": async (c: any) => c.redirect("/api/state"),
       "GET /index.html": async (c: any) => c.html(dashboardHtml),
       "GET /assets/app.js": async (c: any) => c.body(appJs || "console.log('Dashboard script not found.');", 200, {
         "content-type": "application/javascript; charset=utf-8",
@@ -251,6 +250,6 @@ export async function startApiServer(
   const plugin = await stateDb.usePlugin(apiPlugin, "api") as { stop?: () => Promise<void> };
   setActiveApiPlugin(plugin);
   logger.info(`Local dashboard available at http://localhost:${port}`);
-  logger.info(`State API: http://localhost:${port}/api/state`);
+  logger.info(`State API: http://localhost:${port}/state`);
   logger.info(`OpenAPI docs available at http://localhost:${port}/docs`);
 }

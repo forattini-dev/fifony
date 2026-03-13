@@ -595,7 +595,7 @@ async function loadSessionsForPanel(issueId, panelElementId) {
   if (!panel) return;
 
   try {
-    const data = await fetchJSON(`/api/issue/${encodeURIComponent(issueId)}/sessions`);
+    const data = await fetchJSON(`/issue/${encodeURIComponent(issueId)}/sessions`);
     let html = "";
 
     if (data.pipeline) {
@@ -662,7 +662,7 @@ async function loadSessionsForIssue(issueId) {
   if (!panel) return;
 
   try {
-    const data = await fetchJSON(`/api/issue/${encodeURIComponent(issueId)}/sessions`);
+    const data = await fetchJSON(`/issue/${encodeURIComponent(issueId)}/sessions`);
     let html = "";
 
     if (data.pipeline) {
@@ -793,7 +793,7 @@ async function addNote(issueId, target) {
 
   await withLoading(target, async () => {
     try {
-      await post(`/api/issue/${encodeURIComponent(issueId)}/state`, { state: currentState, reason: note });
+      await post(`/issue/${encodeURIComponent(issueId)}/state`, { state: currentState, reason: note });
       input.value = "";
       showToast("Note added", "success", 2000);
       await loadState();
@@ -829,7 +829,7 @@ function renderRuntimeMeta(state) {
     if (!num || num < 1 || num > 16) { showToast("Must be 1-16", "warn"); return; }
     await withLoading(e.target, async () => {
       try {
-        await post("/api/config/concurrency", { concurrency: num });
+        await post("/config/concurrency", { concurrency: num });
         showToast(`Concurrency set to ${num}`, "success");
         await loadState();
       } catch (err) { showToast(err.message); }
@@ -844,7 +844,7 @@ async function loadProviders() {
   const panel = document.getElementById("providers-panel");
   if (!panel) return;
   try {
-    const data = await fetchJSON("/api/providers");
+    const data = await fetchJSON("/providers");
     if (!data.providers || !data.providers.length) { panel.innerHTML = ""; return; }
     panel.innerHTML = "Providers: " + data.providers.map((p) =>
       `<span class="tag ${p.available ? "tag-ok" : "tag-missing"}">${escapeHtml(p.name)}: ${p.available ? "available" : "not found"}</span>`
@@ -856,7 +856,7 @@ async function loadParallelism() {
   const panel = document.getElementById("parallelism-panel");
   if (!panel) return;
   try {
-    const data = await fetchJSON("/api/parallelism");
+    const data = await fetchJSON("/parallelism");
     if (!data.reason) { panel.innerHTML = ""; return; }
     const badge = data.canParallelize ? "tag-ok" : "tag-missing";
     panel.innerHTML = `Parallelism: <span class="tag ${badge}">max safe=${data.maxSafeParallelism}</span> <span class="muted">${escapeHtml(data.reason)}</span>`;
@@ -916,21 +916,21 @@ function renderEvents(events = []) {
 
 async function setIssueState(issueId, nextState, target) {
   await withLoading(target, async () => {
-    await post(`/api/issue/${encodeURIComponent(issueId)}/state`, { state: nextState });
+    await post(`/issue/${encodeURIComponent(issueId)}/state`, { state: nextState });
     await loadState();
   });
 }
 
 async function retryIssue(issueId, target) {
   await withLoading(target, async () => {
-    await post(`/api/issue/${encodeURIComponent(issueId)}/retry`);
+    await post(`/issue/${encodeURIComponent(issueId)}/retry`);
     await loadState();
   });
 }
 
 async function cancelIssue(issueId, target) {
   await withLoading(target, async () => {
-    await post(`/api/issue/${encodeURIComponent(issueId)}/cancel`);
+    await post(`/issue/${encodeURIComponent(issueId)}/cancel`);
     await loadState();
   });
 }
@@ -1159,7 +1159,7 @@ function wireActions() {
     if (target.id === "batch-retry") {
       const ids = [...selectedIssues];
       for (const id of ids) {
-        try { await post(`/api/issue/${encodeURIComponent(id)}/retry`); } catch {}
+        try { await post(`/issue/${encodeURIComponent(id)}/retry`); } catch {}
       }
       selectedIssues.clear();
       showToast(`Retried ${ids.length} issues`, "success");
@@ -1167,7 +1167,7 @@ function wireActions() {
     } else if (target.id === "batch-cancel") {
       const ids = [...selectedIssues];
       for (const id of ids) {
-        try { await post(`/api/issue/${encodeURIComponent(id)}/cancel`); } catch {}
+        try { await post(`/issue/${encodeURIComponent(id)}/cancel`); } catch {}
       }
       selectedIssues.clear();
       showToast(`Cancelled ${ids.length} issues`, "success");
@@ -1208,7 +1208,7 @@ async function loadEvents() {
     if (eventKindFilter?.value && eventKindFilter.value !== "all") params.set("kind", eventKindFilter.value);
     if (eventIssueFilter?.value && eventIssueFilter.value !== "all") params.set("issueId", eventIssueFilter.value);
     const query = params.size > 0 ? `?${params.toString()}` : "";
-    const payload = await fetchJSON(`/api/events${query}`);
+    const payload = await fetchJSON(`/events/feed${query}`);
     const events = Array.isArray(payload.events) ? payload.events : [];
 
     if (events.length > 0) {
@@ -1223,7 +1223,7 @@ async function loadEvents() {
 }
 
 async function loadState() {
-  const payload = await fetchJSON("/api/state");
+  const payload = await fetchJSON("/state");
 
   // Diff: skip re-render if nothing changed
   const hash = simpleHash(JSON.stringify(payload.issues) + JSON.stringify(payload.metrics));
@@ -1260,7 +1260,7 @@ async function loadState() {
 
 async function loadHealth() {
   try {
-    const payload = await fetchJSON("/api/health");
+    const payload = await fetchJSON("/health");
     const status = payload.status || "ok";
     healthBadge.textContent = `status: ${status}`;
     healthBadge.className = `badge badge-health-${status === "ok" ? "ok" : "warn"}`;

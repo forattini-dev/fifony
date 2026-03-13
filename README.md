@@ -72,7 +72,7 @@ npx -y symphifo --port 4040
 Default local flow:
 
 1. Open `http://localhost:4040`
-2. Create an issue from the UI or `POST /api/issues`
+2. Create an issue from the UI or `POST /issues`
 3. Add `labels` and `paths` when you want stronger automatic routing
 4. Watch the queue, capability category, overlays, events, and agent sessions
 5. Use `View Sessions` on an issue to inspect the current pipeline, turns, directives, and latest output
@@ -92,16 +92,17 @@ Useful app routes:
 
 - `/` — dashboard
 - `/docs` — OpenAPI docs from `ApiPlugin`
-- `/api/state` — runtime snapshot with capability counts
-- `/api/issues` — issue CRUD
-- `/api/events` — filtered event feed
-- `/api/issue/:id/pipeline` — pipeline snapshot for one issue
-- `/api/issue/:id/sessions` — session history for one issue
+- `/state` — runtime snapshot with capability counts
+- `/issues` — issue CRUD (GET, POST, PUT, DELETE)
+- `/events` — event records
+- `/events/feed` — filtered event feed with `?since=&kind=&issueId=`
+- `/issue/:id/pipeline` — pipeline snapshot for one issue
+- `/issue/:id/sessions` — session history for one issue
 
 Useful API examples:
 
 ```bash
-curl -X POST http://localhost:4040/api/issues \
+curl -X POST http://localhost:4040/issues \
   -H 'content-type: application/json' \
   -d '{
     "title":"Prepare release notes",
@@ -111,7 +112,7 @@ curl -X POST http://localhost:4040/api/issues \
 ```
 
 ```bash
-curl 'http://localhost:4040/api/issues?state=Todo&capabilityCategory=devops'
+curl 'http://localhost:4040/issues?state=Todo&capabilityCategory=devops'
 ```
 
 ## Package layout
@@ -277,25 +278,34 @@ The scheduler uses capability priority as a tie-breaker after issue priority, an
 
 ## HTTP surface
 
-Endpoints:
+Resource endpoints (s3db auto-generated):
 
-- `GET /api/issues?state=Todo&capabilityCategory=backend`
-- `POST /api/issues`
-- `PUT /api/issues/:id` — edit issue (title, description, priority, labels, paths, blockedBy)
-- `DELETE /api/issues/:id` — delete issue
-- `GET /api/events?issueId=LOCAL-1&kind=runner&since=2026-03-13T00:00:00.000Z`
-- `GET /api/issue/:id/pipeline`
-- `GET /api/issue/:id/sessions`
-- `POST /api/issue/:id/state`
-- `POST /api/issue/:id/retry`
-- `POST /api/issue/:id/cancel`
-- `GET /api/providers` — detected providers with availability status
-- `GET /api/parallelism` — parallelizability analysis for current issues
-- `POST /api/config/concurrency` — update worker concurrency at runtime
+- `GET /issues` — list issues (supports `?state=&capabilityCategory=`)
+- `POST /issues` — create issue
+- `PUT /issues/:id` — update issue
+- `DELETE /issues/:id` — delete issue
+- `GET /events` — list events
+- `GET /runtime_state` — raw runtime state
+- `GET /agent_sessions` — list agent sessions
+- `GET /agent_pipelines` — list agent pipelines
 
-The built-in dashboard now filters issues by both runtime state and capability category, and mirrors the scheduler's capability-aware ordering.
-`GET /api/state` and the MCP status summary also expose aggregated capability counts.
-The live events panel also filters by `kind` and `issueId`, backed by the partitioned `/api/events` route.
+Custom endpoints:
+
+- `GET /state` — runtime snapshot with capability counts
+- `GET /health` — health check
+- `GET /events/feed?since=&kind=&issueId=` — filtered event feed
+- `GET /issue/:id/pipeline` — pipeline snapshot for one issue
+- `GET /issue/:id/sessions` — session history for one issue
+- `POST /issue/:id/state` — transition issue state
+- `POST /issue/:id/retry` — retry issue
+- `POST /issue/:id/cancel` — cancel issue
+- `GET /providers` — detected providers with availability
+- `GET /parallelism` — parallelizability analysis
+- `POST /config/concurrency` — update worker concurrency
+
+The built-in dashboard filters issues by both runtime state and capability category, and mirrors the scheduler's capability-aware ordering.
+`GET /state` and the MCP status summary also expose aggregated capability counts.
+The live events panel filters by `kind` and `issueId`, backed by the partitioned `/events/feed` route.
 
 Native `ApiPlugin` resources:
 
