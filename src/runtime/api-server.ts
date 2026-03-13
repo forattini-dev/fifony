@@ -128,7 +128,7 @@ export async function startApiServer(
     rootRoute: (c: any) => c.html(dashboardHtml),
     docs: { enabled: true, title: "Symphifo API", version: "1.0.0", description: "Local orchestration API for Symphifo" },
     cors: { enabled: true, origin: "*" },
-    logging: { enabled: true, excludePaths: ["/health"] },
+    logging: { enabled: true, excludePaths: ["/health", "/status"] },
     compression: { enabled: true, threshold: 1024 },
     health: { enabled: true },
     resources: {
@@ -143,7 +143,7 @@ export async function startApiServer(
         ...state,
         capabilities: computeCapabilityCounts(state.issues),
       }),
-      "GET /health": async () => ({
+      "GET /status": async () => ({
         status: "ok",
         updatedAt: state.updatedAt,
         config: state.config,

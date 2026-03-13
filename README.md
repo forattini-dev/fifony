@@ -292,7 +292,7 @@ Resource endpoints (s3db auto-generated):
 Custom endpoints:
 
 - `GET /state` — runtime snapshot with capability counts
-- `GET /health` — health check
+- `GET /status` — health check
 - `GET /events/feed?since=&kind=&issueId=` — filtered event feed
 - `GET /issue/:id/pipeline` — pipeline snapshot for one issue
 - `GET /issue/:id/sessions` — session history for one issue

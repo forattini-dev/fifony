@@ -1260,7 +1260,13 @@ async function loadState() {
 
 async function loadHealth() {
   try {
-    const payload = await fetchJSON("/health");
+    let payload = null;
+    try {
+      payload = await fetchJSON("/status");
+    } catch {
+      payload = await fetchJSON("/health");
+    }
+
     const status = payload.status || "ok";
     healthBadge.textContent = `status: ${status}`;
     healthBadge.className = `badge badge-health-${status === "ok" ? "ok" : "warn"}`;
