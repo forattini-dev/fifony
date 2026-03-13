@@ -183,7 +183,7 @@ export async function scheduler(
       }
       state.updatedAt = now();
       await persistState(state);
-      addEvent(state, undefined, "info", "Scheduler tick completed.");
+      logger.debug("Scheduler tick completed.");
       await sleep(state.config.pollIntervalMs);
     }
     return;
