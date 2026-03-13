@@ -14,12 +14,18 @@ const rerunBtn = document.getElementById("rerun");
 const clearEventsBtn = document.getElementById("clear-events");
 const newIssueBtn = document.getElementById("new-issue-btn");
 const createForm = document.getElementById("create-form");
+const detailPanel = document.getElementById("detail-panel");
+const detailPlaceholder = document.getElementById("detail-placeholder");
 
 let appState = {};
 let lastEventTimestamp = "";
 let lastStateHash = "";
 let expandedSessions = new Set();
 let activeSplitId = null;
+let selectedDetailId = null;
+let selectedIssues = new Set();
+let lastHealthStatus = null;
+let activeKpiFilter = null;
 
 // ── Toast notifications ─────────────────────────────────────────────────────
 
@@ -97,6 +103,27 @@ function simpleHash(str) {
   return String(hash);
 }
 
+function isDesktop() {
+  return window.matchMedia("(min-width: 900px)").matches;
+}
+
+// ── Loading state wrapper ───────────────────────────────────────────────────
+
+async function withLoading(target, asyncFn) {
+  if (!(target instanceof HTMLButtonElement)) {
+    return asyncFn();
+  }
+  const originalText = target.textContent;
+  target.disabled = true;
+  target.textContent = "\u00B7\u00B7\u00B7";
+  try {
+    return await asyncFn();
+  } finally {
+    target.disabled = false;
+    target.textContent = originalText;
+  }
+}
+
 // ── Network ──────────────────────────────────────────────────────────────────
 
 async function fetchJSON(path) {
@@ -120,10 +147,13 @@ async function post(path, payload = {}) {
 
 // ── KPI Overview ─────────────────────────────────────────────────────────────
 
-function kpiCard(label, value, { accent = "", desc = "" } = {}) {
+function kpiCard(label, value, { accent = "", desc = "", filterKey = "", filterValue = "" } = {}) {
   const cls = accent ? ` ${accent}` : "";
+  const clickable = filterKey ? " kpi-clickable" : "";
+  const active = activeKpiFilter && activeKpiFilter.key === filterKey && activeKpiFilter.value === filterValue ? " kpi-active" : "";
+  const dataAttrs = filterKey ? ` data-kpi-filter="${escapeHtml(filterKey)}" data-kpi-value="${escapeHtml(filterValue)}"` : "";
   return `
-    <div class="kpi">
+    <div class="kpi${clickable}${active}"${dataAttrs}>
       <p class="label">${label}</p>
       <p class="value${cls}">${value}</p>
       ${desc ? `<p class="desc">${escapeHtml(desc)}</p>` : ""}
@@ -154,6 +184,19 @@ function renderOverview(metrics, issues = []) {
   updateTabTitle(metrics);
 
   const total = metrics.total || 0;
+
+  if (total === 0) {
+    overviewEl.innerHTML = `
+      <div class="kpi" style="grid-column: 1 / -1; padding: 24px;">
+        <p class="label">No Issues</p>
+        <p class="value" style="font-size: 1.2rem;">Create your first issue to get started</p>
+        <p class="desc">Use the "+ New" button above or POST to /api/issues</p>
+      </div>
+    `;
+    const existing = document.getElementById("progress-bar");
+    if (existing) existing.remove();
+    return;
+  }
   const running = metrics.inProgress || 0;
   const blocked = metrics.blocked || 0;
   const done = metrics.done || 0;
@@ -175,14 +218,14 @@ function renderOverview(metrics, issues = []) {
   const criticalQueue = issues.filter((issue) => issue.capabilityCategory === "security" || issue.capabilityCategory === "bugfix").length;
 
   overviewEl.innerHTML = [
-    kpiCard("Total", total),
-    kpiCard("Queued", queued, { accent: queued > 0 ? "accent" : "" }),
-    kpiCard("Running", running, { accent: running > 0 ? "accent" : "", desc: running > 0 ? "in progress" : "" }),
-    kpiCard("Blocked", blocked, { accent: blocked > 0 ? "danger" : "", desc: blocked > 0 ? "needs attention" : "" }),
-    kpiCard("Done", done, { desc: pctDone }),
-    kpiCard("Cancelled", cancelled, { accent: cancelled > 0 ? "warn" : "" }),
-    kpiCard("Critical", criticalQueue, { accent: criticalQueue > 0 ? "danger" : "", desc: "security + bugfix" }),
-    ...topCapabilities.map(([category, count]) => kpiCard(category, count, { desc: "capability load" })),
+    kpiCard("Total", total, { filterKey: "state", filterValue: "all" }),
+    kpiCard("Queued", queued, { accent: queued > 0 ? "accent" : "", filterKey: "state", filterValue: "Todo" }),
+    kpiCard("Running", running, { accent: running > 0 ? "accent" : "", desc: running > 0 ? "in progress" : "", filterKey: "state", filterValue: "In Progress" }),
+    kpiCard("Blocked", blocked, { accent: blocked > 0 ? "danger" : "", desc: blocked > 0 ? "needs attention" : "", filterKey: "state", filterValue: "Blocked" }),
+    kpiCard("Done", done, { desc: pctDone, filterKey: "state", filterValue: "Done" }),
+    kpiCard("Cancelled", cancelled, { accent: cancelled > 0 ? "warn" : "", filterKey: "state", filterValue: "Cancelled" }),
+    kpiCard("Critical", criticalQueue, { accent: criticalQueue > 0 ? "danger" : "", desc: "security + bugfix", filterKey: "capability", filterValue: "critical" }),
+    ...topCapabilities.map(([category, count]) => kpiCard(category, count, { desc: "capability load", filterKey: "capability", filterValue: category })),
   ].join("");
 
   // Progress bar
@@ -190,7 +233,6 @@ function renderOverview(metrics, issues = []) {
     const donePct = Math.round((done / total) * 100);
     const runningPct = Math.round((running / total) * 100);
     const blockedPct = Math.round((blocked / total) * 100);
-    overviewEl.insertAdjacentHTML("afterend", "");
     const existing = document.getElementById("progress-bar");
     if (existing) existing.remove();
     overviewEl.insertAdjacentHTML("afterend", `
@@ -203,6 +245,46 @@ function renderOverview(metrics, issues = []) {
   }
 }
 
+// ── KPI click handler ───────────────────────────────────────────────────────
+
+overviewEl.addEventListener("click", (event) => {
+  const kpi = event.target.closest(".kpi-clickable");
+  if (!kpi) return;
+
+  const filterKey = kpi.dataset.kpiFilter;
+  const filterValue = kpi.dataset.kpiValue;
+  if (!filterKey) return;
+
+  // Toggle: if same filter is active, reset
+  if (activeKpiFilter && activeKpiFilter.key === filterKey && activeKpiFilter.value === filterValue) {
+    activeKpiFilter = null;
+    stateFilter.value = "all";
+    if (categoryFilter) categoryFilter.value = "all";
+  } else {
+    activeKpiFilter = { key: filterKey, value: filterValue };
+
+    if (filterKey === "state") {
+      if (filterValue === "all") {
+        stateFilter.value = "all";
+      } else {
+        stateFilter.value = filterValue;
+      }
+      if (categoryFilter) categoryFilter.value = "all";
+    } else if (filterKey === "capability") {
+      stateFilter.value = "all";
+      if (filterValue === "critical") {
+        // "Critical" means security+bugfix — no single category filter, we handle in renderIssues
+        if (categoryFilter) categoryFilter.value = "all";
+      } else if (categoryFilter) {
+        categoryFilter.value = filterValue;
+      }
+    }
+  }
+
+  renderOverview(appState.metrics || {}, appState.issues || []);
+  renderIssues(appState.issues || []);
+});
+
 // ── Issue Actions ────────────────────────────────────────────────────────────
 
 function actionButton(issueId, label, action, payload = "") {
@@ -212,17 +294,29 @@ function actionButton(issueId, label, action, payload = "") {
 function issueActions(issue) {
   const editBtn = actionButton(issue.id, "Edit", "edit");
   const deleteBtn = actionButton(issue.id, "Delete", "delete");
+  const splitBtn = actionButton(issue.id, "Split", "split");
+
+  let primaryHtml = "";
+  let secondaryHtml = "";
+
   if (issue.state === "Blocked") {
-    return `${actionButton(issue.id, "Retry", "retry")} ${actionButton(issue.id, "Set Todo", "state", "Todo")} ${actionButton(issue.id, "Split", "split")} ${actionButton(issue.id, "Cancel", "cancel")} ${editBtn} ${deleteBtn}`;
+    primaryHtml = `${actionButton(issue.id, "Retry", "retry")} ${actionButton(issue.id, "Set Todo", "state", "Todo")} ${actionButton(issue.id, "Cancel", "cancel")}`;
+    secondaryHtml = `${editBtn} ${splitBtn} ${deleteBtn}`;
+  } else if (issue.state === "Done" || issue.state === "Cancelled") {
+    primaryHtml = actionButton(issue.id, "Retry", "retry");
+    secondaryHtml = `${editBtn} ${deleteBtn}`;
+  } else if (issue.state === "Todo") {
+    primaryHtml = `${actionButton(issue.id, "Mark In Progress", "state", "In Progress")} ${actionButton(issue.id, "Cancel", "state", "Cancelled")}`;
+    secondaryHtml = `${editBtn} ${splitBtn} ${deleteBtn}`;
+  } else {
+    // In Progress, In Review
+    primaryHtml = `${actionButton(issue.id, "View Sessions", "sessions")} ${actionButton(issue.id, "Cancel", "cancel")}`;
+    secondaryHtml = editBtn;
   }
-  if (issue.state === "Done" || issue.state === "Cancelled") {
-    return `${actionButton(issue.id, "Retry", "retry")} ${editBtn} ${deleteBtn}`;
-  }
-  if (issue.state === "Todo") {
-    return `${actionButton(issue.id, "Mark In Progress", "state", "In Progress")} ${actionButton(issue.id, "Split", "split")} ${actionButton(issue.id, "Cancel", "state", "Cancelled")} ${editBtn} ${deleteBtn}`;
-  }
-  // In Progress, In Review
-  return `${actionButton(issue.id, "View Sessions", "sessions")} ${actionButton(issue.id, "Cancel", "cancel")} ${editBtn}`;
+
+  const moreBtn = `<button type="button" class="btn-more" data-action="more" data-id="${escapeHtml(issue.id)}" title="More actions">&middot;&middot;&middot;</button>`;
+
+  return `${primaryHtml} ${moreBtn} <span class="actions-secondary" data-secondary-for="${escapeHtml(issue.id)}">${secondaryHtml}</span>`;
 }
 
 function stateClass(value) {
@@ -239,6 +333,10 @@ function renderIssues(issues = []) {
   const filtered = issues.filter((issue) => {
     if (selectedState !== "all" && issue.state !== selectedState) return false;
     if (selectedCategory !== "all" && issue.capabilityCategory !== selectedCategory) return false;
+    // Handle critical KPI filter (security+bugfix)
+    if (activeKpiFilter && activeKpiFilter.key === "capability" && activeKpiFilter.value === "critical") {
+      if (issue.capabilityCategory !== "security" && issue.capabilityCategory !== "bugfix") return false;
+    }
     if (search) {
       const target = `${issue.identifier} ${issue.title} ${issue.description || ""} ${issue.id}`.toLowerCase();
       if (!target.includes(search)) return false;
@@ -261,12 +359,19 @@ function renderIssues(issues = []) {
     }
   }
 
-  // Issue count indicator
+  // Issue count + batch toolbar
   const countEl = document.getElementById("issue-count");
   if (countEl) {
-    countEl.textContent = filtered.length === issues.length
-      ? `${issues.length} issues`
-      : `${filtered.length} / ${issues.length} issues`;
+    if (selectedIssues.size > 0) {
+      countEl.innerHTML = `<span class="batch-info">${selectedIssues.size} selected</span> `
+        + `<button type="button" class="action-button" id="batch-retry">Retry All</button> `
+        + `<button type="button" class="action-button" id="batch-cancel">Cancel All</button> `
+        + `<button type="button" class="action-button" id="batch-clear">Clear</button>`;
+    } else {
+      countEl.textContent = filtered.length === issues.length
+        ? `${issues.length} issues`
+        : `${filtered.length} / ${issues.length} issues`;
+    }
   }
 
   if (!filtered.length) {
@@ -316,6 +421,7 @@ function renderIssues(issues = []) {
           </details>`
         : "";
 
+      // On mobile, show inline session panel; on desktop, sessions go to detail panel
       const sessionHtml = expandedSessions.has(issue.id)
         ? `<div class="session-panel" id="session-${escapeHtml(issue.id)}"><div class="session-loading">Loading sessions...</div></div>`
         : "";
@@ -349,10 +455,14 @@ function renderIssues(issues = []) {
         : "";
 
       const isRunning = issue.state === "In Progress";
+      const isDetailSelected = selectedDetailId === issue.id;
 
       return `
-        <article class="issue-card${isRunning ? " issue-running" : ""}" data-issue-id="${escapeHtml(issue.id)}">
-          <h3 class="issue-title">${escapeHtml(issue.identifier)} — ${escapeHtml(issue.title)}</h3>
+        <article class="issue-card${isRunning ? " issue-running" : ""}${isDetailSelected ? " issue-selected" : ""}" data-issue-id="${escapeHtml(issue.id)}">
+          <h3 class="issue-title">
+            <label class="issue-select"><input type="checkbox" data-select-issue="${escapeHtml(issue.id)}" ${selectedIssues.has(issue.id) ? "checked" : ""} /><span class="issue-checkbox"></span></label>
+            ${escapeHtml(issue.identifier)} — ${escapeHtml(issue.title)}
+          </h3>
           <p class="muted">${escapeHtml(issue.description || "No description")}</p>
           <div class="meta">
             <span class="${stateClass(issue.state)}">${escapeHtml(issue.state)}</span>
@@ -384,12 +494,50 @@ function renderIssues(issues = []) {
   for (const issueId of expandedSessions) {
     loadSessionsForIssue(issueId);
   }
+
+  // Refresh detail panel if selected issue is still in the list
+  if (selectedDetailId && isDesktop()) {
+    const issue = issues.find((i) => i.id === selectedDetailId);
+    if (issue) {
+      renderDetailPanel(issue);
+    }
+  }
 }
 
-// ── Session/Pipeline Loading ─────────────────────────────────────────────────
+// ── Detail panel (desktop right panel) ──────────────────────────────────────
 
-async function loadSessionsForIssue(issueId) {
-  const panel = document.getElementById(`session-${issueId}`);
+function renderDetailPanel(issue) {
+  if (!detailPanel) return;
+  detailPanel.innerHTML = `
+    <div class="detail-issue-header">
+      <span class="mono">${escapeHtml(issue.identifier)}</span> ${escapeHtml(issue.title)}
+      <button type="button" class="btn-close-detail" id="close-detail" title="Close">&times;</button>
+    </div>
+    <div class="meta" style="margin-top:0">
+      <span class="${stateClass(issue.state)}">${escapeHtml(issue.state)}</span>
+      <span>Priority ${escapeHtml(issue.priority)}</span>
+      ${issue.durationMs ? `<span>Duration ${formatDuration(issue.durationMs)}</span>` : ""}
+    </div>
+    <div class="session-panel" id="detail-session-panel">
+      <div class="session-loading">Loading sessions...</div>
+    </div>
+  `;
+  document.getElementById("close-detail")?.addEventListener("click", () => {
+    clearDetailPanel();
+    renderIssues(appState.issues || []);
+  });
+  loadSessionsForPanel(issue.id, "detail-session-panel");
+}
+
+function clearDetailPanel() {
+  selectedDetailId = null;
+  if (detailPanel) {
+    detailPanel.innerHTML = '<div class="detail-placeholder">Select an issue to view sessions</div>';
+  }
+}
+
+async function loadSessionsForPanel(issueId, panelElementId) {
+  const panel = document.getElementById(panelElementId);
   if (!panel) return;
 
   try {
@@ -400,8 +548,8 @@ async function loadSessionsForIssue(issueId) {
       const pipeline = data.pipeline;
       html += '<div class="session-header">Pipeline</div>';
       html += `<div class="pipeline-step">
-        <span class="step-provider">attempt ${escapeHtml(pipeline.attempt || "—")}</span>
-        <span class="step-status">cycle ${escapeHtml(pipeline.cycle || "—")}</span>
+        <span class="step-provider">attempt ${escapeHtml(pipeline.attempt || "\u2014")}</span>
+        <span class="step-status">cycle ${escapeHtml(pipeline.cycle || "\u2014")}</span>
         <span class="step-status">active index ${escapeHtml(pipeline.activeIndex || 0)}</span>
       </div>`;
 
@@ -421,8 +569,8 @@ async function loadSessionsForIssue(issueId) {
         const lastTurn = turns.length ? turns[turns.length - 1] : null;
         html += `<div class="pipeline-step">
           <span class="step-provider">${escapeHtml(`${item.role || "agent"}:${item.provider || "unknown"}`)}</span>
-          <span class="step-status">${escapeHtml(session.status || "—")}</span>
-          <span class="step-status">cycle ${escapeHtml(item.cycle || "—")}</span>
+          <span class="step-status">${escapeHtml(session.status || "\u2014")}</span>
+          <span class="step-status">cycle ${escapeHtml(item.cycle || "\u2014")}</span>
           <span class="step-status">${escapeHtml(`${turns.length}/${session.maxTurns || "?"} turns`)}</span>
         </div>`;
         if (session.lastDirectiveStatus || session.lastDirectiveSummary) {
@@ -432,7 +580,7 @@ async function loadSessionsForIssue(issueId) {
         }
         if (lastTurn?.output || session.lastOutput) {
           const output = lastTurn?.output || session.lastOutput || "";
-          const truncated = output.length > 2000 ? `…${output.slice(-2000)}` : output;
+          const truncated = output.length > 2000 ? `\u2026${output.slice(-2000)}` : output;
           html += `<details class="history-detail">
             <summary>Latest output</summary>
             <div class="session-output">${escapeHtml(truncated)}</div>
@@ -441,7 +589,74 @@ async function loadSessionsForIssue(issueId) {
         if (turns.length) {
           html += `<details class="history-detail">
             <summary>${turns.length} turns</summary>
-            <ul class="history">${turns.map((turn) => `<li class="mono">#${escapeHtml(turn.turn)} ${escapeHtml(turn.directiveStatus || "—")} ${escapeHtml(turn.directiveSummary || "")}</li>`).join("")}</ul>
+            <ul class="history">${turns.map((turn) => `<li class="mono">#${escapeHtml(turn.turn)} ${escapeHtml(turn.directiveStatus || "\u2014")} ${escapeHtml(turn.directiveSummary || "")}</li>`).join("")}</ul>
+          </details>`;
+        }
+      }
+    }
+
+    panel.innerHTML = html || '<div class="session-loading">No session data available yet.</div>';
+  } catch (error) {
+    panel.innerHTML = `<div class="session-loading">Failed to load: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
+// ── Session/Pipeline Loading (inline, for mobile) ───────────────────────────
+
+async function loadSessionsForIssue(issueId) {
+  const panel = document.getElementById(`session-${issueId}`);
+  if (!panel) return;
+
+  try {
+    const data = await fetchJSON(`/api/issue/${encodeURIComponent(issueId)}/sessions`);
+    let html = "";
+
+    if (data.pipeline) {
+      const pipeline = data.pipeline;
+      html += '<div class="session-header">Pipeline</div>';
+      html += `<div class="pipeline-step">
+        <span class="step-provider">attempt ${escapeHtml(pipeline.attempt || "\u2014")}</span>
+        <span class="step-status">cycle ${escapeHtml(pipeline.cycle || "\u2014")}</span>
+        <span class="step-status">active index ${escapeHtml(pipeline.activeIndex || 0)}</span>
+      </div>`;
+
+      if (Array.isArray(pipeline.history) && pipeline.history.length) {
+        html += `<details class="history-detail" open>
+          <summary>${pipeline.history.length} pipeline events</summary>
+          <ul class="history">${pipeline.history.map((entry) => `<li class="mono">${escapeHtml(entry)}</li>`).join("")}</ul>
+        </details>`;
+      }
+    }
+
+    if (data.sessions && Array.isArray(data.sessions) && data.sessions.length) {
+      html += '<div class="session-header" style="margin-top:10px">Sessions</div>';
+      for (const item of data.sessions.slice(-6)) {
+        const session = item.session || {};
+        const turns = Array.isArray(session.turns) ? session.turns : [];
+        const lastTurn = turns.length ? turns[turns.length - 1] : null;
+        html += `<div class="pipeline-step">
+          <span class="step-provider">${escapeHtml(`${item.role || "agent"}:${item.provider || "unknown"}`)}</span>
+          <span class="step-status">${escapeHtml(session.status || "\u2014")}</span>
+          <span class="step-status">cycle ${escapeHtml(item.cycle || "\u2014")}</span>
+          <span class="step-status">${escapeHtml(`${turns.length}/${session.maxTurns || "?"} turns`)}</span>
+        </div>`;
+        if (session.lastDirectiveStatus || session.lastDirectiveSummary) {
+          html += `<div class="session-output">${escapeHtml(
+            `${session.lastDirectiveStatus || "status"}${session.lastDirectiveSummary ? `: ${session.lastDirectiveSummary}` : ""}`,
+          )}</div>`;
+        }
+        if (lastTurn?.output || session.lastOutput) {
+          const output = lastTurn?.output || session.lastOutput || "";
+          const truncated = output.length > 2000 ? `\u2026${output.slice(-2000)}` : output;
+          html += `<details class="history-detail">
+            <summary>Latest output</summary>
+            <div class="session-output">${escapeHtml(truncated)}</div>
+          </details>`;
+        }
+        if (turns.length) {
+          html += `<details class="history-detail">
+            <summary>${turns.length} turns</summary>
+            <ul class="history">${turns.map((turn) => `<li class="mono">#${escapeHtml(turn.turn)} ${escapeHtml(turn.directiveStatus || "\u2014")} ${escapeHtml(turn.directiveSummary || "")}</li>`).join("")}</ul>
           </details>`;
         }
       }
@@ -476,7 +691,7 @@ function toggleSplitForm(issueId) {
   }, 50);
 }
 
-async function submitSplit(issueId) {
+async function submitSplit(issueId, target) {
   const textarea = document.querySelector(`[data-split-for="${issueId}"]`);
   if (!textarea || !textarea.value.trim()) {
     showToast("Enter at least one sub-task title", "warn");
@@ -489,30 +704,32 @@ async function submitSplit(issueId) {
   const titles = textarea.value.split("\n").map((t) => t.trim()).filter(Boolean);
   if (!titles.length) return;
 
-  try {
-    const created = [];
-    for (const title of titles) {
-      const result = await post("/api/issues", {
-        title,
-        description: `Sub-task of ${issue.identifier}: ${issue.title}`,
-        priority: issue.priority,
-        labels: [...(issue.labels || []), `parent:${issue.identifier}`],
-        paths: issue.paths || [],
-        maxAttempts: issue.maxAttempts || 3,
-      });
-      if (result.ok && result.issue) created.push(result.issue.identifier);
+  await withLoading(target, async () => {
+    try {
+      const created = [];
+      for (const title of titles) {
+        const result = await post("/api/issues", {
+          title,
+          description: `Sub-task of ${issue.identifier}: ${issue.title}`,
+          priority: issue.priority,
+          labels: [...(issue.labels || []), `parent:${issue.identifier}`],
+          paths: issue.paths || [],
+          maxAttempts: issue.maxAttempts || 3,
+        });
+        if (result.ok && result.issue) created.push(result.issue.identifier);
+      }
+      activeSplitId = null;
+      showToast(`Created ${created.length} sub-tasks: ${created.join(", ")}`, "success");
+      await loadState();
+    } catch (error) {
+      showToast(`Split failed: ${error.message}`);
     }
-    activeSplitId = null;
-    showToast(`Created ${created.length} sub-tasks: ${created.join(", ")}`, "success");
-    await loadState();
-  } catch (error) {
-    showToast(`Split failed: ${error.message}`);
-  }
+  });
 }
 
 // ── Add Note ─────────────────────────────────────────────────────────────────
 
-async function addNote(issueId) {
+async function addNote(issueId, target) {
   const input = document.querySelector(`[data-note-for="${issueId}"]`);
   if (!input || !input.value.trim()) return;
 
@@ -520,14 +737,16 @@ async function addNote(issueId) {
   const currentState = issue?.state || "Todo";
   const note = input.value.trim();
 
-  try {
-    await post(`/api/issue/${encodeURIComponent(issueId)}/state`, { state: currentState, reason: note });
-    input.value = "";
-    showToast("Note added", "success", 2000);
-    await loadState();
-  } catch (error) {
-    showToast(`Note failed: ${error.message}`);
-  }
+  await withLoading(target, async () => {
+    try {
+      await post(`/api/issue/${encodeURIComponent(issueId)}/state`, { state: currentState, reason: note });
+      input.value = "";
+      showToast("Note added", "success", 2000);
+      await loadState();
+    } catch (error) {
+      showToast(`Note failed: ${error.message}`);
+    }
+  });
 }
 
 // ── Runtime Meta ─────────────────────────────────────────────────────────────
@@ -541,8 +760,8 @@ function renderRuntimeMeta(state) {
       <span>Agent: ${escapeHtml(state.config?.agentProvider || "auto")} (${escapeHtml(state.config?.agentCommand || "auto-detect")})</span>
       <span class="concurrency-control">
         Concurrency:
-        <input type="number" id="concurrency-input" min="1" max="16" value="${escapeHtml(state.config?.workerConcurrency ?? 2)}" style="width:48px;padding:2px 4px;font-size:0.72rem;text-align:center" />
-        <button type="button" class="action-button" id="save-concurrency-btn" style="font-size:0.7em">Set</button>
+        <input type="number" id="concurrency-input" class="concurrency-input" min="1" max="16" value="${escapeHtml(state.config?.workerConcurrency ?? 2)}" />
+        <button type="button" class="action-button concurrency-btn" id="save-concurrency-btn">Set</button>
       </span>
     </div>
     <div id="providers-panel" class="meta" style="margin-top:4px"></div>
@@ -550,15 +769,17 @@ function renderRuntimeMeta(state) {
     <p class="muted">Started at ${formatDate(state.startedAt)}</p>
   `;
 
-  document.getElementById("save-concurrency-btn")?.addEventListener("click", async () => {
+  document.getElementById("save-concurrency-btn")?.addEventListener("click", async (e) => {
     const input = document.getElementById("concurrency-input");
     const num = parseInt(input?.value, 10);
     if (!num || num < 1 || num > 16) { showToast("Must be 1-16", "warn"); return; }
-    try {
-      await post("/api/config/concurrency", { concurrency: num });
-      showToast(`Concurrency set to ${num}`, "success");
-      await loadState();
-    } catch (e) { showToast(e.message); }
+    await withLoading(e.target, async () => {
+      try {
+        await post("/api/config/concurrency", { concurrency: num });
+        showToast(`Concurrency set to ${num}`, "success");
+        await loadState();
+      } catch (err) { showToast(err.message); }
+    });
   });
 
   loadProviders();
@@ -602,14 +823,12 @@ function renderEvents(events = []) {
     if (allEvents.length > 200) allEvents.length = 200;
   }
 
-  // Issue filter is populated by loadState() — no need to duplicate here
-
   if (!allEvents.length) {
     eventsEl.innerHTML = '<p class="muted">No events yet.</p>';
     return;
   }
 
-  // Filtering is done server-side via loadEvents() params, but apply client-side too for instant feedback
+  // Filtering
   const kindFilter = eventKindFilter?.value || "all";
   const issueFilter = eventIssueFilter?.value || "all";
 
@@ -629,7 +848,7 @@ function renderEvents(events = []) {
     .slice(0, 80)
     .map((event) => `
       <div class="event event-${event.kind || "info"}">
-        <div class="mono">${escapeHtml(event.at)} ${escapeHtml(event.issueId || "system")}</div>
+        <div class="mono" title="${escapeHtml(formatDate(event.at))}">${timeAgo(event.at)} ${escapeHtml(event.issueId || "system")}</div>
         <div>${escapeHtml(event.message || "")}</div>
       </div>
     `)
@@ -641,19 +860,25 @@ function renderEvents(events = []) {
 
 // ── State Management ─────────────────────────────────────────────────────────
 
-async function setIssueState(issueId, nextState) {
-  await post(`/api/issue/${encodeURIComponent(issueId)}/state`, { state: nextState });
-  await loadState();
+async function setIssueState(issueId, nextState, target) {
+  await withLoading(target, async () => {
+    await post(`/api/issue/${encodeURIComponent(issueId)}/state`, { state: nextState });
+    await loadState();
+  });
 }
 
-async function retryIssue(issueId) {
-  await post(`/api/issue/${encodeURIComponent(issueId)}/retry`);
-  await loadState();
+async function retryIssue(issueId, target) {
+  await withLoading(target, async () => {
+    await post(`/api/issue/${encodeURIComponent(issueId)}/retry`);
+    await loadState();
+  });
 }
 
-async function cancelIssue(issueId) {
-  await post(`/api/issue/${encodeURIComponent(issueId)}/cancel`);
-  await loadState();
+async function cancelIssue(issueId, target) {
+  await withLoading(target, async () => {
+    await post(`/api/issue/${encodeURIComponent(issueId)}/cancel`);
+    await loadState();
+  });
 }
 
 // ── Create Issue ─────────────────────────────────────────────────────────────
@@ -663,7 +888,7 @@ function toggleCreateForm() {
   if (!createForm.hidden) document.getElementById("cf-title").focus();
 }
 
-async function submitCreateForm() {
+async function submitCreateForm(target) {
   const title = document.getElementById("cf-title").value.trim();
   if (!title) { showToast("Title is required", "warn"); return; }
 
@@ -676,20 +901,22 @@ async function submitCreateForm() {
     paths: document.getElementById("cf-paths").value.split(",").map((s) => s.trim()).filter(Boolean),
   };
 
-  try {
-    const result = await post("/api/issues", payload);
-    showToast(`Created ${result.issue?.identifier || "issue"}`, "success");
-    createForm.hidden = true;
-    document.getElementById("cf-title").value = "";
-    document.getElementById("cf-desc").value = "";
-    document.getElementById("cf-priority").value = "1";
-    document.getElementById("cf-attempts").value = "3";
-    document.getElementById("cf-labels").value = "";
-    document.getElementById("cf-paths").value = "";
-    await loadState();
-  } catch (error) {
-    showToast(`Create failed: ${error.message}`);
-  }
+  await withLoading(target, async () => {
+    try {
+      const result = await post("/api/issues", payload);
+      showToast(`Created ${result.issue?.identifier || "issue"}`, "success");
+      createForm.hidden = true;
+      document.getElementById("cf-title").value = "";
+      document.getElementById("cf-desc").value = "";
+      document.getElementById("cf-priority").value = "1";
+      document.getElementById("cf-attempts").value = "3";
+      document.getElementById("cf-labels").value = "";
+      document.getElementById("cf-paths").value = "";
+      await loadState();
+    } catch (error) {
+      showToast(`Create failed: ${error.message}`);
+    }
+  });
 }
 
 // ── Edit / Delete ────────────────────────────────────────────────────────────
@@ -745,31 +972,33 @@ function renderEditForm(issue) {
   `;
 }
 
-async function submitEdit(issueId) {
+async function submitEdit(issueId, target) {
   const get = (attr) => document.querySelector(`[data-edit-${attr}-for="${issueId}"]`);
   const titleEl = get("title");
   if (!titleEl) return;
 
-  try {
-    const response = await fetch(`/api/issues/${encodeURIComponent(issueId)}`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        title: titleEl.value.trim() || undefined,
-        description: get("desc")?.value.trim() ?? "",
-        priority: Math.max(1, Math.min(10, parseInt(get("priority")?.value, 10) || 1)),
-        labels: (get("labels")?.value || "").split(",").map((s) => s.trim()).filter(Boolean),
-        paths: (get("paths")?.value || "").split(",").map((s) => s.trim()).filter(Boolean),
-        blockedBy: (get("blocked")?.value || "").split(",").map((s) => s.trim()).filter(Boolean),
-      }),
-    });
-    if (!response.ok) throw new Error(`Failed: ${response.status}`);
-    activeEditId = null;
-    showToast("Issue updated", "success");
-    await loadState();
-  } catch (e) {
-    showToast(`Edit failed: ${e.message}`);
-  }
+  await withLoading(target, async () => {
+    try {
+      const response = await fetch(`/api/issues/${encodeURIComponent(issueId)}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          title: titleEl.value.trim() || undefined,
+          description: get("desc")?.value.trim() ?? "",
+          priority: Math.max(1, Math.min(10, parseInt(get("priority")?.value, 10) || 1)),
+          labels: (get("labels")?.value || "").split(",").map((s) => s.trim()).filter(Boolean),
+          paths: (get("paths")?.value || "").split(",").map((s) => s.trim()).filter(Boolean),
+          blockedBy: (get("blocked")?.value || "").split(",").map((s) => s.trim()).filter(Boolean),
+        }),
+      });
+      if (!response.ok) throw new Error(`Failed: ${response.status}`);
+      activeEditId = null;
+      showToast("Issue updated", "success");
+      await loadState();
+    } catch (e) {
+      showToast(`Edit failed: ${e.message}`);
+    }
+  });
 }
 
 function requestDelete(issueId) {
@@ -777,18 +1006,21 @@ function requestDelete(issueId) {
   renderIssues(appState.issues || []);
 }
 
-async function confirmDelete(issueId) {
-  try {
-    const response = await fetch(`/api/issues/${encodeURIComponent(issueId)}`, { method: "DELETE" });
-    if (!response.ok) throw new Error(`Failed: ${response.status}`);
-    const issue = (appState.issues || []).find((i) => i.id === issueId);
-    pendingDeleteId = null;
-    showToast(`Deleted ${issue?.identifier || issueId}`, "success");
-    await loadState();
-  } catch (e) {
-    pendingDeleteId = null;
-    showToast(`Delete failed: ${e.message}`);
-  }
+async function confirmDelete(issueId, target) {
+  await withLoading(target, async () => {
+    try {
+      const response = await fetch(`/api/issues/${encodeURIComponent(issueId)}`, { method: "DELETE" });
+      if (!response.ok) throw new Error(`Failed: ${response.status}`);
+      const issue = (appState.issues || []).find((i) => i.id === issueId);
+      pendingDeleteId = null;
+      if (selectedDetailId === issueId) clearDetailPanel();
+      showToast(`Deleted ${issue?.identifier || issueId}`, "success");
+      await loadState();
+    } catch (e) {
+      pendingDeleteId = null;
+      showToast(`Delete failed: ${e.message}`);
+    }
+  });
 }
 
 // ── Wire Actions ─────────────────────────────────────────────────────────────
@@ -804,26 +1036,91 @@ function wireActions() {
     if (!action || !id) return;
 
     try {
-      if (action === "state") await setIssueState(id, payload);
-      else if (action === "retry") await retryIssue(id);
-      else if (action === "cancel") await cancelIssue(id);
+      if (action === "state") await setIssueState(id, payload, target);
+      else if (action === "retry") await retryIssue(id, target);
+      else if (action === "cancel") await cancelIssue(id, target);
       else if (action === "sessions") {
-        if (expandedSessions.has(id)) expandedSessions.delete(id);
-        else expandedSessions.add(id);
-        renderIssues(appState.issues || []);
+        if (isDesktop()) {
+          // Desktop: show in detail panel
+          if (selectedDetailId === id) {
+            clearDetailPanel();
+          } else {
+            selectedDetailId = id;
+            const issue = (appState.issues || []).find((i) => i.id === id);
+            if (issue) renderDetailPanel(issue);
+          }
+          renderIssues(appState.issues || []);
+        } else {
+          // Mobile: inline toggle
+          if (expandedSessions.has(id)) expandedSessions.delete(id);
+          else expandedSessions.add(id);
+          renderIssues(appState.issues || []);
+        }
+      }
+      else if (action === "more") {
+        // Toggle secondary actions visibility
+        const secondary = target.closest(".actions")?.querySelector(`[data-secondary-for="${id}"]`);
+        if (secondary) {
+          secondary.classList.toggle("actions-secondary-visible");
+        }
       }
       else if (action === "split") toggleSplitForm(id);
-      else if (action === "split-submit") await submitSplit(id);
+      else if (action === "split-submit") await submitSplit(id, target);
       else if (action === "split-cancel") { activeSplitId = null; renderIssues(appState.issues || []); }
-      else if (action === "note") await addNote(id);
+      else if (action === "note") await addNote(id, target);
       else if (action === "edit") toggleEditForm(id);
-      else if (action === "edit-submit") await submitEdit(id);
+      else if (action === "edit-submit") await submitEdit(id, target);
       else if (action === "edit-cancel") { activeEditId = null; renderIssues(appState.issues || []); }
       else if (action === "delete") requestDelete(id);
-      else if (action === "delete-confirm") await confirmDelete(id);
+      else if (action === "delete-confirm") await confirmDelete(id, target);
       else if (action === "delete-cancel") { pendingDeleteId = null; renderIssues(appState.issues || []); }
     } catch (error) {
       showToast(error.message || "Action failed.");
+    }
+  });
+
+  // Checkbox selection for batch actions
+  issueListEl.addEventListener("change", (event) => {
+    const checkbox = event.target;
+    if (!checkbox.dataset.selectIssue) return;
+    const id = checkbox.dataset.selectIssue;
+    if (checkbox.checked) selectedIssues.add(id);
+    else selectedIssues.delete(id);
+    // Re-render just the count/batch toolbar without full re-render
+    const countEl = document.getElementById("issue-count");
+    if (countEl && selectedIssues.size > 0) {
+      countEl.innerHTML = `<span class="batch-info">${selectedIssues.size} selected</span> `
+        + `<button type="button" class="action-button" id="batch-retry">Retry All</button> `
+        + `<button type="button" class="action-button" id="batch-cancel">Cancel All</button> `
+        + `<button type="button" class="action-button" id="batch-clear">Clear</button>`;
+    } else if (countEl) {
+      const issues = appState.issues || [];
+      countEl.textContent = `${issues.length} issues`;
+    }
+  });
+
+  // Batch action buttons (delegated from issue-count container's parent)
+  document.addEventListener("click", async (event) => {
+    const target = event.target;
+    if (target.id === "batch-retry") {
+      const ids = [...selectedIssues];
+      for (const id of ids) {
+        try { await post(`/api/issue/${encodeURIComponent(id)}/retry`); } catch {}
+      }
+      selectedIssues.clear();
+      showToast(`Retried ${ids.length} issues`, "success");
+      await loadState();
+    } else if (target.id === "batch-cancel") {
+      const ids = [...selectedIssues];
+      for (const id of ids) {
+        try { await post(`/api/issue/${encodeURIComponent(id)}/cancel`); } catch {}
+      }
+      selectedIssues.clear();
+      showToast(`Cancelled ${ids.length} issues`, "success");
+      await loadState();
+    } else if (target.id === "batch-clear") {
+      selectedIssues.clear();
+      renderIssues(appState.issues || []);
     }
   });
 
@@ -842,9 +1139,9 @@ function wireActions() {
 
   newIssueBtn?.addEventListener("click", toggleCreateForm);
   document.getElementById("cf-cancel")?.addEventListener("click", () => { createForm.hidden = true; });
-  document.getElementById("cf-submit")?.addEventListener("click", submitCreateForm);
+  document.getElementById("cf-submit")?.addEventListener("click", (e) => submitCreateForm(e.target));
   document.getElementById("cf-title")?.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") submitCreateForm();
+    if (e.key === "Enter") submitCreateForm(document.getElementById("cf-submit"));
   });
 }
 
@@ -910,9 +1207,22 @@ async function loadState() {
 async function loadHealth() {
   try {
     const payload = await fetchJSON("/api/health");
-    healthBadge.textContent = `status: ${payload.status || "ok"}`;
+    const status = payload.status || "ok";
+    healthBadge.textContent = `status: ${status}`;
+    healthBadge.className = `badge badge-health-${status === "ok" ? "ok" : "warn"}`;
+
+    // Notify on status transitions
+    if (lastHealthStatus && lastHealthStatus !== status) {
+      showToast(`Health: ${lastHealthStatus} → ${status}`, status === "ok" ? "success" : "warn", 3000);
+    }
+    lastHealthStatus = status;
   } catch (error) {
     healthBadge.textContent = "status: offline";
+    healthBadge.className = "badge badge-health-offline";
+    if (lastHealthStatus !== "offline") {
+      showToast("Connection lost", "error", 3000);
+    }
+    lastHealthStatus = "offline";
   }
 }
 
@@ -922,6 +1232,13 @@ async function refreshSessions() {
     const issue = (appState.issues || []).find((i) => i.id === issueId);
     if (issue && (issue.state === "In Progress" || issue.state === "In Review")) {
       loadSessionsForIssue(issueId);
+    }
+  }
+  // Auto-refresh detail panel for running issues
+  if (selectedDetailId && isDesktop()) {
+    const issue = (appState.issues || []).find((i) => i.id === selectedDetailId);
+    if (issue && (issue.state === "In Progress" || issue.state === "In Review")) {
+      loadSessionsForPanel(selectedDetailId, "detail-session-panel");
     }
   }
 }
@@ -941,8 +1258,17 @@ async function refresh() {
 
 // ── Filters ──────────────────────────────────────────────────────────────────
 
-stateFilter.addEventListener("change", () => renderIssues(appState.issues || []));
-categoryFilter?.addEventListener("change", () => renderIssues(appState.issues || []));
+stateFilter.addEventListener("change", () => {
+  // Clear KPI active state when manually changing filters
+  activeKpiFilter = null;
+  renderOverview(appState.metrics || {}, appState.issues || []);
+  renderIssues(appState.issues || []);
+});
+categoryFilter?.addEventListener("change", () => {
+  activeKpiFilter = null;
+  renderOverview(appState.metrics || {}, appState.issues || []);
+  renderIssues(appState.issues || []);
+});
 queryInput.addEventListener("input", () => renderIssues(appState.issues || []));
 eventKindFilter?.addEventListener("change", async () => {
   allEvents = [];
@@ -958,6 +1284,60 @@ eventIssueFilter?.addEventListener("change", async () => {
 // ── Keyboard shortcuts ───────────────────────────────────────────────────
 
 document.addEventListener("keydown", (event) => {
+  // Skip keyboard nav if typing in an input/textarea
+  const tag = document.activeElement?.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
+    if (event.key === "Escape") {
+      document.activeElement.blur();
+    }
+    return;
+  }
+
+  // j/k or ArrowDown/ArrowUp to navigate issues
+  if (event.key === "j" || event.key === "ArrowDown" || event.key === "k" || event.key === "ArrowUp") {
+    const cards = [...issueListEl.querySelectorAll(".issue-card")];
+    if (!cards.length) return;
+    const currentIdx = cards.findIndex((c) => c.dataset.issueId === selectedDetailId);
+    let nextIdx;
+    if (event.key === "j" || event.key === "ArrowDown") {
+      nextIdx = currentIdx < cards.length - 1 ? currentIdx + 1 : 0;
+    } else {
+      nextIdx = currentIdx > 0 ? currentIdx - 1 : cards.length - 1;
+    }
+    const nextId = cards[nextIdx]?.dataset.issueId;
+    if (nextId) {
+      selectedDetailId = nextId;
+      const issue = (appState.issues || []).find((i) => i.id === nextId);
+      if (issue && isDesktop()) renderDetailPanel(issue);
+      renderIssues(appState.issues || []);
+      cards[nextIdx]?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+    event.preventDefault();
+    return;
+  }
+
+  // Enter to toggle sessions for current selection
+  if (event.key === "Enter" && selectedDetailId) {
+    if (!isDesktop()) {
+      if (expandedSessions.has(selectedDetailId)) expandedSessions.delete(selectedDetailId);
+      else expandedSessions.add(selectedDetailId);
+      renderIssues(appState.issues || []);
+    }
+    return;
+  }
+
+  // r to retry selected
+  if (event.key === "r" && selectedDetailId) {
+    retryIssue(selectedDetailId);
+    return;
+  }
+
+  // n to focus new issue form
+  if (event.key === "n") {
+    toggleCreateForm();
+    return;
+  }
+
   if (event.key !== "Escape") return;
 
   // Close create form
@@ -983,6 +1363,13 @@ document.addEventListener("keydown", (event) => {
   // Close split form
   if (activeSplitId !== null) {
     activeSplitId = null;
+    renderIssues(appState.issues || []);
+    return;
+  }
+
+  // Close detail panel
+  if (selectedDetailId !== null) {
+    clearDetailPanel();
     renderIssues(appState.issues || []);
     return;
   }

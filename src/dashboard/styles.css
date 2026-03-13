@@ -135,18 +135,95 @@ h2 {
   transition: border-color 150ms, opacity 150ms;
 }
 
+/* ── Health badge states ───────────────────────────────────────────────────── */
+
+.badge-health-ok {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.badge-health-warn {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.badge-health-offline {
+  border-color: var(--danger);
+  color: var(--danger);
+  animation: offline-pulse 2s ease-in-out infinite;
+}
+
+@keyframes offline-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
 .badge-refreshing {
   opacity: 0.5;
   border-color: var(--toxin);
 }
 
-/* ── Issue count ──────────────────────────────────────────────────────────── */
+/* ── Issue count & batch toolbar ───────────────────────────────────────────── */
 
 .issue-count {
   font-size: 0.68rem;
   color: var(--iron);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   letter-spacing: 0.02em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.batch-info {
+  color: var(--plague);
+  font-weight: 600;
+}
+
+/* ── Issue checkbox ───────────────────────────────────────────────────────── */
+
+.issue-select {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.issue-select input {
+  display: none;
+}
+
+.issue-checkbox {
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--ash);
+  background: var(--abyss);
+  display: inline-block;
+  transition: border-color 150ms, background 150ms;
+  position: relative;
+}
+
+.issue-select input:checked + .issue-checkbox {
+  border-color: var(--toxin);
+  background: var(--mold);
+}
+
+.issue-select input:checked + .issue-checkbox::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  width: 4px;
+  height: 7px;
+  border: solid var(--plague);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.issue-checkbox:hover {
+  border-color: var(--dungeon);
 }
 
 /* ── Layout ───────────────────────────────────────────────────────────────── */
@@ -382,6 +459,9 @@ button:disabled {
   font-size: 0.68rem;
   color: var(--silver);
   transition: border-color 150ms;
+  word-break: break-all;
+  overflow-wrap: break-word;
+  max-width: 100%;
 }
 
 .tag:hover {
@@ -483,6 +563,8 @@ button:disabled {
 .history li {
   padding: 2px 0;
   border-bottom: 1px solid rgba(52, 64, 52, 0.4);
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .history li:last-child {
@@ -939,6 +1021,13 @@ button:disabled {
   margin-top: 8px;
 }
 
+/* ── Selected issue (detail panel active) ─────────────────────────────────── */
+
+.issue-selected {
+  border-color: var(--toxin);
+  background: var(--cobble);
+}
+
 /* ── Running issue pulse ──────────────────────────────────────────────────── */
 
 .issue-running {
@@ -1012,6 +1101,9 @@ button:disabled {
 }
 
 .detail-panel .detail-issue-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 0.78rem;
   font-weight: 600;
   color: var(--frost);
@@ -1023,6 +1115,22 @@ button:disabled {
 .detail-panel .detail-issue-header .mono {
   color: var(--plague);
   font-size: 0.72rem;
+}
+
+.btn-close-detail {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--ash);
+  color: var(--iron);
+  font-size: 1rem;
+  line-height: 1;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
+.btn-close-detail:hover {
+  color: var(--frost);
+  border-color: var(--toxin);
 }
 
 .detail-panel .session-panel {
@@ -1069,6 +1177,13 @@ button:disabled {
 /* ── Responsive ───────────────────────────────────────────────────────────── */
 
 @media (max-width: 899px) {
+
+  /* ── Shell & topbar ────────────────────────────────────────────────────── */
+
+  .shell {
+    padding: 10px;
+  }
+
   .topbar {
     flex-direction: column;
     align-items: flex-start;
@@ -1076,7 +1191,22 @@ button:disabled {
 
   .badges {
     flex-wrap: wrap;
+    width: 100%;
   }
+
+  /* Truncate subtitle on narrow screens */
+  #subtitle {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+
+  h1 {
+    font-size: 0.95rem;
+  }
+
+  /* ── Toolbar & filters ─────────────────────────────────────────────────── */
 
   .toolbar {
     flex-direction: column;
@@ -1096,22 +1226,69 @@ button:disabled {
   .toolbar-right select,
   .toolbar-right input {
     width: 100%;
+    min-height: 44px;
   }
 
   .toolbar-right button {
     width: 100%;
+    min-height: 44px;
   }
+
+  /* Make "+ New" prominent on mobile */
+  .toolbar-right .btn-accent {
+    font-size: 0.88rem;
+    padding: 10px;
+  }
+
+  /* ── KPI grid ──────────────────────────────────────────────────────────── */
 
   .grid {
     grid-template-columns: repeat(2, 1fr);
   }
 
+  .kpi {
+    padding: 12px 8px;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .kpi .value {
+    font-size: 1.5rem;
+  }
+
+  .kpi .label {
+    font-size: 0.6rem;
+    word-break: break-word;
+  }
+
+  .kpi .desc {
+    font-size: 0.6rem;
+    word-break: break-word;
+  }
+
+  /* ── Issue cards ────────────────────────────────────────────────────────── */
+
   .issue-card {
     padding: 10px;
   }
 
+  /* 1. Issue title with checkbox: prevent overflow, wrap properly */
   .issue-title {
     font-size: 0.84rem;
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    word-break: break-word;
+    overflow-wrap: break-word;
+  }
+
+  .issue-title .issue-select {
+    flex-shrink: 0;
+    margin-right: 0;
+    /* 44px touch target for checkbox */
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
   }
 
   .issue-card > .muted {
@@ -1122,6 +1299,8 @@ button:disabled {
     font-size: 0.7rem;
   }
 
+  /* ── Action buttons: 44px touch targets, full-width stacked ────────── */
+
   .actions {
     flex-direction: column;
   }
@@ -1129,15 +1308,23 @@ button:disabled {
   .actions .action-button {
     width: 100%;
     text-align: center;
+    min-height: 44px;
+    padding: 10px;
+    font-size: 0.76rem;
   }
 
   .actions .btn-more {
     width: 100%;
     text-align: center;
+    min-height: 44px;
+    padding: 10px;
+    font-size: 0.88rem;
   }
 
+  /* 3. Secondary actions: full-width stacked column */
   .actions-secondary {
     width: 100%;
+    flex-direction: column;
   }
 
   .actions-secondary .action-button {
@@ -1145,17 +1332,54 @@ button:disabled {
     text-align: center;
   }
 
-  .session-panel {
-    max-height: 50vh;
+  /* ── 2. Batch toolbar: full-width stacked ──────────────────────────── */
+
+  .issue-count {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
   }
 
-  .events {
-    max-height: 200px;
+  .issue-count .action-button {
+    width: 100%;
+    min-height: 44px;
+    text-align: center;
+    padding: 10px;
   }
 
-  h1 {
-    font-size: 0.95rem;
+  /* ── 4. Note form: send button full-width ──────────────────────────── */
+
+  .note-form {
+    flex-direction: column;
   }
+
+  .note-form input {
+    min-height: 44px;
+  }
+
+  .note-form .action-button {
+    width: 100%;
+    min-height: 44px;
+    text-align: center;
+  }
+
+  /* ── 5. Split form: textarea + buttons full-width ──────────────────── */
+
+  .split-form textarea {
+    min-height: 80px;
+  }
+
+  .split-form-actions {
+    flex-direction: column;
+  }
+
+  .split-form-actions .action-button {
+    width: 100%;
+    min-height: 44px;
+    text-align: center;
+  }
+
+  /* ── 6. Edit form & Create form ────────────────────────────────────── */
 
   .create-form-grid {
     grid-template-columns: 1fr;
@@ -1165,25 +1389,140 @@ button:disabled {
     grid-column: span 1;
   }
 
-  .delete-confirm {
-    flex-direction: column;
-    align-items: flex-start;
+  .create-form {
+    padding: 10px;
   }
 
-  .note-form {
-    flex-direction: column;
-  }
-
-  .split-form-actions,
   .create-form-actions {
     flex-direction: column;
   }
 
-  .kpi .value {
-    font-size: 1.5rem;
+  .create-form-actions button,
+  .create-form-actions .action-button {
+    width: 100%;
+    min-height: 44px;
+    text-align: center;
   }
 
-  .shell {
-    padding: 14px;
+  .edit-form {
+    padding: 10px;
+  }
+
+  .form-group input,
+  .form-group textarea {
+    min-height: 44px;
+  }
+
+  /* ── 7. Delete confirm: stacked, full-width buttons ────────────────── */
+
+  .delete-confirm {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .delete-confirm button,
+  .delete-confirm .action-button {
+    width: 100%;
+    min-height: 44px;
+    text-align: center;
+  }
+
+  /* ── 8. Session panel: inline on mobile with scroll ────────────────── */
+
+  .session-panel {
+    max-height: 50vh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .session-panel .pipeline-step {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .session-panel .step-duration {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  /* ── 10. Event cards: prevent text overflow ─────────────────────────── */
+
+  .events {
+    max-height: 200px;
+  }
+
+  .event {
+    overflow: hidden;
+  }
+
+  .event .mono {
+    word-break: break-all;
+    overflow-wrap: break-word;
+  }
+
+  .event > div:last-child {
+    word-break: break-word;
+    overflow-wrap: break-word;
+  }
+
+  /* ── 15. Detail panel: hidden on mobile ────────────────────────────── */
+  /* Already display:none by default (no min-width:900px) — reinforce */
+
+  .detail-panel {
+    display: none !important;
+  }
+
+  /* ── 18. History entries: wrap long mono text ───────────────────────── */
+
+  .history li {
+    word-break: break-word;
+    overflow-wrap: break-word;
+  }
+
+  /* ── 19. Toast: bottom-center on mobile with safe margin ───────────── */
+
+  .toast {
+    bottom: 24px;
+    right: 10px;
+    left: 10px;
+    align-items: stretch;
+  }
+
+  .toast-item {
+    max-width: none;
+    text-align: center;
+  }
+
+  /* ── 20. Master panel: no max-height on mobile (full page scroll) ──── */
+
+  .master-panel {
+    max-height: none;
+    overflow-y: visible;
+  }
+
+  /* ── General touch targets: all standalone buttons ─────────────────── */
+
+  button {
+    min-height: 44px;
+  }
+
+  select {
+    min-height: 44px;
+  }
+
+  /* ── Concurrency control on mobile ─────────────────────────────────── */
+
+  .concurrency-control {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .concurrency-input {
+    min-height: 44px;
+    width: 64px;
+  }
+
+  .concurrency-btn {
+    min-height: 44px;
   }
 }
