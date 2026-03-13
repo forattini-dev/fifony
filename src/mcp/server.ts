@@ -126,8 +126,8 @@ function hashInput(value: string): string {
 
 async function loadS3dbModule(): Promise<S3dbModule> {
   try {
-    const imported = await import("s3db.js");
-    const filesystemModule = await import("s3db.js/clients/index");
+    const imported = await import("s3db.js/lite");
+    const filesystemModule = await import("s3db.js/lite");
 
     return {
       default: imported.default,

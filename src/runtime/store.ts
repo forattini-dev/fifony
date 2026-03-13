@@ -47,7 +47,7 @@ export async function loadS3dbModule(): Promise<S3dbModule> {
   if (loadedS3dbModule) return loadedS3dbModule;
 
   try {
-    const imported = await import("s3db.js") as unknown as Record<string, unknown>;
+    const imported = await import("s3db.js/lite") as unknown as Record<string, unknown>;
     const pluginModule = await import("s3db.js/plugins/index");
 
     let ApiPluginCtor: S3dbModule["ApiPlugin"] | undefined;
