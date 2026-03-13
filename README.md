@@ -1,41 +1,41 @@
-# Symphony
+# Symphony (symphifo)
 
-Symphony turns project work into isolated, autonomous implementation runs, allowing teams to manage
-work instead of supervising coding agents.
+Fork local do Symphony baseado no fluxo **TypeScript-only (Codex-only)**.
 
-[![Symphony demo video preview](.github/media/symphony-demo-poster.jpg)](.github/media/symphony-demo.mp4)
+## O que mudou neste fork
 
-_In this [demo video](.github/media/symphony-demo.mp4), Symphony monitors a Linear board for work and spawns agents to handle the tasks. The agents complete the tasks and provide proof of work: CI status, PR review feedback, complexity analysis, and walkthrough videos. When accepted, the agents land the PR safely. Engineers do not need to supervise Codex; they can manage the work at a higher level._
+- Removido fluxo Linear para execução local.
+- Removido dependência de Elixir no bootstrap local.
+- Pipeline local usando apenas memória (`memory`) para tracker.
+- Dashboard local em `scripts/symphony-dashboard`.
+- Wrapper de execução em `scripts/start-symphony.sh`.
 
-> [!WARNING]
-> Symphony is a low-key engineering preview for testing in trusted environments.
+## Como executar local
 
-## Running Symphony
+```bash
+./scripts/start-symphony.sh --port 4040
+```
 
-### Requirements
+Abra:
 
-Symphony works best in codebases that have adopted
-[harness engineering](https://openai.com/index/harness-engineering/). Symphony is the next step --
-moving from managing coding agents to managing work that needs to get done.
+- `http://localhost:4040`
 
-### Option 1. Make your own
+Sem dashboard:
 
-Tell your favorite coding agent to build Symphony in a programming language of your choice:
+```bash
+./scripts/start-symphony.sh
+```
 
-> Implement Symphony according to the following spec:
-> https://github.com/openai/symphony/blob/main/SPEC.md
+## Arquivos principais
 
-### Option 2. Use our experimental reference implementation
+- `scripts/run-symphony-local.ts` — runtime local em TS.
+- `scripts/start-symphony.sh` — entrypoint.
+- `scripts/symphony-dashboard/index.html`
+- `scripts/symphony-dashboard/app.js`
+- `scripts/symphony-dashboard/styles.css`
+- `scripts/symphony-local-issues.json` — catálogo local de issues.
 
-Check out [elixir/README.md](elixir/README.md) for instructions on how to set up your environment
-and run the Elixir-based Symphony implementation. You can also ask your favorite coding agent to
-help with the setup:
+## Estado local
 
-> Set up Symphony for my repository based on
-> https://github.com/openai/symphony/blob/main/elixir/README.md
-
----
-
-## License
-
-This project is licensed under the [Apache License 2.0](LICENSE).
+- `~/.local/share/symphony-aozo/WORKFLOW.local.md`
+- `~/.local/share/symphony-aozo/symphony-memory-state.json`

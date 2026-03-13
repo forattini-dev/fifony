@@ -1,0 +1,204 @@
+:root {
+  --bg: #050816;
+  --bg2: #0f172a;
+  --panel: #111827;
+  --line: #1f2937;
+  --text: #e5e7eb;
+  --muted: #94a3b8;
+  --ok: #22d3ee;
+  --warn: #f59e0b;
+  --danger: #fb7185;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  background:
+    radial-gradient(circle at 15% 10%, rgba(34, 211, 238, 0.15), transparent 25%),
+    linear-gradient(180deg, #020617, var(--bg));
+  color: var(--text);
+}
+
+.shell {
+  max-width: 1050px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+h1,
+h2 {
+  margin: 0;
+  letter-spacing: 0.01em;
+}
+
+.eyebrow {
+  margin: 0;
+  color: var(--ok);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.75rem;
+}
+
+.muted {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+.badges {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.badge {
+  background: #1f2937;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid #334155;
+  font-size: 0.8rem;
+}
+
+.layout {
+  display: grid;
+  gap: 16px;
+}
+
+.card {
+  background: rgba(17, 24, 39, 0.72);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 16px;
+}
+
+.grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+
+.kpi {
+  background: #0f172a;
+  border: 1px solid #243b53;
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.kpi .value {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+select,
+input {
+  background: #020617;
+  color: var(--text);
+  border: 1px solid #475569;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.issue-list {
+  display: grid;
+  gap: 10px;
+}
+
+.issue-card {
+  border: 1px solid #243b53;
+  border-radius: 10px;
+  padding: 12px;
+  background: #0b1220;
+}
+
+.issue-title {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.meta {
+  margin-top: 8px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.tag {
+  border: 1px solid #334155;
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 0.75rem;
+}
+
+.state-badge {
+  border-radius: 8px;
+  padding: 3px 9px;
+  border: 1px solid currentColor;
+  font-size: 0.75rem;
+}
+
+.state-Todo { color: #e2e8f0; }
+.state-In\ Progress { color: var(--ok); }
+.state-In\ Review { color: #93c5fd; }
+.state-Blocked { color: var(--danger); }
+.state-Done { color: #34d399; }
+.state-Cancelled { color: #f97316; }
+
+.actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+button {
+  background: #1d293d;
+  color: var(--text);
+  border: 1px solid #334155;
+  border-radius: 999px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+button:hover {
+  filter: brightness(1.15);
+}
+
+.history {
+  margin-top: 8px;
+  font-size: 0.8rem;
+  color: #94a3b8;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
