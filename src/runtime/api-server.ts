@@ -99,8 +99,16 @@ export async function startApiServer(
     port,
     host: "0.0.0.0",
     versionPrefix: false,
-    rootRoute: (c: any) => c.html(dashboardHtml),
     docs: { enabled: true, title: "Symphifo API", version: "1.0.0", description: "Local orchestration API for Symphifo" },
+    middlewares: [
+      async (c: any, next: () => Promise<void>) => {
+        if (c.req.path === "/") {
+          const redirectTo = new URL("/index.html", c.req.url).toString();
+          return c.redirect(redirectTo);
+        }
+        return next();
+      },
+    ],
     cors: { enabled: true, origin: "*" },
     logging: { enabled: true, excludePaths: ["/health", "/status"] },
     compression: { enabled: true, threshold: 1024 },
