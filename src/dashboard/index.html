@@ -41,24 +41,84 @@
                 <option value="Cancelled">Cancelled</option>
               </select>
 
+              <label for="category-filter">Capability:</label>
+              <select id="category-filter">
+                <option value="all">All</option>
+              </select>
+
               <label for="query">Search:</label>
               <input id="query" placeholder="e.g. LOCAL-1, title" />
 
               <button id="rerun">Reload</button>
+              <button id="new-issue-btn" class="btn-accent">+ New</button>
+              <span id="issue-count" class="issue-count"></span>
             </div>
           </div>
+
+          <!-- Create issue form (hidden by default) -->
+          <div id="create-form" class="create-form" hidden>
+            <div class="create-form-grid">
+              <div class="form-group span-2">
+                <label>Title</label>
+                <input id="cf-title" type="text" placeholder="What needs to be done" />
+              </div>
+              <div class="form-group span-2">
+                <label>Description</label>
+                <textarea id="cf-desc" rows="2" placeholder="Details, context, acceptance criteria..."></textarea>
+              </div>
+              <div class="form-group">
+                <label>Priority (1-10)</label>
+                <input id="cf-priority" type="number" min="1" max="10" value="1" />
+              </div>
+              <div class="form-group">
+                <label>Max Attempts</label>
+                <input id="cf-attempts" type="number" min="1" max="10" value="3" />
+              </div>
+              <div class="form-group span-2">
+                <label>Labels <span class="hint">comma-separated</span></label>
+                <input id="cf-labels" type="text" placeholder="bug, frontend, urgent" />
+              </div>
+              <div class="form-group span-2">
+                <label>Paths <span class="hint">comma-separated file paths</span></label>
+                <input id="cf-paths" type="text" placeholder="src/foo.ts, src/bar.ts" />
+              </div>
+            </div>
+            <div class="create-form-actions">
+              <button id="cf-cancel">Cancel</button>
+              <button id="cf-submit" class="btn-accent">Create Issue</button>
+            </div>
+          </div>
+
           <div id="issue-list" class="issue-list"></div>
         </section>
 
-        <section class="card">
-          <h2>Runtime</h2>
-          <div id="runtime-meta"></div>
+        <section class="card collapsed-section">
+          <details>
+            <summary><h2 style="display:inline">Runtime</h2></summary>
+            <div id="runtime-meta"></div>
+          </details>
         </section>
 
         <section class="card">
           <div class="toolbar">
             <h2>Live Events</h2>
             <div class="toolbar-right">
+              <label for="event-kind-filter">Kind:</label>
+              <select id="event-kind-filter">
+                <option value="all">All</option>
+                <option value="info">info</option>
+                <option value="state">state</option>
+                <option value="progress">progress</option>
+                <option value="error">error</option>
+                <option value="manual">manual</option>
+                <option value="runner">runner</option>
+              </select>
+
+              <label for="event-issue-filter">Issue:</label>
+              <select id="event-issue-filter">
+                <option value="all">All</option>
+              </select>
+
               <button id="clear-events">Clear</button>
             </div>
           </div>

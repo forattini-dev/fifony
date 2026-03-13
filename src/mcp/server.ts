@@ -4,6 +4,8 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { env, stdin, stdout } from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { buildIntegrationSnippet, discoverIntegrations } from "../integrations/catalog.ts";
+import { inferCapabilityPaths, resolveTaskCapabilities } from "../routing/capability-resolver.ts";
 
 type JsonRpcId = string | number | null;
 
@@ -33,6 +35,7 @@ type IssueRecord = {
   priority?: number;
   state?: string;
   labels?: string[];
+  paths?: string[];
   url?: string;
   assigned_to_worker?: boolean;
   [key: string]: unknown;
@@ -51,7 +54,12 @@ type S3dbResource = {
   insert: (record: Record<string, unknown>) => Promise<Record<string, unknown>>;
   get: (id: string) => Promise<Record<string, unknown> | null>;
   update: (id: string, patch: Record<string, unknown>) => Promise<Record<string, unknown>>;
-  list: (options?: Record<string, unknown>) => Promise<Record<string, unknown>[]>;
+  list: (options?: {
+    partition?: string | null;
+    partitionValues?: Record<string, string | number>;
+    limit?: number;
+    offset?: number;
+  }) => Promise<Record<string, unknown>[]>;
   query?: (options?: Record<string, unknown>) => Promise<Record<string, unknown>[]>;
 };
 
@@ -79,9 +87,7 @@ const README_PATH = join(PACKAGE_ROOT, "README.md");
 const SYMPHIFO_GUIDE_PATH = join(PACKAGE_ROOT, "SYMPHIFO.md");
 const STORAGE_BUCKET = env.SYMPHIFO_STORAGE_BUCKET ?? "symphifo";
 const STORAGE_KEY_PREFIX = env.SYMPHIFO_STORAGE_KEY_PREFIX ?? "state";
-const STORAGE_LIBRARY_PATH = env.SYMPHIFO_STORAGE_LIBRARY_PATH?.trim()
-  ? resolve(env.SYMPHIFO_STORAGE_LIBRARY_PATH)
-  : "";
+const STORAGE_LIBRARY_PATH = "";
 const DEBUG_BOOT = env.SYMPHIFO_DEBUG_BOOT === "1";
 const RUNTIME_RESOURCE = "symphifo_runtime_state";
 const ISSUE_RESOURCE = "symphifo_issues";
@@ -119,39 +125,17 @@ function hashInput(value: string): string {
 }
 
 async function loadS3dbModule(): Promise<S3dbModule> {
-  const checkoutEntry = STORAGE_LIBRARY_PATH
-    ? STORAGE_LIBRARY_PATH
-    : join(homedir(), "Work", "tetis", "libs", "s3db.js", "dist", "index.js");
-  const candidates = [
-    {
-      entry: "s3db.js",
-      clients: "s3db.js/clients/index",
-    },
-    ...(checkoutEntry
-      ? [{
-          entry: pathToFileURL(checkoutEntry).href,
-          clients: pathToFileURL(checkoutEntry.replace(/dist\/index\.js$/, "dist/clients/index.js")).href,
-        }]
-      : []),
-  ];
+  try {
+    const imported = await import("s3db.js");
+    const filesystemModule = await import("s3db.js/clients/index");
 
-  let lastError: unknown = null;
-
-  for (const candidate of candidates) {
-    try {
-      const imported = await import(candidate.entry);
-      const filesystemModule = await import(candidate.clients);
-
-      return {
-        default: imported.default,
-        FileSystemClient: filesystemModule.FileSystemClient,
-      };
-    } catch (error) {
-      lastError = error;
-    }
+    return {
+      default: imported.default,
+      FileSystemClient: filesystemModule.FileSystemClient,
+    };
+  } catch (error) {
+    throw new Error(`Unable to load s3db.js: ${String(error)}`);
   }
-
-  throw new Error(`Unable to load s3db.js. Last error: ${String(lastError)}`);
 }
 
 async function getDatabase(): Promise<S3dbDatabase> {
@@ -198,6 +182,11 @@ async function getDatabase(): Promise<S3dbDatabase> {
       state: "string|required",
       branchName: "string|optional",
       labels: "json|required",
+      paths: "json|optional",
+      inferredPaths: "json|optional",
+      capabilityCategory: "string|optional",
+      capabilityOverlays: "json|optional",
+      capabilityRationale: "json|optional",
       blockedBy: "json|required",
       assignedToWorker: "boolean|required",
       createdAt: "datetime|required",
@@ -217,6 +206,17 @@ async function getDatabase(): Promise<S3dbDatabase> {
       commandExitCode: "number|optional",
       commandOutputTail: "string|optional",
     },
+    partitions: {
+      byState: { fields: { state: "string" } },
+      byCapabilityCategory: { fields: { capabilityCategory: "string" } },
+      byStateAndCapability: {
+        fields: {
+          state: "string",
+          capabilityCategory: "string",
+        },
+      },
+    },
+    asyncPartitions: true,
   });
 
   eventResource = database.resources[EVENT_RESOURCE] ?? await database.createResource({
@@ -229,6 +229,17 @@ async function getDatabase(): Promise<S3dbDatabase> {
       message: "string|required",
       at: "datetime|required",
     },
+    partitions: {
+      byIssueId: { fields: { issueId: "string" } },
+      byKind: { fields: { kind: "string" } },
+      byIssueIdAndKind: {
+        fields: {
+          issueId: "string",
+          kind: "string",
+        },
+      },
+    },
+    asyncPartitions: true,
   });
 
   sessionResource = database.resources[SESSION_RESOURCE] ?? await database.createResource({
@@ -245,6 +256,22 @@ async function getDatabase(): Promise<S3dbDatabase> {
       session: "json|required",
       updatedAt: "datetime|required",
     },
+    partitions: {
+      byIssueId: { fields: { issueId: "string" } },
+      byIssueAttempt: {
+        fields: {
+          issueId: "string",
+          attempt: "number",
+        },
+      },
+      byProviderRole: {
+        fields: {
+          provider: "string",
+          role: "string",
+        },
+      },
+    },
+    asyncPartitions: true,
   });
 
   pipelineResource = database.resources[PIPELINE_RESOURCE] ?? await database.createResource({
@@ -258,6 +285,16 @@ async function getDatabase(): Promise<S3dbDatabase> {
       pipeline: "json|required",
       updatedAt: "datetime|required",
     },
+    partitions: {
+      byIssueId: { fields: { issueId: "string" } },
+      byIssueAttempt: {
+        fields: {
+          issueId: "string",
+          attempt: "number",
+        },
+      },
+    },
+    asyncPartitions: true,
   });
 
   debugBoot("mcp:getDatabase:resources-ready");
@@ -277,6 +314,67 @@ async function listRecords(resource: S3dbResource | null, limit: number = 100): 
   return await resource.list({ limit });
 }
 
+async function listIssues(filters: { state?: string; capabilityCategory?: string } = {}): Promise<IssueRecord[]> {
+  await getDatabase();
+  const { state, capabilityCategory } = filters;
+
+  if (!issueResource) {
+    return [];
+  }
+
+  const partition = state && capabilityCategory
+    ? "byStateAndCapability"
+    : state
+      ? "byState"
+      : capabilityCategory
+        ? "byCapabilityCategory"
+        : null;
+  const partitionValues = state && capabilityCategory
+    ? { state, capabilityCategory }
+    : state
+      ? { state }
+      : capabilityCategory
+        ? { capabilityCategory }
+        : {};
+
+  const records = await issueResource.list({
+    partition,
+    partitionValues,
+    limit: 500,
+  });
+  return records.map((record) => record as IssueRecord);
+}
+
+async function listEvents(filters: { issueId?: string; kind?: string; limit?: number } = {}): Promise<Record<string, unknown>[]> {
+  await getDatabase();
+  const { issueId, kind, limit = 100 } = filters;
+
+  if (!eventResource) {
+    return [];
+  }
+
+  const partition = issueId && kind
+    ? "byIssueIdAndKind"
+    : issueId
+      ? "byIssueId"
+      : kind
+        ? "byKind"
+        : null;
+  const partitionValues = issueId && kind
+    ? { issueId, kind }
+    : issueId
+      ? { issueId }
+      : kind
+        ? { kind }
+        : {};
+
+  return await eventResource.list({
+    partition,
+    partitionValues,
+    limit,
+  });
+}
+
 async function getRuntimeSnapshot(): Promise<RuntimeSnapshot> {
   await getDatabase();
   const record = await runtimeResource?.get(RUNTIME_RECORD_ID);
@@ -288,9 +386,7 @@ async function getRuntimeSnapshot(): Promise<RuntimeSnapshot> {
 }
 
 async function getIssues(): Promise<IssueRecord[]> {
-  await getDatabase();
-  const records = await listRecords(issueResource, 500);
-  return records.map((record) => record as IssueRecord);
+  return await listIssues();
 }
 
 async function getIssue(issueId: string): Promise<IssueRecord | null> {
@@ -343,18 +439,29 @@ function buildIntegrationGuide(): string {
   ].join("\n");
 }
 
+function computeCapabilityCounts(issues: IssueRecord[]): Record<string, number> {
+  return issues.reduce<Record<string, number>>((accumulator, issue) => {
+    const key = typeof issue.capabilityCategory === "string" && issue.capabilityCategory.trim()
+      ? issue.capabilityCategory.trim()
+      : "default";
+    accumulator[key] = (accumulator[key] ?? 0) + 1;
+    return accumulator;
+  }, {});
+}
+
 async function buildStateSummary(): Promise<string> {
   const runtime = await getRuntimeSnapshot();
   const issues = await getIssues();
   const sessions = await listRecords(sessionResource, 500);
   const pipelines = await listRecords(pipelineResource, 500);
-  const events = await listRecords(eventResource, 100);
+  const events = await listEvents({ limit: 100 });
 
   const byState = issues.reduce<Record<string, number>>((accumulator, issue) => {
     const key = issue.state ?? "Unknown";
     accumulator[key] = (accumulator[key] ?? 0) + 1;
     return accumulator;
   }, {});
+  const byCapability = computeCapabilityCounts(issues);
 
   return JSON.stringify({
     workspaceRoot: WORKSPACE_ROOT,
@@ -364,6 +471,7 @@ async function buildStateSummary(): Promise<string> {
     runtimeUpdatedAt: runtime.updatedAt ?? null,
     issueCount: issues.length,
     issuesByState: byState,
+    issuesByCapability: byCapability,
     sessionCount: sessions.length,
     pipelineCount: pipelines.length,
     recentEventCount: events.length,
@@ -371,12 +479,23 @@ async function buildStateSummary(): Promise<string> {
 }
 
 function buildIssuePrompt(issue: IssueRecord, provider: string, role: string): string {
+  const resolution = resolveTaskCapabilities({
+    id: issue.id,
+    identifier: issue.identifier,
+    title: issue.title,
+    description: typeof issue.description === "string" ? issue.description : "",
+    labels: Array.isArray(issue.labels) ? issue.labels.filter((value): value is string => typeof value === "string") : [],
+    paths: Array.isArray(issue.paths) ? issue.paths.filter((value): value is string => typeof value === "string") : [],
+  });
   return [
     `You are integrating with Symphifo as the ${role} using ${provider}.`,
     "",
     `Issue ID: ${issue.id}`,
     `Title: ${issue.title}`,
     `State: ${issue.state ?? "Todo"}`,
+    `Capability category: ${resolution.category}`,
+    ...(resolution.overlays.length ? [`Overlays: ${resolution.overlays.join(", ")}`] : []),
+    ...(Array.isArray(issue.paths) && issue.paths.length ? [`Paths: ${issue.paths.join(", ")}`] : []),
     issue.description ? `Description:\n${issue.description}` : "Description:\nNo description provided.",
     "",
     "Use Symphifo as the source of truth:",
@@ -417,6 +536,18 @@ async function listResources(): Promise<Array<Record<string, unknown>>> {
       uri: "symphifo://issues",
       name: "Symphifo issues",
       description: "Full issue list from the durable Symphifo store.",
+      mimeType: "application/json",
+    },
+    {
+      uri: "symphifo://integrations",
+      name: "Symphifo integrations",
+      description: "Discovered local integrations such as agency-agents and impeccable skills.",
+      mimeType: "application/json",
+    },
+    {
+      uri: "symphifo://capabilities",
+      name: "Symphifo capability routing",
+      description: "How Symphifo would route current issues to providers, profiles, and overlays.",
       mimeType: "application/json",
     },
   ];
@@ -463,6 +594,47 @@ async function readResource(uri: string): Promise<Array<Record<string, unknown>>
     return [{ uri, mimeType: "application/json", text: JSON.stringify(await getIssues(), null, 2) }];
   }
 
+  if (uri === "symphifo://integrations") {
+    return [{
+      uri,
+      mimeType: "application/json",
+      text: JSON.stringify(discoverIntegrations(WORKSPACE_ROOT), null, 2),
+    }];
+  }
+
+  if (uri === "symphifo://capabilities") {
+    const issues = await getIssues();
+    return [{
+      uri,
+      mimeType: "application/json",
+      text: JSON.stringify(
+        issues.map((issue) => ({
+          issueId: issue.id,
+          title: issue.title,
+          paths: Array.isArray(issue.paths) ? issue.paths.filter((value): value is string => typeof value === "string") : [],
+          inferredPaths: inferCapabilityPaths({
+            id: issue.id,
+            identifier: issue.identifier,
+            title: issue.title,
+            description: issue.description,
+            labels: Array.isArray(issue.labels) ? issue.labels.filter((value): value is string => typeof value === "string") : [],
+            paths: Array.isArray(issue.paths) ? issue.paths.filter((value): value is string => typeof value === "string") : [],
+          }),
+          resolution: resolveTaskCapabilities({
+            id: issue.id,
+            identifier: issue.identifier,
+            title: issue.title,
+            description: issue.description,
+            labels: Array.isArray(issue.labels) ? issue.labels.filter((value): value is string => typeof value === "string") : [],
+            paths: Array.isArray(issue.paths) ? issue.paths.filter((value): value is string => typeof value === "string") : [],
+          }),
+        })),
+        null,
+        2,
+      ),
+    }];
+  }
+
   if (uri === "symphifo://workspace/workflow") {
     return [{ uri, mimeType: "text/markdown", text: safeRead(WORKFLOW_PATH) }];
   }
@@ -502,6 +674,23 @@ function listPrompts(): Array<Record<string, unknown>> {
       description: "Review the current WORKFLOW.md and propose improvements for orchestration quality.",
       arguments: [
         { name: "provider", description: "Reviewing model or client.", required: false },
+      ],
+    },
+    {
+      name: "symphifo-use-integration",
+      description: "Generate a concrete integration prompt for agency-agents or impeccable.",
+      arguments: [
+        { name: "integration", description: "Integration id: agency-agents or impeccable.", required: true },
+      ],
+    },
+    {
+      name: "symphifo-route-task",
+      description: "Explain which providers, profiles, and overlays Symphifo would choose for a task.",
+      arguments: [
+        { name: "title", description: "Task title.", required: true },
+        { name: "description", description: "Task description.", required: false },
+        { name: "labels", description: "Comma-separated labels.", required: false },
+        { name: "paths", description: "Comma-separated target paths or files.", required: false },
       ],
     },
   ];
@@ -582,6 +771,55 @@ async function getPrompt(name: string, args: Record<string, unknown> = {}): Prom
     };
   }
 
+  if (name === "symphifo-use-integration") {
+    const integration = typeof args.integration === "string" ? args.integration : "";
+    return {
+      description: "Integration guidance for a discovered Symphifo extension.",
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: buildIntegrationSnippet(integration, WORKSPACE_ROOT),
+          },
+        },
+      ],
+    };
+  }
+
+  if (name === "symphifo-route-task") {
+    const title = typeof args.title === "string" ? args.title : "";
+    const description = typeof args.description === "string" ? args.description : "";
+    const labels = typeof args.labels === "string"
+      ? args.labels.split(",").map((label) => label.trim()).filter(Boolean)
+      : [];
+    const paths = typeof args.paths === "string"
+      ? args.paths.split(",").map((value) => value.trim()).filter(Boolean)
+      : [];
+    const resolution = resolveTaskCapabilities({
+      title,
+      description,
+      labels,
+      paths,
+    });
+    return {
+      description: "Task routing prompt produced by the Symphifo capability resolver.",
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: [
+              "Use this routing decision as the execution plan for the task.",
+              "",
+              JSON.stringify(resolution, null, 2),
+            ].join("\n"),
+          },
+        },
+      ],
+    };
+  }
+
   throw new Error(`Unknown prompt: ${name}`);
 }
 
@@ -603,6 +841,8 @@ function listTools(): Array<Record<string, unknown>> {
         type: "object",
         properties: {
           state: { type: "string" },
+          capabilityCategory: { type: "string" },
+          category: { type: "string" },
         },
         additionalProperties: false,
       },
@@ -619,6 +859,10 @@ function listTools(): Array<Record<string, unknown>> {
           priority: { type: "number" },
           state: { type: "string" },
           labels: {
+            type: "array",
+            items: { type: "string" },
+          },
+          paths: {
             type: "array",
             items: { type: "string" },
           },
@@ -652,6 +896,48 @@ function listTools(): Array<Record<string, unknown>> {
         additionalProperties: false,
       },
     },
+    {
+      name: "symphifo.list_integrations",
+      description: "List discovered local integrations such as agency-agents profiles and impeccable skills.",
+      inputSchema: {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "symphifo.integration_snippet",
+      description: "Generate a workflow or prompt snippet for a discovered integration.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          integration: { type: "string" },
+        },
+        required: ["integration"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "symphifo.resolve_capabilities",
+      description: "Resolve which providers, roles, profiles, and overlays Symphifo should use for a task.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          description: { type: "string" },
+          labels: {
+            type: "array",
+            items: { type: "string" },
+          },
+          paths: {
+            type: "array",
+            items: { type: "string" },
+          },
+        },
+        required: ["title"],
+        additionalProperties: false,
+      },
+    },
   ];
 }
 
@@ -672,10 +958,17 @@ async function callTool(name: string, args: Record<string, unknown> = {}): Promi
   }
 
   if (name === "symphifo.list_issues") {
-    const issues = await getIssues();
     const stateFilter = typeof args.state === "string" && args.state.trim() ? args.state.trim() : "";
-    const filtered = stateFilter ? issues.filter((issue) => issue.state === stateFilter) : issues;
-    return toolText(JSON.stringify(filtered, null, 2));
+    const capabilityCategory = typeof args.capabilityCategory === "string" && args.capabilityCategory.trim()
+      ? args.capabilityCategory.trim()
+      : typeof args.category === "string" && args.category.trim()
+        ? args.category.trim()
+        : "";
+    const issues = await listIssues({
+      state: stateFilter || undefined,
+      capabilityCategory: capabilityCategory || undefined,
+    });
+    return toolText(JSON.stringify(issues, null, 2));
   }
 
   if (name === "symphifo.create_issue") {
@@ -690,7 +983,15 @@ async function callTool(name: string, args: Record<string, unknown> = {}): Promi
     const description = typeof args.description === "string" ? args.description : "";
     const priority = typeof args.priority === "number" ? args.priority : 2;
     const state = typeof args.state === "string" && args.state.trim() ? args.state.trim() : "Todo";
-    const labels = Array.isArray(args.labels) ? args.labels.filter((value): value is string => typeof value === "string") : ["symphifo", "mcp"];
+    const baseLabels = Array.isArray(args.labels) ? args.labels.filter((value): value is string => typeof value === "string") : ["symphifo", "mcp"];
+    const paths = Array.isArray(args.paths) ? args.paths.filter((value): value is string => typeof value === "string") : [];
+    const inferredPaths = inferCapabilityPaths({ id: issueId, identifier: issueId, title, description, labels: baseLabels, paths });
+    const resolution = resolveTaskCapabilities({ id: issueId, identifier: issueId, title, description, labels: baseLabels, paths });
+    const labels = [...new Set([
+      ...baseLabels,
+      resolution.category ? `capability:${resolution.category}` : "",
+      ...resolution.overlays.map((overlay) => `overlay:${overlay}`),
+    ].filter(Boolean))];
 
     const record = await issueResource?.insert({
       id: issueId,
@@ -700,6 +1001,11 @@ async function callTool(name: string, args: Record<string, unknown> = {}): Promi
       priority,
       state,
       labels,
+      paths,
+      inferredPaths,
+      capabilityCategory: resolution.category,
+      capabilityOverlays: resolution.overlays,
+      capabilityRationale: resolution.rationale,
       blockedBy: [],
       assignedToWorker: false,
       createdAt: nowIso(),
@@ -710,7 +1016,7 @@ async function callTool(name: string, args: Record<string, unknown> = {}): Promi
       maxAttempts: 3,
     });
 
-    await appendEvent("info", `Issue ${issueId} created through MCP.`, { title, state, labels }, issueId);
+    await appendEvent("info", `Issue ${issueId} created through MCP.`, { title, state, labels, paths, inferredPaths, capabilityCategory: resolution.category }, issueId);
     return toolText(JSON.stringify(record ?? { id: issueId }, null, 2));
   }
 
@@ -749,6 +1055,29 @@ async function callTool(name: string, args: Record<string, unknown> = {}): Promi
         },
       },
     }, null, 2));
+  }
+
+  if (name === "symphifo.list_integrations") {
+    return toolText(JSON.stringify(discoverIntegrations(WORKSPACE_ROOT), null, 2));
+  }
+
+  if (name === "symphifo.integration_snippet") {
+    const integration = typeof args.integration === "string" ? args.integration : "";
+    return toolText(buildIntegrationSnippet(integration, WORKSPACE_ROOT));
+  }
+
+  if (name === "symphifo.resolve_capabilities") {
+    const title = typeof args.title === "string" ? args.title : "";
+    const description = typeof args.description === "string" ? args.description : "";
+    const labels = Array.isArray(args.labels)
+      ? args.labels.filter((value): value is string => typeof value === "string")
+      : [];
+    const paths = Array.isArray(args.paths)
+      ? args.paths.filter((value): value is string => typeof value === "string")
+      : [];
+    const inferredPaths = inferCapabilityPaths({ title, description, labels, paths });
+    const resolution = resolveTaskCapabilities({ title, description, labels, paths });
+    return toolText(JSON.stringify({ inferredPaths, resolution }, null, 2));
   }
 
   throw new Error(`Unknown tool: ${name}`);

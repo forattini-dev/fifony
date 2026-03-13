@@ -23,6 +23,10 @@ codex:
   command: ""
 claude:
   command: ""
+routing:
+  enabled: true
+  priorities: {}
+  overrides: []
 ---
 
 You are working on {{ issue.identifier }}.
@@ -30,3 +34,6 @@ You are working on {{ issue.identifier }}.
 Title: {{ issue.title }}
 Description:
 {{ issue.description }}
+
+Target paths:
+{{ issue.paths }}

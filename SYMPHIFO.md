@@ -1,6 +1,6 @@
 # Symphifo local runtime reference
 
-This repository runs Symphifo as a local TypeScript package with no Linear dependency and no Elixir runtime.
+This repository runs Symphifo as a pure TypeScript local orchestrator with no external tracker dependency.
 
 ## What this package provides
 
@@ -90,15 +90,25 @@ npx symphifo --port 4040 --concurrency 2 --attempts 3
 - `agent.provider` can be `codex` or `claude`.
 - `agent.providers[]` can mix both in one pipeline.
 - `agent.profile` resolves to local profile files from workspace or home directories.
+- `routing.enabled` can disable automatic task routing.
+- `routing.priorities` can override the default scheduler order by capability category.
+- `routing.overrides[]` can override the automatic provider/profile selection for matching tasks.
+- `routing.overrides[].match.paths` can force routing based on target directories or files.
+- Issue payloads can carry `paths[]` so routing can use the real change surface, not only text and labels.
+- When `paths[]` is omitted, Symphifo infers routing hints from path-like text mentions and from files changed inside an existing persisted workspace.
+- Symphifo derives labels like `capability:<category>` and `overlay:<name>` from the routing result for queue triage and visibility.
 - The rendered prompt is written to `symphifo-prompt.md` and exported through `SYMPHIFO_PROMPT` and `SYMPHIFO_PROMPT_FILE`.
 - Each issue runs as a multi-turn session controlled by `agent.max_turns`.
 - Each turn exports `SYMPHIFO_AGENT_PROVIDER`, `SYMPHIFO_AGENT_ROLE`, `SYMPHIFO_AGENT_PROFILE`, `SYMPHIFO_AGENT_PROFILE_FILE`, `SYMPHIFO_AGENT_PROFILE_INSTRUCTIONS`, `SYMPHIFO_SESSION_ID`, `SYMPHIFO_SESSION_KEY`, `SYMPHIFO_TURN_INDEX`, `SYMPHIFO_MAX_TURNS`, `SYMPHIFO_TURN_PROMPT`, `SYMPHIFO_TURN_PROMPT_FILE`, `SYMPHIFO_PREVIOUS_OUTPUT`, and `SYMPHIFO_RESULT_FILE`.
 - The agent can continue, finish, block, or fail by printing `SYMPHIFO_STATUS=...` or by writing `symphifo-result.json`.
 - Session and pipeline state are persisted in `s3db`.
 - Workspace JSON artifacts are temporary CLI handoff files, not the source of truth.
+- The `s3db` resources are partitioned for the main operational lookups (`state`, `capabilityCategory`, `issueId`, `kind`, `attempt`, `provider/role`).
 - The scheduler advances one turn per execution slot and resumes persisted `In Progress` work.
+- When issue priority ties, the scheduler prefers more critical capability categories first (`security`, `bugfix`, `backend`, `devops`, `frontend-ui`, `architecture`, `documentation`, `default`) unless `routing.priorities` overrides that order.
 - `npx symphifo mcp` keeps the scheduler alive even without the dashboard port.
 - `npx symphifo mcp` starts a stdio MCP server backed by the same durable `s3db` state as the runtime.
+- frontend-heavy tasks automatically carry stricter review overlays such as `impeccable` when matched by the capability resolver.
 
 ## MCP capabilities
 
@@ -144,11 +154,11 @@ Recommended MCP client config:
 Compatibility routes:
 
 - `/api/state`
-- `/api/issues`
+- `/api/issues` with optional `state` and `capabilityCategory` query filters
 - `POST /api/issues`
 - `/api/issue/:id/pipeline`
 - `/api/issue/:id/sessions`
-- `/api/events`
+- `/api/events` with optional `issueId`, `kind`, and `since` query filters
 - `/api/health`
 
 Generated documentation and native resources:
