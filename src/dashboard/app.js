@@ -1375,7 +1375,10 @@ function wireActions() {
     }
   });
 
-  rerunBtn?.addEventListener("click", () => loadState());
+  rerunBtn?.addEventListener("click", async () => {
+    try { await post("/refresh", {}); } catch {}
+    await loadState();
+  });
   clearEventsBtn?.addEventListener("click", () => {
     allEvents = [];
     lastEventTimestamp = "";

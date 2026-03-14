@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, watchFile, unwatchFile } from "node:fs";
 import { extname, join } from "node:path";
 import { env, argv, exit } from "node:process";
 import { stringify as stringifyYaml } from "yaml";
@@ -182,4 +182,39 @@ export function parsePort(args: string[]): number | undefined {
   }
 
   return undefined;
+}
+
+// ── Dynamic WORKFLOW.md reload ───────────────────────────────────────────────
+
+let workflowWatcher: (() => void) | null = null;
+
+export function watchWorkflowFile(
+  onReload: (definition: WorkflowDefinition) => void,
+): void {
+  const filePath = WORKFLOW_TEMPLATE;
+  if (!filePath || !existsSync(filePath)) return;
+
+  // Unwatch previous if any
+  if (workflowWatcher) workflowWatcher();
+
+  watchFile(filePath, { interval: 2000 }, () => {
+    try {
+      const definition = loadWorkflowDefinition();
+      logger.info(`WORKFLOW.md reloaded: ${filePath}`);
+      onReload(definition);
+    } catch (error) {
+      logger.warn(`Failed to reload WORKFLOW.md: ${String(error)}. Keeping last known good config.`);
+    }
+  });
+
+  workflowWatcher = () => {
+    unwatchFile(filePath);
+    workflowWatcher = null;
+  };
+
+  logger.info(`Watching WORKFLOW.md for changes: ${filePath}`);
+}
+
+export function unwatchWorkflowFile(): void {
+  if (workflowWatcher) workflowWatcher();
 }

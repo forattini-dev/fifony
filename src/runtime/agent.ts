@@ -686,6 +686,7 @@ async function runHook(
   const result = await runCommandWithTimeout(command, workspacePath, issue, {
     pollIntervalMs: 0,
     workerConcurrency: 1,
+    maxConcurrentByState: {},
     commandTimeoutMs: 300_000,
     maxAttemptsDefault: 1,
     retryDelayMs: 0,

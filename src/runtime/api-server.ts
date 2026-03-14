@@ -185,6 +185,12 @@ export async function startApiServer(
         await persistState(state);
         return c.json({ ok: true, workerConcurrency: state.config.workerConcurrency });
       },
+      "POST /refresh": async (c: any) => {
+        // Trigger immediate scheduler tick
+        addEvent(state, undefined, "manual", "Manual refresh requested via API.");
+        await persistState(state);
+        return c.json({ queued: true, requestedAt: now() }, 202);
+      },
       "GET /events/feed": async (c: any) => {
         const since = c.req.query("since");
         const issueId = c.req.query("issueId");

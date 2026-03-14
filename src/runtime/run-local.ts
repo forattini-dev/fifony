@@ -10,7 +10,7 @@ import {
   resolveDefaultProvider,
   getProviderDefaultCommand,
 } from "./providers.ts";
-import { bootstrapSource, loadWorkflowDefinition, parsePort } from "./workflow.ts";
+import { bootstrapSource, loadWorkflowDefinition, parsePort, watchWorkflowFile } from "./workflow.ts";
 import { deriveConfig, applyWorkflowConfig, loadSeedIssues, mergeStateWithSeed, computeMetrics, addEvent } from "./issues.ts";
 import { startApiServer } from "./api-server.ts";
 import { scheduler, installGracefulShutdown } from "./scheduler.ts";
@@ -123,6 +123,15 @@ async function main() {
   if (dashboardPort) {
     await startApiServer(state, dashboardPort, workflowDefinition);
   }
+
+  // Watch WORKFLOW.md for dynamic reload
+  watchWorkflowFile((newDefinition) => {
+    const newConfig = applyWorkflowConfig(deriveConfig(args), newDefinition, port);
+    Object.assign(state.config, newConfig);
+    addEvent(state, undefined, "info", `WORKFLOW.md reloaded — config updated (concurrency: ${newConfig.workerConcurrency}, turns: ${newConfig.maxTurns}).`);
+    state.updatedAt = now();
+    persistState(state).catch(() => {});
+  });
 
   try {
     addEvent(state, undefined, "info", `Runtime started in local-only mode (filesystem tracker).`);

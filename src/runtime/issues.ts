@@ -227,8 +227,22 @@ export function deriveConfig(args: string[]): RuntimeConfig {
     logLinesTail: parseEnvNumber("SYMPHIFO_LOG_TAIL_CHARS", 12_000),
     agentProvider: normalizeAgentProvider(env.SYMPHIFO_AGENT_PROVIDER ?? "codex"),
     agentCommand: toStringValue(env.SYMPHIFO_AGENT_COMMAND, ""),
+    maxConcurrentByState: {},
     runMode: "filesystem",
   };
+}
+
+function parseMaxConcurrentByState(agentConfig: JsonRecord): Record<string, number> {
+  const raw = agentConfig?.max_concurrent_agents_by_state;
+  if (!raw || typeof raw !== "object") return {};
+  const result: Record<string, number> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const num = typeof value === "number" ? value : Number.parseInt(String(value), 10);
+    if (Number.isFinite(num) && num > 0) {
+      result[key.toLowerCase()] = num;
+    }
+  }
+  return result;
 }
 
 export function applyWorkflowConfig(
@@ -260,6 +274,7 @@ export function applyWorkflowConfig(
       getNestedNumber(codexConfig, "timeout_ms", config.commandTimeoutMs),
       1_000, 600_000,
     ),
+    maxConcurrentByState: parseMaxConcurrentByState(agentConfig),
     agentProvider,
     agentCommand: resolveAgentCommand(agentProvider, config.agentCommand, codexCommand, claudeCommand),
     dashboardPort: String(

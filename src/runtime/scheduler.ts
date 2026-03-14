@@ -144,13 +144,23 @@ export function ensureNotStale(state: RuntimeState, staleTimeoutMs: number): voi
   }
 }
 
+function isPerStateFull(issue: IssueEntry, state: RuntimeState, running: Set<string>): boolean {
+  const byState = state.config.maxConcurrentByState;
+  if (!byState || Object.keys(byState).length === 0) return false;
+  const stateKey = issue.state.toLowerCase();
+  const limit = byState[stateKey];
+  if (limit === undefined) return false;
+  const count = state.issues.filter((i) => running.has(i.id) && i.state.toLowerCase() === stateKey).length;
+  return count >= limit;
+}
+
 export function pickNextIssues(
   state: RuntimeState,
   running: Set<string>,
   workflowDefinition: WorkflowDefinition | null,
 ): IssueEntry[] {
   return state.issues
-    .filter((issue) => canRunIssue(issue, running, state))
+    .filter((issue) => canRunIssue(issue, running, state) && !isPerStateFull(issue, state, running))
     .sort((a, b) => {
       const stateWeight = (c: IssueEntry) => c.state === "In Progress" ? 0 : c.state === "Blocked" ? 2 : 1;
       const weightDiff = stateWeight(a) - stateWeight(b);

@@ -61,6 +61,7 @@ export type IssueEntry = {
 export type RuntimeConfig = {
   pollIntervalMs: number;
   workerConcurrency: number;
+  maxConcurrentByState: Record<string, number>;
   commandTimeoutMs: number;
   maxAttemptsDefault: number;
   maxTurns: number;
