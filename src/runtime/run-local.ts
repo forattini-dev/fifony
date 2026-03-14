@@ -33,7 +33,7 @@ function usage() {
 async function main() {
   debugBoot("main:start");
   if (TRACKER_KIND !== "filesystem") {
-    fail("SYMPHIFO_TRACKER_KIND must be 'filesystem' for this fork.");
+    logger.warn(`Detected SYMPHIFO_TRACKER_KIND=${TRACKER_KIND}; forcing local filesystem tracker mode for this fork.`);
   }
 
   const args = CLI_ARGS;

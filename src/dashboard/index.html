@@ -63,6 +63,11 @@
               <label for="query">Search:</label>
               <input id="query" placeholder="e.g. LOCAL-1, title" />
 
+              <div class="view-toggle">
+                <button type="button" class="view-toggle-btn active" data-view="list">List</button>
+                <button type="button" class="view-toggle-btn" data-view="board">Board</button>
+              </div>
+
               <button id="rerun">Reload</button>
               <button id="new-issue-btn" class="btn-accent">+ New</button>
               <span id="issue-count" class="issue-count"></span>
@@ -111,6 +116,8 @@
               <div class="detail-placeholder" id="detail-placeholder">Select an issue to view sessions</div>
             </div>
           </div>
+
+          <div id="kanban-board" class="kanban-board" hidden></div>
         </section>
 
         <section class="card collapsed-section">

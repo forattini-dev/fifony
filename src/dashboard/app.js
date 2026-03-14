@@ -99,6 +99,9 @@ const createForm = document.getElementById("create-form");
 const detailPanel = document.getElementById("detail-panel");
 const detailPlaceholder = document.getElementById("detail-placeholder");
 
+const kanbanBoard = document.getElementById("kanban-board");
+const issuesMasterDetail = document.querySelector(".issues-master-detail");
+
 let appState = {};
 let lastEventTimestamp = "";
 let lastStateHash = "";
@@ -110,6 +113,7 @@ let lastHealthStatus = null;
 let activeKpiFilter = null;
 let previousKpiValues = {};
 let previousIssueStates = new Map();
+let viewMode = localStorage.getItem("symphifo-view-mode") || "list";
 
 // ── Toast notifications ─────────────────────────────────────────────────────
 
@@ -496,7 +500,7 @@ overviewEl.addEventListener("click", (event) => {
   }
 
   renderOverview(appState.metrics || {}, appState.issues || []);
-  renderIssues(appState.issues || []);
+  renderCurrentView();
 });
 
 // ── Issue Actions ────────────────────────────────────────────────────────────
@@ -718,6 +722,176 @@ function renderIssues(issues = []) {
     if (issue) {
       renderDetailPanel(issue);
     }
+  }
+}
+
+// ── Kanban board rendering ───────────────────────────────────────────────
+
+function renderKanban(issues = []) {
+  if (!kanbanBoard) return;
+
+  const selectedCategory = categoryFilter?.value || "all";
+  const search = queryInput.value.trim().toLowerCase();
+
+  const columns = ["Todo", "In Progress", "In Review", "Blocked", "Done", "Cancelled"];
+
+  // Filter issues for search/category but show all states (kanban shows all columns)
+  const filtered = issues.filter((issue) => {
+    if (selectedCategory !== "all" && issue.capabilityCategory !== selectedCategory) return false;
+    if (activeKpiFilter && activeKpiFilter.key === "capability" && activeKpiFilter.value === "critical") {
+      if (issue.capabilityCategory !== "security" && issue.capabilityCategory !== "bugfix") return false;
+    }
+    if (search) {
+      const target = `${issue.identifier} ${issue.title} ${issue.description || ""} ${issue.id}`.toLowerCase();
+      if (!target.includes(search)) return false;
+    }
+    return true;
+  });
+
+  // Group by state
+  const grouped = {};
+  for (const col of columns) grouped[col] = [];
+  for (const issue of filtered) {
+    const bucket = grouped[issue.state];
+    if (bucket) bucket.push(issue);
+    else if (grouped["Todo"]) grouped["Todo"].push(issue); // fallback
+  }
+
+  // Sort within each column: priority asc, then createdAt oldest first
+  for (const col of columns) {
+    grouped[col].sort((a, b) => {
+      const pDiff = (a.priority || 999) - (b.priority || 999);
+      if (pDiff !== 0) return pDiff;
+      const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return aTime - bTime;
+    });
+  }
+
+  kanbanBoard.innerHTML = columns.map((state) => {
+    const cards = grouped[state];
+    const cardsHtml = cards.length
+      ? cards.map((issue) => {
+          const isSelected = selectedDetailId === issue.id;
+          return `<div class="kanban-card${isSelected ? " selected" : ""}" data-issue-id="${escapeHtml(issue.id)}" draggable="true">
+            <div class="kanban-card-id">${escapeHtml(issue.identifier)}</div>
+            <div class="kanban-card-title">${escapeHtml(issue.title)}</div>
+            <div class="kanban-card-meta">
+              <span class="kanban-card-priority">P${escapeHtml(issue.priority)}</span>
+              ${issue.capabilityCategory ? `<span class="kanban-card-capability">${escapeHtml(issue.capabilityCategory)}</span>` : ""}
+            </div>
+          </div>`;
+        }).join("")
+      : '<div class="kanban-empty">No issues</div>';
+
+    return `<div class="kanban-column" data-state="${escapeHtml(state)}">
+      <div class="kanban-column-header">
+        <span class="kanban-column-title">${escapeHtml(state)}</span>
+        <span class="kanban-column-count">${cards.length}</span>
+      </div>
+      <div class="kanban-cards">${cardsHtml}</div>
+    </div>`;
+  }).join("");
+
+  // Update issue count
+  const countEl = document.getElementById("issue-count");
+  if (countEl) {
+    countEl.textContent = filtered.length === issues.length
+      ? `${issues.length} issues`
+      : `${filtered.length} / ${issues.length} issues`;
+  }
+
+  // Wire drag-and-drop
+  wireKanbanDragAndDrop();
+  // Wire card clicks
+  wireKanbanCardClicks();
+}
+
+function wireKanbanDragAndDrop() {
+  if (!kanbanBoard) return;
+
+  kanbanBoard.querySelectorAll(".kanban-card[draggable]").forEach((card) => {
+    card.addEventListener("dragstart", (e) => {
+      e.dataTransfer.setData("text/plain", card.dataset.issueId);
+      e.dataTransfer.effectAllowed = "move";
+      card.classList.add("dragging");
+    });
+    card.addEventListener("dragend", () => {
+      card.classList.remove("dragging");
+    });
+  });
+
+  kanbanBoard.querySelectorAll(".kanban-column").forEach((column) => {
+    column.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      column.classList.add("drag-over");
+    });
+    column.addEventListener("dragleave", (e) => {
+      // Only remove if leaving the column itself, not entering a child
+      if (!column.contains(e.relatedTarget)) {
+        column.classList.remove("drag-over");
+      }
+    });
+    column.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      column.classList.remove("drag-over");
+      const issueId = e.dataTransfer.getData("text/plain");
+      const newState = column.dataset.state;
+      if (!issueId || !newState) return;
+
+      // Check if the issue is already in this state
+      const issue = (appState.issues || []).find((i) => i.id === issueId);
+      if (issue && issue.state === newState) return;
+
+      try {
+        await post(`/issues/${encodeURIComponent(issueId)}/state`, { state: newState });
+        await syncAfterAction();
+      } catch (err) {
+        showToast(`State change failed: ${err.message}`);
+      }
+    });
+  });
+}
+
+function wireKanbanCardClicks() {
+  if (!kanbanBoard) return;
+
+  kanbanBoard.querySelectorAll(".kanban-card").forEach((card) => {
+    card.addEventListener("click", () => {
+      const issueId = card.dataset.issueId;
+      if (!issueId) return;
+      const issue = (appState.issues || []).find((i) => i.id === issueId);
+      if (!issue) return;
+
+      // Toggle selection
+      selectedDetailId = selectedDetailId === issueId ? null : issueId;
+
+      // Re-render to update selection highlight
+      renderKanban(appState.issues || []);
+    });
+  });
+}
+
+function setViewMode(mode) {
+  viewMode = mode;
+  localStorage.setItem("symphifo-view-mode", mode);
+
+  // Update toggle buttons
+  document.querySelectorAll(".view-toggle-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.view === mode);
+  });
+
+  const issues = appState.issues || [];
+
+  if (mode === "board") {
+    if (issuesMasterDetail) issuesMasterDetail.hidden = true;
+    if (kanbanBoard) kanbanBoard.hidden = false;
+    renderKanban(issues);
+  } else {
+    if (issuesMasterDetail) issuesMasterDetail.hidden = false;
+    if (kanbanBoard) kanbanBoard.hidden = true;
+    renderIssues(issues);
   }
 }
 
@@ -1375,6 +1549,11 @@ function wireActions() {
     }
   });
 
+  // View toggle buttons
+  document.querySelectorAll(".view-toggle-btn").forEach((btn) => {
+    btn.addEventListener("click", () => setViewMode(btn.dataset.view));
+  });
+
   rerunBtn?.addEventListener("click", async () => {
     try { await post("/refresh", {}); } catch {}
     await loadState();
@@ -1444,7 +1623,11 @@ async function loadState() {
     eventIssueFilter.value = options.some((entry) => entry.value === previousValue) ? previousValue : "all";
   }
   renderOverview(payload.metrics || {}, issues);
-  renderIssues(issues);
+  if (viewMode === "board") {
+    renderKanban(issues);
+  } else {
+    renderIssues(issues);
+  }
   renderRuntimeMeta(payload);
 
   const sourceRepo = (payload.sourceRepoUrl || "local").toString().split("/").slice(-1)[0] || "local";
@@ -1512,18 +1695,27 @@ async function refresh() {
 
 // ── Filters ──────────────────────────────────────────────────────────────────
 
+function renderCurrentView() {
+  const issues = appState.issues || [];
+  if (viewMode === "board") {
+    renderKanban(issues);
+  } else {
+    renderIssues(issues);
+  }
+}
+
 stateFilter.addEventListener("change", () => {
   // Clear KPI active state when manually changing filters
   activeKpiFilter = null;
   renderOverview(appState.metrics || {}, appState.issues || []);
-  renderIssues(appState.issues || []);
+  renderCurrentView();
 });
 categoryFilter?.addEventListener("change", () => {
   activeKpiFilter = null;
   renderOverview(appState.metrics || {}, appState.issues || []);
-  renderIssues(appState.issues || []);
+  renderCurrentView();
 });
-queryInput.addEventListener("input", () => renderIssues(appState.issues || []));
+queryInput.addEventListener("input", () => renderCurrentView());
 eventKindFilter?.addEventListener("change", async () => {
   allEvents = [];
   lastEventTimestamp = "";
@@ -1679,7 +1871,11 @@ function applyWsStateUpdate(msg) {
   // Render
   const issues = appState.issues || [];
   renderOverview(appState.metrics || {}, issues);
-  renderIssues(issues);
+  if (viewMode === "board") {
+    renderKanban(issues);
+  } else {
+    renderIssues(issues);
+  }
 
   // Events from push
   if (msg.events && Array.isArray(msg.events)) {
@@ -1702,8 +1898,8 @@ function applyWsStateUpdate(msg) {
     eventIssueFilter.value = options.some((entry) => entry.value === previousValue) ? previousValue : "all";
   }
 
-  // Auto-refresh detail panel if open
-  if (selectedDetailId && isDesktop() && msg.issues) {
+  // Auto-refresh detail panel if open (only in list mode where detail panel is visible)
+  if (selectedDetailId && isDesktop() && viewMode === "list" && msg.issues) {
     const issue = msg.issues.find((i) => i.id === selectedDetailId);
     if (issue && (issue.state === "In Progress" || issue.state === "In Review")) {
       loadSessionsForPanel(selectedDetailId, "detail-session-panel");
@@ -1811,6 +2007,16 @@ function stopPollingFallback() {
 // ── Boot ─────────────────────────────────────────────────────────────────────
 
 wireActions();
+
+// Apply initial view mode from localStorage
+if (viewMode === "board") {
+  if (issuesMasterDetail) issuesMasterDetail.hidden = true;
+  if (kanbanBoard) kanbanBoard.hidden = false;
+  document.querySelectorAll(".view-toggle-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.view === "board");
+  });
+}
+
 loadHealth();
 refresh();
 connectWebSocket();

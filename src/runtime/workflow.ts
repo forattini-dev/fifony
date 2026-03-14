@@ -115,7 +115,6 @@ export function loadWorkflowDefinition(): WorkflowDefinition {
     tracker: {
       ...getNestedRecord(config, "tracker"),
       kind: "filesystem",
-      project_slug: "",
     },
   };
 
