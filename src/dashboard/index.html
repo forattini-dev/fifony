@@ -18,6 +18,7 @@
         <div class="badges">
           <span id="health" class="badge badge-sm">connecting</span>
           <span id="lastRefresh" class="badge badge-sm badge-ghost">refresh: -</span>
+          <button id="sound-toggle" class="sound-toggle" title="Toggle notification sounds"></button>
           <div class="dropdown dropdown-end" id="theme-dropdown">
             <div tabindex="0" role="button" class="badge theme-toggle" id="theme-toggle">
               <span class="theme-swatch" id="theme-swatch"></span>
@@ -116,9 +117,6 @@
         </div>
 
         <div id="kanban-board" class="kanban-board"></div>
-        <div id="kanban-detail" class="kanban-detail" hidden>
-          <div id="kanban-detail-content"></div>
-        </div>
       </section>
 
       <!-- Tab: List (master-detail) -->

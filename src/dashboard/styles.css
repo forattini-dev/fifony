@@ -1637,14 +1637,7 @@ h2 {
   color: var(--frost);
 }
 
-.kanban-detail {
-  margin-top: 8px;
-  background: var(--crypt);
-  border: 1px solid var(--ash);
-  padding: 16px;
-  max-height: 60vh;
-  overflow-y: auto;
-}
+/* kanban-detail replaced by .kanban-detail-slideover (slide-over panel) */
 
 /* ── Two-panel layout (desktop >= 900px) ─────────────────────────────────── */
 
@@ -1811,6 +1804,154 @@ h2 {
   font-size: 0.62rem;
   color: var(--iron);
   margin-top: 1px;
+}
+
+/* ── Keyboard shortcut help overlay ─────────────────────────────────────── */
+
+.shortcut-help {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 60;
+  width: 260px;
+  animation: slide-in-right 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.shortcut-help .card-body {
+  padding: 12px 14px;
+}
+
+.shortcut-help-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.shortcut-help-title span {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--slate);
+}
+
+.shortcut-help-close {
+  background: transparent;
+  border: none;
+  color: var(--iron);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0 2px;
+  transition: color 150ms;
+}
+
+.shortcut-help-close:hover {
+  color: var(--frost);
+}
+
+.shortcut-help-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.shortcut-help-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 0.72rem;
+  color: var(--silver);
+}
+
+.shortcut-help-list kbd {
+  display: inline-block;
+  min-width: 20px;
+  padding: 1px 5px;
+  text-align: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.68rem;
+  background: var(--cobble);
+  border: 1px solid var(--ash);
+  color: var(--frost);
+}
+
+/* ── Sound toggle button ───────────────────────────────────────────────── */
+
+.sound-toggle {
+  background: transparent;
+  border: 1px solid var(--ash);
+  color: var(--iron);
+  cursor: pointer;
+  font-size: 0.82rem;
+  padding: 4px 8px;
+  line-height: 1;
+  transition: border-color 150ms, color 150ms;
+}
+
+.sound-toggle:hover {
+  border-color: var(--dungeon);
+  color: var(--frost);
+}
+
+/* ── Events tab pulsing dot ────────────────────────────────────────────── */
+
+.tab-has-new {
+  position: relative;
+}
+
+.tab-has-new::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  background: var(--danger, #fb7185);
+  border-radius: 50%;
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.3); }
+}
+
+/* ── Kanban detail slide-over ──────────────────────────────────────────── */
+
+.kanban-detail-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.3);
+  z-index: 40;
+  animation: fade-in 150ms ease;
+}
+
+.kanban-detail-slideover {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 400px;
+  max-width: 100vw;
+  background: var(--crypt);
+  border-left: 1px solid var(--ash);
+  z-index: 50;
+  overflow-y: auto;
+  padding: 16px;
+  animation: slide-in-right 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 @media (min-width: 900px) {

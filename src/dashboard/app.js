@@ -93,8 +93,6 @@ const detailPanel = document.getElementById("detail-panel");
 const detailPlaceholder = document.getElementById("detail-placeholder");
 
 const kanbanBoard = document.getElementById("kanban-board");
-const kanbanDetail = document.getElementById("kanban-detail");
-const kanbanDetailContent = document.getElementById("kanban-detail-content");
 const issuesMasterDetail = document.querySelector(".issues-master-detail");
 
 let appState = {};
@@ -112,6 +110,99 @@ let viewMode = localStorage.getItem("symphifo-view-mode") || "board";
 let expandedKanbanCards = new Set();
 let collapsedColumns = new Set(JSON.parse(localStorage.getItem("symphifo-collapsed-columns") || "[]"));
 let isDraggingKanban = false;
+let showShortcutHelp = false;
+let shortcutHelpTimer = null;
+let soundMuted = localStorage.getItem("symphifo-sound-muted") !== "false"; // default muted
+let lastEventCount = 0;
+
+// ── Sound notifications ──────────────────────────────────────────────────────
+
+function playBeep(freq, ms) {
+  if (soundMuted) return;
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.frequency.value = freq;
+  gain.gain.value = 0.1;
+  osc.start();
+  osc.stop(ctx.currentTime + ms / 1000);
+}
+
+function playBlockedSound() {
+  playBeep(220, 150);
+}
+
+function playDoneSound() {
+  if (soundMuted) return;
+  playBeep(440, 100);
+  setTimeout(() => playBeep(880, 100), 120);
+}
+
+function initSoundToggle() {
+  const btn = document.getElementById("sound-toggle");
+  if (!btn) return;
+  btn.textContent = soundMuted ? "\uD83D\uDD07" : "\uD83D\uDD0A";
+  btn.addEventListener("click", () => {
+    soundMuted = !soundMuted;
+    localStorage.setItem("symphifo-sound-muted", soundMuted ? "true" : "false");
+    btn.textContent = soundMuted ? "\uD83D\uDD07" : "\uD83D\uDD0A";
+  });
+}
+
+// ── Keyboard shortcut help overlay ───────────────────────────────────────────
+
+function toggleShortcutHelp() {
+  showShortcutHelp = !showShortcutHelp;
+  renderShortcutHelp();
+}
+
+function hideShortcutHelp() {
+  showShortcutHelp = false;
+  clearTimeout(shortcutHelpTimer);
+  shortcutHelpTimer = null;
+  const el = document.getElementById("shortcut-help");
+  if (el) el.remove();
+}
+
+function renderShortcutHelp() {
+  let el = document.getElementById("shortcut-help");
+  if (!showShortcutHelp) {
+    if (el) el.remove();
+    clearTimeout(shortcutHelpTimer);
+    return;
+  }
+
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "shortcut-help";
+    el.className = "shortcut-help card card-compact bg-base-200 shadow-lg";
+    document.body.appendChild(el);
+  }
+
+  el.innerHTML = `<div class="card-body">
+    <div class="shortcut-help-title">
+      <span>Keyboard shortcuts</span>
+      <button class="shortcut-help-close" id="shortcut-help-close">&times;</button>
+    </div>
+    <ul class="shortcut-help-list">
+      <li><kbd>?</kbd> Toggle this help</li>
+      <li><kbd>j</kbd> / <kbd>&darr;</kbd> Next issue</li>
+      <li><kbd>k</kbd> / <kbd>&uarr;</kbd> Previous issue</li>
+      <li><kbd>n</kbd> New issue</li>
+      <li><kbd>r</kbd> Retry selected</li>
+      <li><kbd>Esc</kbd> Close panels/forms</li>
+      <li><kbd>1</kbd>-<kbd>4</kbd> Switch tabs</li>
+    </ul>
+  </div>`;
+
+  document.getElementById("shortcut-help-close")?.addEventListener("click", hideShortcutHelp);
+
+  // Auto-hide after 10 seconds
+  clearTimeout(shortcutHelpTimer);
+  shortcutHelpTimer = setTimeout(hideShortcutHelp, 10000);
+}
 
 // ── Tab switching ────────────────────────────────────────────────────────────
 
@@ -122,6 +213,10 @@ function switchTab(tabName) {
   // Update tab buttons
   document.querySelectorAll(".tab").forEach((btn) => {
     btn.classList.toggle("tab-active", btn.dataset.tab === tabName);
+    // Clear new-event indicator when user clicks Events tab
+    if (tabName === "events" && btn.dataset.tab === "events") {
+      btn.classList.remove("tab-has-new");
+    }
   });
 
   // Show/hide panels
@@ -420,7 +515,14 @@ function updateTabBadges() {
     const tab = btn.dataset.tab;
     if (tab === "board") btn.textContent = issueCount > 0 ? `Board (${issueCount})` : "Board";
     else if (tab === "list") btn.textContent = issueCount > 0 ? `List (${issueCount})` : "List";
-    else if (tab === "events") btn.textContent = eventCount > 0 ? `Events (${eventCount})` : "Events";
+    else if (tab === "events") {
+      btn.textContent = eventCount > 0 ? `Events (${eventCount})` : "Events";
+      // Add pulsing dot when new events arrive and Events tab is not active
+      if (eventCount > lastEventCount && viewMode !== "events") {
+        btn.classList.add("tab-has-new");
+      }
+      lastEventCount = eventCount;
+    }
     // runtime: no counter
   });
 }
@@ -1142,9 +1244,19 @@ function wireKanbanCardClicks() {
   });
 }
 
+function closeKanbanSlideover() {
+  selectedDetailId = null;
+  const overlay = document.getElementById("kanban-detail-overlay");
+  const panel = document.getElementById("kanban-detail-slideover");
+  if (overlay) overlay.remove();
+  if (panel) panel.remove();
+  renderKanban(appState.issues || []);
+}
+
 function renderKanbanDetail(issue) {
-  if (!kanbanDetail || !kanbanDetailContent) return;
-  kanbanDetail.hidden = false;
+  // Remove any existing slide-over
+  document.getElementById("kanban-detail-overlay")?.remove();
+  document.getElementById("kanban-detail-slideover")?.remove();
 
   const stateActions = issue.state === "Blocked"
     ? `<button class="btn btn-xs btn-ghost" data-action="retry" data-id="${escapeHtml(issue.id)}">Retry</button>
@@ -1157,7 +1269,18 @@ function renderKanbanDetail(issue) {
     ? `<button class="btn btn-xs btn-ghost" data-action="retry" data-id="${escapeHtml(issue.id)}">Retry</button>`
     : `<button class="btn btn-xs btn-ghost" data-action="cancel" data-id="${escapeHtml(issue.id)}">Cancel</button>`;
 
-  kanbanDetailContent.innerHTML = `
+  // Create overlay
+  const overlay = document.createElement("div");
+  overlay.id = "kanban-detail-overlay";
+  overlay.className = "kanban-detail-overlay";
+  overlay.addEventListener("click", closeKanbanSlideover);
+  document.body.appendChild(overlay);
+
+  // Create slide-over panel
+  const panel = document.createElement("div");
+  panel.id = "kanban-detail-slideover";
+  panel.className = "kanban-detail-slideover";
+  panel.innerHTML = `
     <div class="detail-issue-header" style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--ash);">
       <span class="mono" style="color:var(--plague);font-size:0.72rem;font-weight:600;">${escapeHtml(issue.identifier)}</span>
       <span style="color:var(--frost);font-size:0.78rem;font-weight:600;flex:1;">${escapeHtml(issue.title)}</span>
@@ -1174,16 +1297,13 @@ function renderKanbanDetail(issue) {
     <div class="actions" style="margin-top:8px;">${stateActions}</div>
     <div class="session-panel" id="kanban-session-panel" style="margin-top:10px;">${sessionLoadingSkeleton()}</div>
   `;
+  document.body.appendChild(panel);
 
   // Wire close button
-  document.getElementById("kanban-close-detail")?.addEventListener("click", () => {
-    selectedDetailId = null;
-    kanbanDetail.hidden = true;
-    renderKanban(appState.issues || []);
-  });
+  document.getElementById("kanban-close-detail")?.addEventListener("click", closeKanbanSlideover);
 
   // Wire action buttons
-  kanbanDetailContent.querySelectorAll(".btn[data-action]").forEach((btn) => {
+  panel.querySelectorAll(".btn[data-action]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const action = btn.dataset.action;
       const id = btn.dataset.id;
@@ -2113,6 +2233,18 @@ document.addEventListener("keydown", (event) => {
     return;
   }
 
+  // ? to toggle shortcut help
+  if (event.key === "?") {
+    toggleShortcutHelp();
+    return;
+  }
+
+  // 1-4 to switch tabs
+  if (event.key === "1") { switchTab("board"); return; }
+  if (event.key === "2") { switchTab("list"); return; }
+  if (event.key === "3") { switchTab("events"); return; }
+  if (event.key === "4") { switchTab("runtime"); return; }
+
   // r to retry selected
   if (event.key === "r" && selectedDetailId) {
     retryIssue(selectedDetailId);
@@ -2126,6 +2258,18 @@ document.addEventListener("keydown", (event) => {
   }
 
   if (event.key !== "Escape") return;
+
+  // Close shortcut help
+  if (showShortcutHelp) {
+    hideShortcutHelp();
+    return;
+  }
+
+  // Close kanban slide-over
+  if (document.getElementById("kanban-detail-overlay")) {
+    closeKanbanSlideover();
+    return;
+  }
 
   // Close create form
   if (!createForm.hidden) {
@@ -2193,9 +2337,11 @@ function detectStateTransitions(oldIssues, newIssues) {
     // Notify on important transitions
     if (issue.state === "Blocked") {
       showToast(`${issue.identifier} blocked${issue.lastError ? ": " + issue.lastError.slice(0, 80) : ""}`, "warn", 6000);
+      playBlockedSound();
     } else if (issue.state === "Done") {
       const dur = issue.durationMs ? ` (${formatDuration(issue.durationMs)})` : "";
       showToast(`${issue.identifier} completed${dur}`, "success", 5000);
+      playDoneSound();
     } else if (issue.state === "Cancelled") {
       showToast(`${issue.identifier} cancelled`, "warn", 3000);
     } else if (issue.state === "In Progress" && prev === "Todo") {
@@ -2431,6 +2577,7 @@ function stopPollingFallback() {
 // ── Boot ─────────────────────────────────────────────────────────────────────
 
 wireActions();
+initSoundToggle();
 
 // Apply initial tab from localStorage
 switchTab(viewMode);
