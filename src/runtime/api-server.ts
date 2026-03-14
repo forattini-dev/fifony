@@ -37,8 +37,7 @@ export async function startApiServer(
   }
 
   const { ApiPlugin } = await loadS3dbModule();
-  const dashboardHtml = readTextOrNull(FRONTEND_INDEX)
-    || `<!doctype html><html><body><pre>Unable to load Symphifo dashboard assets.</pre></body></html>`;
+  const fallbackHtml = `<!doctype html><html><body><pre>Unable to load Symphifo dashboard assets.</pre></body></html>`;
   const eventResource = getEventStateResource();
 
   const listEvents = async (filters: { issueId?: string; kind?: string; since?: string } = {}): Promise<RuntimeEvent[]> => {
@@ -94,7 +93,7 @@ export async function startApiServer(
     port,
     host: "0.0.0.0",
     versionPrefix: false,
-    rootRoute: (c: any) => c.html(dashboardHtml),
+    rootRoute: (c: any) => c.html(readTextOrNull(FRONTEND_INDEX) || fallbackHtml),
     static: [{
       driver: "filesystem",
       path: "/assets",
