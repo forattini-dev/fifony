@@ -16,6 +16,9 @@ function getSystemTheme() {
 
 function getSavedTheme() {
   const raw = localStorage.getItem(THEME_STORAGE_KEY);
+  if (raw === null) {
+    return "sunset";
+  }
   return normalizeThemeChoice(raw);
 }
 
@@ -1943,6 +1946,8 @@ async function loadState() {
   lastStateHash = hash;
 
   appState = payload;
+  websocketPort = payload?.websocketPort ?? websocketPort;
+  websocketHost = payload?.websocketHost || websocketHost;
   const issues = Array.isArray(payload.issues) ? payload.issues : [];
   if (eventIssueFilter) {
     const previousValue = eventIssueFilter.value || "all";
@@ -2169,7 +2174,15 @@ let ws = null;
 let wsConnected = false;
 let wsReconnectTimer = null;
 let wsReconnectCount = 0;
+let wsReconnectInProgress = false;
+let websocketPort = null;
+let websocketHost = null;
+let websocketCandidateIndex = 0;
 let pollingTimer = null;
+let pollingInFlight = false;
+
+const WS_MAX_RETRY_COUNT = 6;
+const POLLING_INTERVAL_MS = 3000;
 
 function detectStateTransitions(oldIssues, newIssues) {
   if (!oldIssues?.length || !newIssues?.length) return;
@@ -2249,9 +2262,42 @@ function applyWsStateUpdate(msg) {
   refreshBadge.textContent = `realtime: ${new Date().toLocaleTimeString()}`;
 }
 
-function connectWebSocket() {
+function resolveWebSocketPort() {
+  return Number.parseInt(location.port || (location.protocol === "https:" ? "443" : "80"), 10);
+}
+
+function resolveWebSocketCandidates() {
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-  const url = `${protocol}//${location.host}/ws`;
+  const host = location.hostname;
+  const port = resolveWebSocketPort();
+  // Same port, /ws path — matches ApiPlugin listeners[].protocols.websocket.path
+  return [`${protocol}//${host}:${port}/ws`];
+}
+
+function connectWebSocketUrl() {
+  const candidates = resolveWebSocketCandidates();
+  if (!candidates.length) {
+    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+    const host = websocketHost || location.hostname;
+    const port = resolveWebSocketPort();
+    return `${protocol}//${host}:${port}/`;
+  }
+
+  if (websocketCandidateIndex >= candidates.length) {
+    websocketCandidateIndex = 0;
+  }
+
+  const url = candidates[websocketCandidateIndex];
+  websocketCandidateIndex += 1;
+  return url;
+}
+
+function connectWebSocket() {
+  if (ws || wsConnected || wsReconnectInProgress) {
+    return;
+  }
+
+  const url = connectWebSocketUrl();
 
   try {
     ws = new WebSocket(url);
@@ -2261,6 +2307,8 @@ function connectWebSocket() {
   }
 
   ws.onopen = () => {
+    websocketCandidateIndex = 0;
+    wsReconnectInProgress = false;
     wsConnected = true;
     wsReconnectCount = 0;
     stopPollingFallback();
@@ -2310,15 +2358,26 @@ function connectWebSocket() {
     wsConnected = false;
     ws = null;
     wsReconnectCount++;
+    wsReconnectInProgress = false;
 
     healthBadge.innerHTML = '<span class="loading loading-spinner loading-xs"></span> connecting';
     healthBadge.className = "badge badge-warning gap-1";
     lastHealthStatus = "offline";
 
-    // Always try to reconnect with backoff
+    if (wsReconnectCount > WS_MAX_RETRY_COUNT) {
+      wsReconnectCount = 0;
+      startPollingFallback();
+      return;
+    }
+
+    // Retry with backoff while trying to reach realtime endpoint.
     clearTimeout(wsReconnectTimer);
     const delay = Math.min(1000 * Math.pow(2, wsReconnectCount), 15000);
-    wsReconnectTimer = setTimeout(() => connectWebSocket(), delay);
+    wsReconnectInProgress = true;
+    wsReconnectTimer = setTimeout(() => {
+      wsReconnectInProgress = false;
+      connectWebSocket();
+    }, delay);
   };
 
   ws.onerror = () => {
@@ -2326,10 +2385,43 @@ function connectWebSocket() {
   };
 }
 
-// No polling fallback needed — WS is the only realtime channel.
-// On reconnect, a single loadState() fetch is done via the "connected" message handler.
-function startPollingFallback() {}
-function stopPollingFallback() {}
+function startPollingFallback() {
+  if (pollingTimer) return;
+
+  const poll = async () => {
+    if (wsConnected) {
+      stopPollingFallback();
+      return;
+    }
+    if (pollingInFlight) {
+      pollingTimer = setTimeout(poll, POLLING_INTERVAL_MS);
+      return;
+    }
+
+    try {
+      pollingInFlight = true;
+      healthBadge.textContent = "polling";
+      healthBadge.className = "badge badge-ghost";
+      await refresh();
+      lastHealthStatus = "polling";
+    } catch {
+      // Polling should be resilient in UI layer.
+    } finally {
+      pollingInFlight = false;
+      pollingTimer = setTimeout(poll, POLLING_INTERVAL_MS);
+    }
+  };
+
+  showToast("WebSocket unavailable, using polling fallback", "warn", 2500);
+  poll();
+}
+
+function stopPollingFallback() {
+  if (pollingTimer) {
+    clearTimeout(pollingTimer);
+    pollingTimer = null;
+  }
+}
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
 
@@ -2341,6 +2433,17 @@ switchTab(viewMode);
 // Ensure create form stays hidden on boot (switchTab reveals the board panel but form must remain hidden)
 if (createForm) createForm.hidden = true;
 
-loadHealth();
-refresh();
-connectWebSocket();
+(async () => {
+  await loadHealth();
+  try {
+    await loadState();
+    await loadEvents();
+  } catch (error) {
+    await refresh();
+  }
+  connectWebSocket();
+  refreshSessions();
+})().catch((error) => {
+  console.error(error);
+  showToast("Dashboard failed to initialize", "error", 3000);
+});

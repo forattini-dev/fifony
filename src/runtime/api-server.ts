@@ -18,17 +18,15 @@ import {
   setActiveApiPlugin,
   persistState,
 } from "./store.ts";
-import {
-  addEvent,
-  computeCapabilityCounts,
-} from "./issues.ts";
+import { addEvent, computeCapabilityCounts, computeMetrics } from "./issues.ts";
 import { detectAvailableProviders } from "./providers.ts";
 import { analyzeParallelizability } from "./scheduler.ts";
 import { setApiRuntimeContext } from "./api-runtime-context.ts";
-import { computeMetrics } from "./issues.ts";
+
+// ── WebSocket broadcast ──────────────────────────────────────────────────────
 
 type WsClient = { send: (data: string) => void; readyState: number };
-let wsClients = new Set<WsClient>();
+const wsClients = new Set<WsClient>();
 
 export function broadcastToWebSocketClients(message: Record<string, unknown>): void {
   const data = JSON.stringify(message);
@@ -38,6 +36,8 @@ export function broadcastToWebSocketClients(message: Record<string, unknown>): v
     }
   }
 }
+
+// ── API server ───────────────────────────────────────────────────────────────
 
 export async function startApiServer(
   state: RuntimeState,
@@ -121,6 +121,8 @@ export async function startApiServer(
               timestamp: now(),
               metrics: computeMetrics(state.issues),
               capabilities: computeCapabilityCounts(state.issues),
+              issues: state.issues,
+              events: state.events.slice(0, 50),
             }));
           },
           onMessage: (socket: WsClient, message: string | Buffer) => {
@@ -131,9 +133,7 @@ export async function startApiServer(
               }
             } catch {}
           },
-          onClose: (socket: WsClient) => {
-            wsClients.delete(socket);
-          },
+          onClose: (socket: WsClient) => { wsClients.delete(socket); },
           onError: () => {},
         },
       },
@@ -147,10 +147,7 @@ export async function startApiServer(
     }],
     docs: { enabled: true, title: "Symphifo API", version: "1.0.0", description: "Local orchestration API for Symphifo" },
     cors: { enabled: true, origin: "*" },
-    security: {
-      contentSecurityPolicy: false,
-      frameguard: false,
-    },
+    security: { enabled: false },
     logging: { enabled: true, excludePaths: ["/health", "/status", "/assets", "/ws"] },
     compression: { enabled: true, threshold: 1024 },
     health: { enabled: true },
@@ -190,7 +187,6 @@ export async function startApiServer(
         return c.json({ ok: true, workerConcurrency: state.config.workerConcurrency });
       },
       "POST /refresh": async (c: any) => {
-        // Trigger immediate scheduler tick
         addEvent(state, undefined, "manual", "Manual refresh requested via API.");
         await persistState(state);
         return c.json({ queued: true, requestedAt: now() }, 202);
