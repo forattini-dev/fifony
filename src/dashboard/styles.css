@@ -197,18 +197,17 @@ body {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  margin-bottom: 20px;
-  padding-bottom: 16px;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
   border-bottom: 1px solid var(--ash);
 }
 
-h1 {
-  margin: 0;
-  font-size: 1.1rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--frost);
+.topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
+
 
 h2 {
   margin: 0;
@@ -224,7 +223,8 @@ h2 {
   color: var(--plague);
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.12em;
+  font-size: 0.85rem;
   font-size: 0.7rem;
   text-shadow: 0 0 12px color-mix(in srgb, var(--plague) 30%, transparent);
 }
@@ -575,6 +575,10 @@ h2 {
   border: 1px solid var(--ash);
   padding: 14px;
   margin-bottom: 12px;
+}
+
+.create-form[hidden] {
+  display: none !important;
 }
 
 .create-form-grid {
