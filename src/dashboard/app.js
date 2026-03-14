@@ -115,7 +115,36 @@ let lastHealthStatus = null;
 let activeKpiFilter = null;
 let previousKpiValues = {};
 let previousIssueStates = new Map();
-let viewMode = localStorage.getItem("symphifo-view-mode") || "list";
+let viewMode = localStorage.getItem("symphifo-view-mode") || "board";
+
+// ── Tab switching ────────────────────────────────────────────────────────────
+
+function switchTab(tabName) {
+  viewMode = tabName;
+  localStorage.setItem("symphifo-view-mode", tabName);
+
+  // Update tab buttons
+  document.querySelectorAll(".tab-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.tab === tabName);
+  });
+
+  // Show/hide panels
+  document.querySelectorAll(".tab-panel").forEach((panel) => {
+    if (panel.dataset.panel === tabName) {
+      panel.hidden = false;
+      panel.style.animation = "none";
+      panel.offsetHeight; // trigger reflow
+      panel.style.animation = "";
+    } else {
+      panel.hidden = true;
+    }
+  });
+
+  // Render content for active tab
+  const issues = appState.issues || [];
+  if (tabName === "board") renderKanban(issues);
+  else if (tabName === "list") renderIssues(issues);
+}
 
 // ── Toast notifications ─────────────────────────────────────────────────────
 
@@ -979,26 +1008,7 @@ function renderKanbanDetail(issue) {
 }
 
 function setViewMode(mode) {
-  viewMode = mode;
-  localStorage.setItem("symphifo-view-mode", mode);
-
-  // Update toggle buttons
-  document.querySelectorAll(".view-toggle-btn").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.view === mode);
-  });
-
-  const issues = appState.issues || [];
-
-  if (mode === "board") {
-    if (issuesMasterDetail) issuesMasterDetail.hidden = true;
-    if (kanbanBoard) kanbanBoard.hidden = false;
-    renderKanban(issues);
-  } else {
-    if (issuesMasterDetail) issuesMasterDetail.hidden = false;
-    if (kanbanBoard) kanbanBoard.hidden = true;
-    if (kanbanDetail) kanbanDetail.hidden = true;
-    renderIssues(issues);
-  }
+  switchTab(mode);
 }
 
 // ── Detail panel (desktop right panel) ──────────────────────────────────────
@@ -1656,8 +1666,8 @@ function wireActions() {
   });
 
   // View toggle buttons
-  document.querySelectorAll(".view-toggle-btn").forEach((btn) => {
-    btn.addEventListener("click", () => setViewMode(btn.dataset.view));
+  document.querySelectorAll(".tab-btn").forEach((btn) => {
+    btn.addEventListener("click", () => switchTab(btn.dataset.tab));
   });
 
   rerunBtn?.addEventListener("click", async () => {
@@ -2114,14 +2124,8 @@ function stopPollingFallback() {
 
 wireActions();
 
-// Apply initial view mode from localStorage
-if (viewMode === "board") {
-  if (issuesMasterDetail) issuesMasterDetail.hidden = true;
-  if (kanbanBoard) kanbanBoard.hidden = false;
-  document.querySelectorAll(".view-toggle-btn").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.view === "board");
-  });
-}
+// Apply initial tab from localStorage
+switchTab(viewMode);
 
 loadHealth();
 refresh();

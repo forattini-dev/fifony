@@ -34,128 +34,131 @@
         </div>
       </header>
 
-      <main class="layout">
-        <section class="card">
-          <h2>Overview</h2>
-          <div id="overview" class="grid"></div>
-        </section>
+      <!-- Overview (always visible) -->
+      <section class="card">
+        <h2>Overview</h2>
+        <div id="overview" class="grid"></div>
+      </section>
 
-        <section class="card">
-          <div class="toolbar">
-            <h2>Issues</h2>
-            <div class="toolbar-right">
-              <label for="state-filter">Filter:</label>
-              <select id="state-filter">
-                <option value="all">All</option>
-                <option value="Todo">Todo</option>
-                <option value="In Progress">In Progress</option>
-                <option value="In Review">In Review</option>
-                <option value="Blocked">Blocked</option>
-                <option value="Done">Done</option>
-                <option value="Cancelled">Cancelled</option>
-              </select>
+      <!-- Tab navigation -->
+      <nav class="tab-nav" id="tab-nav">
+        <button class="tab-btn active" data-tab="board">Board</button>
+        <button class="tab-btn" data-tab="list">List</button>
+        <button class="tab-btn" data-tab="events">Events</button>
+        <button class="tab-btn" data-tab="runtime">Runtime</button>
+      </nav>
 
-              <label for="category-filter">Capability:</label>
-              <select id="category-filter">
-                <option value="all">All</option>
-              </select>
+      <!-- Tab: Board (Kanban) -->
+      <section class="tab-panel active" data-panel="board">
+        <div class="toolbar">
+          <div class="toolbar-right">
+            <label for="state-filter">Filter:</label>
+            <select id="state-filter">
+              <option value="all">All</option>
+              <option value="Todo">Todo</option>
+              <option value="In Progress">In Progress</option>
+              <option value="In Review">In Review</option>
+              <option value="Blocked">Blocked</option>
+              <option value="Done">Done</option>
+              <option value="Cancelled">Cancelled</option>
+            </select>
 
-              <label for="query">Search:</label>
-              <input id="query" placeholder="e.g. LOCAL-1, title" />
+            <label for="category-filter">Capability:</label>
+            <select id="category-filter">
+              <option value="all">All</option>
+            </select>
 
-              <div class="view-toggle">
-                <button type="button" class="view-toggle-btn active" data-view="list">List</button>
-                <button type="button" class="view-toggle-btn" data-view="board">Board</button>
-              </div>
+            <label for="query">Search:</label>
+            <input id="query" placeholder="e.g. LOCAL-1, title" />
 
-              <button id="rerun">Reload</button>
-              <button id="new-issue-btn" class="btn-accent">+ New</button>
-              <span id="issue-count" class="issue-count"></span>
+            <button id="rerun">Reload</button>
+            <button id="new-issue-btn" class="btn-accent">+ New</button>
+            <span id="issue-count" class="issue-count"></span>
+          </div>
+        </div>
+
+        <!-- Create issue form (shared, hidden by default) -->
+        <div id="create-form" class="create-form" hidden>
+          <div class="create-form-grid">
+            <div class="form-group span-2">
+              <label>Title</label>
+              <input id="cf-title" type="text" placeholder="What needs to be done" />
+            </div>
+            <div class="form-group span-2">
+              <label>Description</label>
+              <textarea id="cf-desc" rows="2" placeholder="Details, context, acceptance criteria..."></textarea>
+            </div>
+            <div class="form-group">
+              <label>Priority (1-10)</label>
+              <input id="cf-priority" type="number" min="1" max="10" value="1" />
+            </div>
+            <div class="form-group">
+              <label>Max Attempts</label>
+              <input id="cf-attempts" type="number" min="1" max="10" value="3" />
+            </div>
+            <div class="form-group span-2">
+              <label>Labels <span class="hint">comma-separated</span></label>
+              <input id="cf-labels" type="text" placeholder="bug, frontend, urgent" />
+            </div>
+            <div class="form-group span-2">
+              <label>Paths <span class="hint">comma-separated file paths</span></label>
+              <input id="cf-paths" type="text" placeholder="src/foo.ts, src/bar.ts" />
             </div>
           </div>
-
-          <!-- Create issue form (hidden by default) -->
-          <div id="create-form" class="create-form" hidden>
-            <div class="create-form-grid">
-              <div class="form-group span-2">
-                <label>Title</label>
-                <input id="cf-title" type="text" placeholder="What needs to be done" />
-              </div>
-              <div class="form-group span-2">
-                <label>Description</label>
-                <textarea id="cf-desc" rows="2" placeholder="Details, context, acceptance criteria..."></textarea>
-              </div>
-              <div class="form-group">
-                <label>Priority (1-10)</label>
-                <input id="cf-priority" type="number" min="1" max="10" value="1" />
-              </div>
-              <div class="form-group">
-                <label>Max Attempts</label>
-                <input id="cf-attempts" type="number" min="1" max="10" value="3" />
-              </div>
-              <div class="form-group span-2">
-                <label>Labels <span class="hint">comma-separated</span></label>
-                <input id="cf-labels" type="text" placeholder="bug, frontend, urgent" />
-              </div>
-              <div class="form-group span-2">
-                <label>Paths <span class="hint">comma-separated file paths</span></label>
-                <input id="cf-paths" type="text" placeholder="src/foo.ts, src/bar.ts" />
-              </div>
-            </div>
-            <div class="create-form-actions">
-              <button id="cf-cancel">Cancel</button>
-              <button id="cf-submit" class="btn-accent">Create Issue</button>
-            </div>
+          <div class="create-form-actions">
+            <button id="cf-cancel">Cancel</button>
+            <button id="cf-submit" class="btn-accent">Create Issue</button>
           </div>
+        </div>
 
-          <div class="issues-master-detail">
-            <div class="master-panel">
-              <div id="issue-list" class="issue-list"></div>
-            </div>
-            <div class="detail-panel" id="detail-panel">
-              <div class="detail-placeholder" id="detail-placeholder">Select an issue to view sessions</div>
-            </div>
+        <div id="kanban-board" class="kanban-board"></div>
+        <div id="kanban-detail" class="kanban-detail" hidden>
+          <div id="kanban-detail-content"></div>
+        </div>
+      </section>
+
+      <!-- Tab: List (master-detail) -->
+      <section class="tab-panel" data-panel="list" hidden>
+        <div class="issues-master-detail">
+          <div class="master-panel">
+            <div id="issue-list" class="issue-list"></div>
           </div>
-
-          <div id="kanban-board" class="kanban-board" hidden></div>
-          <div id="kanban-detail" class="kanban-detail" hidden>
-            <div id="kanban-detail-content"></div>
+          <div class="detail-panel" id="detail-panel">
+            <div class="detail-placeholder" id="detail-placeholder">Select an issue to view sessions</div>
           </div>
-        </section>
+        </div>
+      </section>
 
-        <section class="card collapsed-section">
-          <details>
-            <summary><h2 style="display:inline">Runtime</h2></summary>
-            <div id="runtime-meta"></div>
-          </details>
-        </section>
+      <!-- Tab: Events -->
+      <section class="tab-panel" data-panel="events" hidden>
+        <div class="toolbar">
+          <div class="toolbar-right">
+            <label for="event-kind-filter">Kind:</label>
+            <select id="event-kind-filter">
+              <option value="all">All</option>
+              <option value="info">info</option>
+              <option value="state">state</option>
+              <option value="progress">progress</option>
+              <option value="error">error</option>
+              <option value="manual">manual</option>
+              <option value="runner">runner</option>
+            </select>
 
-        <section class="card">
-          <div class="toolbar">
-            <h2>Live Events</h2>
-            <div class="toolbar-right">
-              <label for="event-kind-filter">Kind:</label>
-              <select id="event-kind-filter">
-                <option value="all">All</option>
-                <option value="info">info</option>
-                <option value="state">state</option>
-                <option value="progress">progress</option>
-                <option value="error">error</option>
-                <option value="manual">manual</option>
-                <option value="runner">runner</option>
-              </select>
+            <label for="event-issue-filter">Issue:</label>
+            <select id="event-issue-filter">
+              <option value="all">All</option>
+            </select>
 
-              <label for="event-issue-filter">Issue:</label>
-              <select id="event-issue-filter">
-                <option value="all">All</option>
-              </select>
-
-              <button id="clear-events">Clear</button>
-            </div>
+            <button id="clear-events">Clear</button>
           </div>
-          <div id="events" class="events"></div>
-        </section>
-      </main>
+        </div>
+        <div id="events" class="events"></div>
+      </section>
+
+      <!-- Tab: Runtime -->
+      <section class="tab-panel" data-panel="runtime" hidden>
+        <div id="runtime-meta"></div>
+      </section>
     </div>
 
     <script src="/assets/app.js"></script>
