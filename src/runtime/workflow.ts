@@ -30,10 +30,10 @@ import {
 export function bootstrapSource(): void {
   if (existsSync(SOURCE_MARKER)) return;
 
-  logger.info("Creating local source snapshot for Symphifo (local-only runtime)...");
+  logger.info("Creating local source snapshot for Symphifony (local-only runtime)...");
 
   const skipDirs = new Set([
-    ".git", ".symphifo", "node_modules", ".venv", "data",
+    ".git", ".symphifony", "node_modules", ".venv", "data",
     "dist", "build", ".turbo", ".next", ".nuxt", ".tanstack",
     "coverage", "artifacts", "captures", "tmp", "temp",
   ]);

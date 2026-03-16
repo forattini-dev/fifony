@@ -101,7 +101,7 @@ function buildRuntimeArgs(result: CommandParseResult): string[] {
 
 async function runRuntime(mode: "cli" | "mcp", result: CommandParseResult): Promise<void> {
   const workspace = getStringOption(result, "workspace");
-  const workspaceRoot = resolve(workspace ?? env.SYMPHIFO_WORKSPACE_ROOT ?? cwd());
+  const workspaceRoot = resolve(workspace ?? env.SYMPHIFONY_WORKSPACE_ROOT ?? cwd());
   const runtimeArgs = buildRuntimeArgs(result);
 
   const outcome = await new Promise<{ code?: number | null; signal?: NodeJS.Signals | null }>((resolvePromise, rejectPromise) => {
@@ -110,8 +110,8 @@ async function runRuntime(mode: "cli" | "mcp", result: CommandParseResult): Prom
       stdio: "inherit",
       env: {
         ...env,
-        SYMPHIFO_INTERFACE: mode,
-        SYMPHIFO_WORKSPACE_ROOT: workspaceRoot,
+        SYMPHIFONY_INTERFACE: mode,
+        SYMPHIFONY_WORKSPACE_ROOT: workspaceRoot,
       },
     });
 
@@ -137,8 +137,8 @@ async function runRuntime(mode: "cli" | "mcp", result: CommandParseResult): Prom
 async function runMcpServer(result: CommandParseResult): Promise<void> {
   const workspace = getStringOption(result, "workspace");
   const persistence = getStringOption(result, "persistence");
-  const workspaceRoot = resolve(workspace ?? env.SYMPHIFO_WORKSPACE_ROOT ?? cwd());
-  const persistenceRoot = resolve(persistence ?? env.SYMPHIFO_PERSISTENCE ?? workspaceRoot);
+  const workspaceRoot = resolve(workspace ?? env.SYMPHIFONY_WORKSPACE_ROOT ?? cwd());
+  const persistenceRoot = resolve(persistence ?? env.SYMPHIFONY_PERSISTENCE ?? workspaceRoot);
 
   const outcome = await new Promise<{ code?: number | null; signal?: NodeJS.Signals | null }>((resolvePromise, rejectPromise) => {
     const child = spawn(execPath, [tsxCli, mcpScript], {
@@ -146,8 +146,8 @@ async function runMcpServer(result: CommandParseResult): Promise<void> {
       stdio: "inherit",
       env: {
         ...env,
-        SYMPHIFO_WORKSPACE_ROOT: workspaceRoot,
-        SYMPHIFO_PERSISTENCE: persistenceRoot,
+        SYMPHIFONY_WORKSPACE_ROOT: workspaceRoot,
+        SYMPHIFONY_PERSISTENCE: persistenceRoot,
       },
     });
 
@@ -171,17 +171,17 @@ async function runMcpServer(result: CommandParseResult): Promise<void> {
 }
 
 const cli = createCLI({
-  name: packageJson.name ?? "symphifo",
+  name: packageJson.name ?? "symphifony",
   version: packageJson.version ?? "0.0.0",
   description: packageJson.description ?? "Filesystem-backed local multi-agent orchestrator.",
   commands: {
     run: {
-      description: "Run the local Symphifo runtime with the dashboard/API enabled when --port is provided.",
+      description: "Run the local Symphifony runtime with the dashboard/API enabled when --port is provided.",
       options: commonOptions,
       handler: (result) => runRuntime("cli", result),
     },
     mcp: {
-      description: "Run a Symphifo MCP server over stdio with resources, tools, and prompts backed by the local durable store.",
+      description: "Run a Symphifony MCP server over stdio with resources, tools, and prompts backed by the local durable store.",
       options: commonOptions,
       handler: (result) => runMcpServer(result),
     },
@@ -208,6 +208,6 @@ function normalizeArgs(rawArgs: string[]): string[] {
 const args = normalizeArgs(process.argv.slice(2));
 
 cli.run(args).catch((error) => {
-  console.error(`Failed to start symphifo CLI: ${String(error)}`);
+  console.error(`Failed to start symphifony CLI: ${String(error)}`);
   exit(1);
 });

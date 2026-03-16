@@ -1,4 +1,4 @@
-# Symphifo Service Specification
+# Symphifony Service Specification
 
 Status: Draft v1 (language-agnostic)
 
@@ -6,7 +6,7 @@ Purpose: Define a service that orchestrates coding agents to get project work do
 
 ## 1. Problem Statement
 
-Symphifo is a long-running local automation service that continuously reads work from a local
+Symphifony is a long-running local automation service that continuously reads work from a local
 tracker/state store, creates an isolated workspace for each issue, and runs a coding agent session
 for that issue inside the workspace.
 
@@ -26,7 +26,7 @@ require stricter approvals or sandboxing.
 
 Important boundary:
 
-- Symphifo is a scheduler/runner and tracker reader.
+- Symphifony is a scheduler/runner and tracker reader.
 - Ticket writes (state transitions, comments, PR links) are typically performed by the coding agent
   using tools available in the workflow/runtime environment.
 - A successful run may end at a workflow-defined handoff state (for example `Human Review`), not
@@ -103,7 +103,7 @@ Important boundary:
 
 ### 3.2 Abstraction Levels
 
-Symphifo is easiest to port when kept in these layers:
+Symphifony is easiest to port when kept in these layers:
 
 1. `Policy Layer` (repo-defined)
    - `WORKFLOW.md` prompt body.
@@ -344,7 +344,7 @@ Fields:
   - Required for dispatch.
   - Current supported value: `filesystem`
 - `root` (path string)
-  - Default: workspace-local persistence root used by Symphifo.
+  - Default: workspace-local persistence root used by Symphifony.
 - `issues_file` (path string, optional)
   - Optional seed issue file used during bootstrap.
 - `active_states` (list of strings)
@@ -365,7 +365,7 @@ Fields:
 Fields:
 
 - `root` (path string or `$VAR`)
-  - Default: `<system-temp>/symphony_workspaces`
+- Default: `<system-temp>/.symphifony/workspaces`
   - `~` and strings containing path separators are expanded.
   - Bare strings without path separators are preserved as-is (relative roots are allowed but
     discouraged).
@@ -552,7 +552,7 @@ This section is intentionally redundant so a coding agent can implement the conf
 - `tracker.active_states`: list of strings, default `["Todo", "In Progress"]`
 - `tracker.terminal_states`: list of strings, default `["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]`
 - `polling.interval_ms`: integer, default `30000`
-- `workspace.root`: path, default `<system-temp>/symphifo_workspaces`
+- `workspace.root`: path, default `<system-temp>/.symphifony/workspaces`
 - `worker.ssh_hosts` (extension): list of SSH host strings, optional; when omitted, work runs
   locally
 - `worker.max_concurrent_agents_per_host` (extension): positive integer, optional; shared per-host
@@ -1063,7 +1063,7 @@ Optional client-side tool extension:
 
 `tracker_rpc` extension contract:
 
-- Purpose: execute a raw tracker request using Symphifo's configured tracker context for the current
+- Purpose: execute a raw tracker request using Symphifony's configured tracker context for the current
   session.
 - Availability: only meaningful when the active tracker implementation exposes a raw RPC/HTTP
   bridge.
@@ -1085,7 +1085,7 @@ Optional client-side tool extension:
 - Execute one GraphQL operation per tool call.
 - If the provided document contains multiple operations, reject the tool call as invalid input.
 - `operationName` selection is intentionally out of scope for this extension.
-- Reuse the configured tracker context from the active Symphifo workflow/runtime config; do not
+- Reuse the configured tracker context from the active Symphifony workflow/runtime config; do not
   require the coding agent to read raw credentials from disk.
 - Tool result semantics:
   - transport success + no top-level GraphQL `errors` -> `success=true`
@@ -1210,7 +1210,7 @@ Orchestrator behavior on tracker errors:
 
 ### 11.5 Tracker Writes (Important Boundary)
 
-Symphifo does not require first-class tracker write APIs in the orchestrator.
+Symphifony does not require first-class tracker write APIs in the orchestrator.
 
 - Ticket mutations (state transitions, comments, PR metadata) are typically handled by the coding
   agent using tools defined by the workflow prompt.
@@ -1451,7 +1451,7 @@ Minimum endpoints:
       "issue_id": "abc123",
       "status": "running",
       "workspace": {
-        "path": "/tmp/symphony_workspaces/MT-649"
+        "path": "/tmp/.symphifony/workspaces/MT-649"
       },
       "attempts": {
         "restart_count": 1,
@@ -2092,7 +2092,7 @@ Use the same validation profiles as Section 17:
 - Optional HTTP server honors CLI `--port` over `server.port`, uses a safe default bind host, and
   exposes the baseline endpoints/error semantics in Section 13.7 if shipped.
 - Optional `tracker_rpc` client-side tool extension exposes raw tracker access through the
-  app-server session using configured Symphifo context.
+  app-server session using configured Symphifony context.
 - TODO: Persist retry queue and session metadata across process restarts.
 - TODO: Make observability settings configurable in workflow front matter without prescribing UI
   implementation details.
@@ -2109,7 +2109,7 @@ Use the same validation profiles as Section 17:
 
 ## Appendix A. SSH Worker Extension (Optional)
 
-This appendix describes a common extension profile in which Symphifo keeps one central
+This appendix describes a common extension profile in which Symphifony keeps one central
 orchestrator but executes worker runs on one or more remote hosts over SSH.
 
 ### A.1 Execution Model

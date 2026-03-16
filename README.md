@@ -1,6 +1,6 @@
-# Symphifo
+# Symphifony
 
-Symphifo is a filesystem-backed local orchestrator with a TypeScript runtime, `codex` and `claude` agent support, and durable state stored under the current workspace by default.
+Symphifony is a filesystem-backed local orchestrator with a TypeScript runtime, `codex` and `claude` agent support, and durable state stored under the current workspace by default.
 
 ## Features
 
@@ -29,31 +29,31 @@ Runtime requirement:
 Run the standard local runtime:
 
 ```bash
-npx -y symphifo
+npx -y symphifony
 ```
 
 Run the MCP server over stdio:
 
 ```bash
-npx -y symphifo mcp
+npx -y symphifony mcp
 ```
 
 Start the API and dashboard:
 
 ```bash
-npx -y symphifo --port 4040
+npx -y symphifony --port 4040
 ```
 
 Override the persistence root:
 
 ```bash
-npx -y symphifo --persistence /path/to/root
+npx -y symphifony --persistence /path/to/root
 ```
 
 By default:
 
 - the current directory is the workspace root
-- state is stored under `./.symphifo/`
+- state is stored under `./.symphifony/`
 - the runtime can start with zero seed issues
 
 When `--port` is set, open:
@@ -66,13 +66,13 @@ When `--port` is set, open:
 Run the local UI:
 
 ```bash
-npx -y symphifo --port 4040
+npx -y symphifony --port 4040
 ```
 
 Default local flow:
 
 1. Open `http://localhost:4040`
-2. Create an issue from the UI or `POST /issues`
+2. Create an issue from the UI or `POST /issues/create`
 3. Add `labels` and `paths` when you want stronger automatic routing
 4. Watch the queue, capability category, overlays, events, and agent sessions
 5. Use `View Sessions` on an issue to inspect the current pipeline, turns, directives, and latest output
@@ -93,16 +93,18 @@ Useful app routes:
 - `/` — dashboard
 - `/docs` — OpenAPI docs from `ApiPlugin`
 - `/state` — runtime snapshot with capability counts
-- `/issues` — issue CRUD (GET, POST, PUT, DELETE)
-- `/events` — event records
+- `/issues/:id/pipeline` — pipeline snapshot for one issue
+- `/issues/:id/sessions` — session history for one issue
+- `/issues/create` — create issue
+- `/issues/:id/state` — transition issue state
+- `/issues/:id/retry` — retry issue
+- `/issues/:id/cancel` — cancel issue
 - `/events/feed` — filtered event feed with `?since=&kind=&issueId=`
-- `/issue/:id/pipeline` — pipeline snapshot for one issue
-- `/issue/:id/sessions` — session history for one issue
 
 Useful API examples:
 
 ```bash
-curl -X POST http://localhost:4040/issues \
+curl -X POST http://localhost:4040/issues/create \
   -H 'content-type: application/json' \
   -d '{
     "title":"Prepare release notes",
@@ -112,12 +114,12 @@ curl -X POST http://localhost:4040/issues \
 ```
 
 ```bash
-curl 'http://localhost:4040/issues?state=Todo&capabilityCategory=devops'
+curl 'http://localhost:4040/events/feed?kind=info&issueId=LOCAL-1'
 ```
 
 ## Package layout
 
-- `bin/symphifo.js` — published CLI entrypoint
+- `bin/symphifony.js` — published CLI entrypoint
 - `src/cli.ts` — command router built on `cli-args-parser`
 - `src/mcp/server.ts` — stdio MCP server
 - `src/runtime/run-local.ts` — thin main entrypoint
@@ -135,12 +137,12 @@ curl 'http://localhost:4040/issues?state=Todo&capabilityCategory=devops'
 - `src/runtime/skills.ts` — skill discovery and hydration
 - `src/routing/capability-resolver.ts` — task classification engine
 - `src/integrations/catalog.ts` — agent/skill integration discovery
-- `src/dashboard/{index.html,app.js,styles.css}` — web UI
+- `src/dashboard/{index.html,app-react.js,styles.css,manifest.webmanifest,service-worker.js,icon.svg}` — web UI
 - `src/fixtures/local-issues.json` — optional seed issue catalog
 
 ## Workflow contract
 
-If the target workspace contains `WORKFLOW.md`, Symphifo reads its YAML front matter and Markdown body.
+If the target workspace contains `WORKFLOW.md`, Symphifony reads its YAML front matter and Markdown body.
 
 Supported fields:
 
@@ -166,33 +168,33 @@ Supported fields:
 
 The Markdown body is rendered as the issue prompt and exported through:
 
-- `SYMPHIFO_PROMPT`
-- `SYMPHIFO_PROMPT_FILE`
+- `SYMPHIFONY_PROMPT`
+- `SYMPHIFONY_PROMPT_FILE`
 
-If no command is configured, Symphifo auto-detects available providers (`claude`, `codex`) and uses sensible defaults.
+If no command is configured, Symphifony auto-detects available providers (`claude`, `codex`) and uses sensible defaults.
 
 ## Agent runtime contract
 
 Each agent turn receives:
 
-- `SYMPHIFO_AGENT_PROVIDER`
-- `SYMPHIFO_AGENT_ROLE`
-- `SYMPHIFO_AGENT_PROFILE`
-- `SYMPHIFO_AGENT_PROFILE_FILE`
-- `SYMPHIFO_AGENT_PROFILE_INSTRUCTIONS`
-- `SYMPHIFO_SESSION_ID`
-- `SYMPHIFO_SESSION_KEY`
-- `SYMPHIFO_TURN_INDEX`
-- `SYMPHIFO_MAX_TURNS`
-- `SYMPHIFO_TURN_PROMPT`
-- `SYMPHIFO_TURN_PROMPT_FILE`
-- `SYMPHIFO_PREVIOUS_OUTPUT`
-- `SYMPHIFO_RESULT_FILE`
+- `SYMPHIFONY_AGENT_PROVIDER`
+- `SYMPHIFONY_AGENT_ROLE`
+- `SYMPHIFONY_AGENT_PROFILE`
+- `SYMPHIFONY_AGENT_PROFILE_FILE`
+- `SYMPHIFONY_AGENT_PROFILE_INSTRUCTIONS`
+- `SYMPHIFONY_SESSION_ID`
+- `SYMPHIFONY_SESSION_KEY`
+- `SYMPHIFONY_TURN_INDEX`
+- `SYMPHIFONY_MAX_TURNS`
+- `SYMPHIFONY_TURN_PROMPT`
+- `SYMPHIFONY_TURN_PROMPT_FILE`
+- `SYMPHIFONY_PREVIOUS_OUTPUT`
+- `SYMPHIFONY_RESULT_FILE`
 
 The agent can advance the session by:
 
-- printing `SYMPHIFO_STATUS=continue|done|blocked|failed`
-- writing `symphifo-result.json` with `status`, `summary`, and optional `nextPrompt`
+- printing `SYMPHIFONY_STATUS=continue|done|blocked|failed`
+- writing `symphifony-result.json` with `status`, `summary`, and optional `nextPrompt`
 
 Session and pipeline state are persisted in the local `s3db` store.
 Workspace JSON files are temporary CLI handoff artifacts only.
@@ -206,7 +208,7 @@ Agent profiles can be resolved from:
 
 Command resolution order:
 
-1. `SYMPHIFO_AGENT_COMMAND`
+1. `SYMPHIFONY_AGENT_COMMAND`
 2. provider-specific workflow command: `codex.command` or `claude.command`
 3. provider binary name: `codex` or `claude`
 
@@ -262,46 +264,44 @@ Issue payloads can include `paths` so the resolver can classify by target files 
 }
 ```
 
-If `paths` is omitted, Symphifo still tries to infer routing signals from:
+If `paths` is omitted, Symphifony still tries to infer routing signals from:
 
 - path-like mentions in the title and description
 - changed files already present in the persisted issue workspace
 
-Symphifo also derives queue labels such as `capability:<category>` and `overlay:<name>` from the resolver output.
+Symphifony also derives queue labels such as `capability:<category>` and `overlay:<name>` from the resolver output.
 The scheduler uses capability priority as a tie-breaker after issue priority, and `routing.priorities` can override the default category order.
 
 ## Durable local state
 
-- `./.symphifo/WORKFLOW.local.md`
-- `./.symphifo/s3db/`
-- `./.symphifo/symphifo-local.log`
+- `./.symphifony/WORKFLOW.local.md`
+- `./.symphifony/s3db/`
+- `./.symphifony/symphifony-local.log`
 
 ## HTTP surface
 
-Resource endpoints (s3db auto-generated):
+Primary REST endpoints:
 
-- `GET /issues` — list issues (supports `?state=&capabilityCategory=`)
-- `POST /issues` — create issue
-- `PUT /issues/:id` — update issue
-- `DELETE /issues/:id` — delete issue
-- `GET /events` — list events
-- `GET /runtime_state` — raw runtime state
-- `GET /agent_sessions` — list agent sessions
-- `GET /agent_pipelines` — list agent pipelines
+- `GET /runtime_state` — runtime state mirror resource
+- `GET /issues` — issue list resource
+- `GET /events` — event records resource
+- `GET /agent_sessions` — agent sessions resource
+- `GET /agent_pipelines` — agent pipelines resource
 
 Custom endpoints:
 
 - `GET /state` — runtime snapshot with capability counts
 - `GET /status` — health check
 - `GET /events/feed?since=&kind=&issueId=` — filtered event feed
-- `GET /issue/:id/pipeline` — pipeline snapshot for one issue
-- `GET /issue/:id/sessions` — session history for one issue
-- `POST /issue/:id/state` — transition issue state
-- `POST /issue/:id/retry` — retry issue
-- `POST /issue/:id/cancel` — cancel issue
+- `GET /issues/:id/pipeline` — pipeline snapshot for one issue
+- `GET /issues/:id/sessions` — session history for one issue
+- `POST /issues/:id/state` — transition issue state
+- `POST /issues/:id/retry` — retry issue
+- `POST /issues/:id/cancel` — cancel issue
 - `GET /providers` — detected providers with availability
 - `GET /parallelism` — parallelizability analysis
 - `POST /config/concurrency` — update worker concurrency
+- `POST /refresh` — request immediate state persistence
 
 The built-in dashboard filters issues by both runtime state and capability category, and mirrors the scheduler's capability-aware ordering.
 `GET /state` and the MCP status summary also expose aggregated capability counts.
@@ -326,41 +326,41 @@ The issue inspection routes use these partitions directly, including pipeline/se
 
 ## MCP surface
 
-`npx -y symphifo mcp` starts a stdio MCP server backed by the same `s3db` filesystem store as the runtime.
+`npx -y symphifony mcp` starts a stdio MCP server backed by the same `s3db` filesystem store as the runtime.
 
 Resources:
 
-- `symphifo://guide/overview`
-- `symphifo://guide/runtime`
-- `symphifo://guide/integration`
-- `symphifo://state/summary`
-- `symphifo://issues`
-- `symphifo://workspace/workflow`
-- `symphifo://issue/<id>`
+- `symphifony://guide/overview`
+- `symphifony://guide/runtime`
+- `symphifony://guide/integration`
+- `symphifony://state/summary`
+- `symphifony://issues`
+- `symphifony://workspace/workflow`
+- `symphifony://issue/<id>`
 
 Tools:
 
-- `symphifo.status`
-- `symphifo.list_issues` with optional `state`, `capabilityCategory`, or `category`
-- `symphifo.create_issue`
-- `symphifo.update_issue_state`
-- `symphifo.integration_config`
-- `symphifo.resolve_capabilities`
+- `symphifony.status`
+- `symphifony.list_issues` with optional `state`, `capabilityCategory`, or `category`
+- `symphifony.create_issue`
+- `symphifony.update_issue_state`
+- `symphifony.integration_config`
+- `symphifony.resolve_capabilities`
 
 Prompts:
 
-- `symphifo-integrate-client`
-- `symphifo-plan-issue`
-- `symphifo-review-workflow`
+- `symphifony-integrate-client`
+- `symphifony-plan-issue`
+- `symphifony-review-workflow`
 
 Minimal MCP client configuration:
 
 ```json
 {
   "mcpServers": {
-    "symphifo": {
+    "symphifony": {
       "command": "npx",
-      "args": ["-y", "symphifo", "mcp", "--workspace", "/path/to/workspace", "--persistence", "/path/to/workspace"]
+      "args": ["-y", "symphifony", "mcp", "--workspace", "/path/to/workspace", "--persistence", "/path/to/workspace"]
     }
   }
 }
@@ -369,7 +369,7 @@ Minimal MCP client configuration:
 ## GitHub Actions release flow
 
 - `pull_request`: runs the quality gate
-- `push` to `main`: runs quality and publishes `symphifo@next`
+- `push` to `main`: runs quality and publishes `symphifony@next`
 - tag `v*`: runs quality, publishes stable, and creates a GitHub Release
 
 Required repository secret:
@@ -395,8 +395,8 @@ git push origin v0.1.0
 After publish:
 
 ```bash
-npx -y symphifo@latest --port 4040
-npx -y symphifo@latest mcp
+npx -y symphifony@latest --port 4040
+npx -y symphifony@latest mcp
 ```
 
 Release checklist:

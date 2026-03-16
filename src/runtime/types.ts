@@ -266,6 +266,15 @@ export type S3dbModule = {
   ApiPlugin: new (options: Record<string, unknown>) => {
     stop?: () => Promise<void>;
   };
+  StateMachinePlugin?: new (options: Record<string, unknown>) => {
+    stop?: () => Promise<void>;
+    waitForPendingEvents?: (timeout?: number) => Promise<void>;
+    getMachineDefinition?: (machineId: string) => unknown;
+    getState?: (machineId: string, entityId: string) => Promise<unknown>;
+    getValidEvents?: (machineId: string, stateOrEntityId: string) => Promise<string[]>;
+    initializeEntity?: (machineId: string, entityId: string, context?: Record<string, unknown>) => Promise<unknown>;
+    send?: (machineId: string, entityId: string, event: string, context?: Record<string, unknown>) => Promise<unknown>;
+  };
   WebSocketPlugin?: new (options: Record<string, unknown>) => {
     stop?: () => Promise<void>;
     broadcast?: (message: unknown) => void;

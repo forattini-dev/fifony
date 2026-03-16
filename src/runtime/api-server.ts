@@ -2,6 +2,7 @@ import type {
   JsonRecord,
   RuntimeEvent,
   RuntimeState,
+  IssueEntry,
   WorkflowDefinition,
 } from "./types.ts";
 import {
@@ -9,7 +10,7 @@ import {
   FRONTEND_INDEX,
 } from "./constants.ts";
 import { NATIVE_RESOURCE_CONFIGS } from "./resources/index.ts";
-import { now, readTextOrNull, clamp } from "./helpers.ts";
+import { now, readTextOrNull, clamp, toStringValue } from "./helpers.ts";
 import { logger } from "./logger.ts";
 import {
   loadS3dbModule,
@@ -18,24 +19,98 @@ import {
   setActiveApiPlugin,
   persistState,
 } from "./store.ts";
-import { addEvent, computeCapabilityCounts, computeMetrics } from "./issues.ts";
+import {
+  addEvent,
+  computeCapabilityCounts,
+  computeMetrics,
+  createIssueFromPayload,
+  handleStatePatch,
+  transitionIssueState,
+} from "./issues.ts";
 import { detectAvailableProviders } from "./providers.ts";
 import { analyzeParallelizability } from "./scheduler.ts";
 import { setApiRuntimeContext } from "./api-runtime-context.ts";
+import { TERMINAL_STATES } from "./constants.ts";
+import { enhanceIssueField } from "./issue-enhancer.ts";
 
 // ── WebSocket broadcast (same port via listeners) ────────────────────────────
+// s3db.js 21.2.7 WebSocket contract: handlers receive (socketId, send, req)
+// instead of raw socket objects. We track socketId → send function.
 
-type WsClient = { send: (data: string) => void; readyState: number };
-const wsClients = new Set<WsClient>();
+type WsSendFn = (data: string) => void;
+const wsClients = new Map<string, WsSendFn>(); // socketId → send
+let broadcastSeq = 0;
+let lastBroadcastIssueSnapshot: Map<string, string> = new Map(); // id → JSON
+
+function sendToAllClients(data: string): void {
+  for (const [socketId, send] of [...wsClients]) {
+    try { send(data); } catch (error) {
+      logger.debug(`WebSocket send failed for ${socketId}, removing (remaining: ${wsClients.size - 1}): ${String(error)}`);
+      wsClients.delete(socketId);
+    }
+  }
+}
 
 export function broadcastToWebSocketClients(message: Record<string, unknown>): void {
   if (wsClients.size === 0) return;
-  const data = JSON.stringify(message);
-  for (const client of wsClients) {
-    if (client.readyState === 1) {
-      try { client.send(data); } catch {}
+
+  broadcastSeq++;
+  const issues = message.issues as Array<Record<string, unknown>> | undefined;
+
+  if (issues && lastBroadcastIssueSnapshot.size > 0) {
+    // Compute delta: only changed/new/removed issues
+    const currentIds = new Set<string>();
+    const changedIssues: Array<Record<string, unknown>> = [];
+
+    for (const issue of issues) {
+      const id = issue.id as string;
+      currentIds.add(id);
+      const serialized = JSON.stringify(issue);
+      if (lastBroadcastIssueSnapshot.get(id) !== serialized) {
+        changedIssues.push(issue);
+      }
+    }
+
+    const removedIds: string[] = [];
+    for (const prevId of lastBroadcastIssueSnapshot.keys()) {
+      if (!currentIds.has(prevId)) {
+        removedIds.push(prevId);
+      }
+    }
+
+    // Update snapshot
+    lastBroadcastIssueSnapshot = new Map(
+      issues.map((issue) => [issue.id as string, JSON.stringify(issue)]),
+    );
+
+    // If fewer than half changed, send a delta instead of full state
+    if (changedIssues.length < issues.length / 2 || changedIssues.length <= 3) {
+      const delta: Record<string, unknown> = {
+        type: "state:delta",
+        seq: broadcastSeq,
+        metrics: message.metrics,
+        capabilities: message.capabilities,
+        updatedAt: message.updatedAt,
+        issuesDelta: changedIssues,
+        issuesRemoved: removedIds,
+        events: message.events,
+      };
+      sendToAllClients(JSON.stringify(delta));
+      return;
     }
   }
+
+  // Full state broadcast (first time or too many changes)
+  if (issues) {
+    lastBroadcastIssueSnapshot = new Map(
+      issues.map((issue) => [issue.id as string, JSON.stringify(issue)]),
+    );
+  }
+
+  sendToAllClients(JSON.stringify({
+    ...message,
+    seq: broadcastSeq,
+  }));
 }
 
 // ── API server ───────────────────────────────────────────────────────────────
@@ -50,8 +125,7 @@ export async function startApiServer(
     throw new Error("Cannot start API plugin before the database is initialized.");
   }
 
-  const { ApiPlugin } = await loadS3dbModule();
-  const fallbackHtml = `<!doctype html><html><body><pre>Unable to load Symphifo dashboard assets.</pre></body></html>`;
+    const { ApiPlugin } = await loadS3dbModule();
   const eventResource = getEventStateResource();
 
   const listEvents = async (filters: { issueId?: string; kind?: string; since?: string } = {}): Promise<RuntimeEvent[]> => {
@@ -82,6 +156,32 @@ export async function startApiServer(
       : events;
   };
 
+  const findIssue = (issueId: string): IssueEntry | undefined =>
+    state.issues.find((issue) => issue.id === issueId || issue.identifier === issueId);
+
+  const parseIssue = (c: any): string | null => {
+    const value = c.req?.param ? c.req.param("id") : undefined;
+    if (typeof value !== "string") return null;
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
+  };
+
+  const mutateIssueState = async (c: any, updater: (issue: IssueEntry) => Promise<void> | void) => {
+    const issueId = parseIssue(c);
+    if (!issueId) {
+      return c.json({ ok: false, error: "Issue id is required." }, 400);
+    }
+
+    const issue = findIssue(issueId);
+    if (!issue) {
+      return c.json({ ok: false, error: "Issue not found" }, 404);
+    }
+
+    await updater(issue);
+    await persistState(state);
+    return c.json({ ok: true, issue });
+  };
+
   const resourceConfigs: Record<string, Record<string, unknown>> = Object.fromEntries(
     NATIVE_RESOURCE_CONFIGS.map((resourceConfig) => [
       resourceConfig.name,
@@ -94,7 +194,7 @@ export async function startApiServer(
   for (const item of existingResources || []) {
     if (
       typeof item?.name === "string" &&
-      item.name.startsWith("symphifo_") &&
+      item.name.startsWith("symphifony_") &&
       !nativeResourceNames.has(item.name)
     ) {
       resourceConfigs[item.name] = { enabled: false };
@@ -116,45 +216,54 @@ export async function startApiServer(
           enabled: true,
           path: "/ws",
           maxPayloadBytes: 512_000,
-          onConnection: (socket: WsClient) => {
-            wsClients.add(socket);
-            logger.debug(`WebSocket client connected (total: ${wsClients.size})`);
-            socket.send(JSON.stringify({
-              type: "connected",
-              timestamp: now(),
-              metrics: computeMetrics(state.issues),
-              capabilities: computeCapabilityCounts(state.issues),
-              issues: state.issues,
-              events: state.events.slice(0, 50),
-            }));
+          onConnection: (socketId: string, send: WsSendFn) => {
+            wsClients.set(socketId, send);
+            logger.debug(`WebSocket client connected: ${socketId} (total: ${wsClients.size})`);
+            try {
+              send(JSON.stringify({
+                type: "connected",
+                seq: broadcastSeq,
+                timestamp: now(),
+                metrics: computeMetrics(state.issues),
+                capabilities: computeCapabilityCounts(state.issues),
+                issues: state.issues,
+                events: state.events.slice(0, 50),
+              }));
+            } catch (error) {
+              logger.debug(`WebSocket initial send failed for ${socketId}: ${String(error)}`);
+            }
           },
-          onMessage: (socket: WsClient, message: string | Buffer) => {
+          onMessage: (socketId: string, message: string | Buffer, send: WsSendFn) => {
             try {
               const msg = JSON.parse(typeof message === "string" ? message : message.toString("utf8"));
               if (msg.type === "ping") {
-                socket.send(JSON.stringify({ type: "pong", timestamp: now() }));
+                send(JSON.stringify({ type: "pong", timestamp: now() }));
               }
             } catch {}
           },
-          onClose: (socket: WsClient) => {
-            wsClients.delete(socket);
-            logger.debug(`WebSocket client disconnected (total: ${wsClients.size})`);
+          onClose: (socketId: string) => {
+            wsClients.delete(socketId);
+            logger.debug(`WebSocket client disconnected: ${socketId} (total: ${wsClients.size})`);
           },
-          onError: () => {},
         },
       },
     }],
-    rootRoute: (c: any) => c.html(readTextOrNull(FRONTEND_INDEX) || fallbackHtml),
+    rootRoute: (c: any) => {
+      const html = readTextOrNull(FRONTEND_INDEX);
+      if (!html) return c.text("Dashboard not found", 404);
+      return c.html(html);
+    },
     static: [{
       driver: "filesystem",
-      path: "/assets",
+      path: "/",
       root: FRONTEND_DIR,
-      config: { maxAge: 0, etag: true },
+      pwa: true,
+      config: { etag: true },
     }],
-    docs: { enabled: true, title: "Symphifo API", version: "1.0.0", description: "Local orchestration API for Symphifo" },
+    docs: { enabled: true, title: "Symphifony API", version: "1.0.0", description: "Local orchestration API for Symphifony" },
     cors: { enabled: true, origin: "*" },
     security: { enabled: false },
-    logging: { enabled: true, excludePaths: ["/health", "/status", "/assets", "/ws"] },
+    logging: { enabled: true, excludePaths: ["/health", "/status", "/**/*.js", "/**/*.css", "/**/*.svg"] },
     compression: { enabled: true, threshold: 1024 },
     health: { enabled: true },
     resources: {
@@ -191,6 +300,83 @@ export async function startApiServer(
         addEvent(state, undefined, "manual", `Worker concurrency updated to ${state.config.workerConcurrency}.`);
         await persistState(state);
         return c.json({ ok: true, workerConcurrency: state.config.workerConcurrency });
+      },
+      "POST /issues/create": async (c: any) => {
+        try {
+          const payload = await c.req.json() as JsonRecord;
+          const issue = createIssueFromPayload(payload, state.issues, workflowDefinition);
+          state.issues.push(issue);
+          addEvent(state, issue.id, "info", `Issue ${issue.identifier} created via API.`);
+          await persistState(state);
+          return c.json({ ok: true, issue }, 201);
+        } catch (error) {
+          return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 400);
+        }
+      },
+      "POST /issues/enhance": async (c: any) => {
+        try {
+          const payload = await c.req.json() as JsonRecord;
+          const field = payload.field === "description" ? "description" : payload.field === "title" ? "title" : null;
+          if (!field) {
+            return c.json({ ok: false, error: 'Invalid field. Expected "title" or "description".' }, 400);
+          }
+
+          const title = toStringValue(payload.title);
+          const description = toStringValue(payload.description);
+          const provider = toStringValue(payload.provider, state.config.agentProvider);
+
+          const result = await enhanceIssueField(
+            { field, title, description, provider },
+            state.config,
+            workflowDefinition,
+          );
+
+          return c.json({ ok: true, field: result.field, value: result.value, provider: result.provider });
+        } catch (error) {
+          return c.json(
+            { ok: false, error: error instanceof Error ? error.message : String(error) },
+            500,
+          );
+        }
+      },
+      "POST /issues/:id/state": async (c: any) => {
+        const issueId = parseIssue(c);
+        if (!issueId) {
+          return c.json({ ok: false, error: "Issue id is required." }, 400);
+        }
+
+        const issue = findIssue(issueId);
+        if (!issue) {
+          return c.json({ ok: false, error: "Issue not found" }, 404);
+        }
+
+        try {
+          const payload = await c.req.json() as JsonRecord;
+          await handleStatePatch(state, issue, payload);
+          await persistState(state);
+          return c.json({ ok: true, issue });
+        } catch (error) {
+          return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 400);
+        }
+      },
+      "POST /issues/:id/retry": async (c: any) => {
+        return mutateIssueState(c, async (issue) => {
+          if (TERMINAL_STATES.has(issue.state)) {
+            await transitionIssueState(issue, "Todo", "Manual retry requested.");
+          } else {
+            issue.lastError = undefined;
+            issue.nextRetryAt = undefined;
+            issue.updatedAt = now();
+          }
+
+          addEvent(state, issue.id, "manual", `Manual retry requested for ${issue.id}.`);
+        });
+      },
+      "POST /issues/:id/cancel": async (c: any) => {
+        return mutateIssueState(c, async (issue) => {
+          await transitionIssueState(issue, "Cancelled", "Manual cancel requested.");
+          addEvent(state, issue.id, "manual", `Manual cancel requested for ${issue.id}.`);
+        });
       },
       "POST /refresh": async (c: any) => {
         addEvent(state, undefined, "manual", "Manual refresh requested via API.");

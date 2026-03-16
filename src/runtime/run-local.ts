@@ -33,7 +33,7 @@ function usage() {
 async function main() {
   debugBoot("main:start");
   if (TRACKER_KIND !== "filesystem") {
-    logger.warn(`Detected SYMPHIFO_TRACKER_KIND=${TRACKER_KIND}; forcing local filesystem tracker mode for this fork.`);
+    logger.warn(`Detected SYMPHIFONY_TRACKER_KIND=${TRACKER_KIND}; forcing local filesystem tracker mode for this fork.`);
   }
 
   const args = CLI_ARGS;
@@ -51,7 +51,7 @@ async function main() {
     logger.info(`Provider ${p.name}: ${p.available ? `available at ${p.path}` : "not found"}`);
   }
 
-  const interfaceMode = (env.SYMPHIFO_INTERFACE ?? "cli").trim().toLowerCase();
+  const interfaceMode = (env.SYMPHIFONY_INTERFACE ?? "cli").trim().toLowerCase();
   const runOnce = args.includes("--once");
 
   debugBoot("main:state-root-ready");
@@ -102,8 +102,8 @@ async function main() {
     const available = detectedProviders.filter((p) => p.available).map((p) => p.name);
     fail(
       available.length === 0
-        ? "No agent command configured and no providers (claude, codex) found in PATH.\nInstall claude or codex, or set SYMPHIFO_AGENT_COMMAND / configure codex.command or claude.command in WORKFLOW.md."
-        : "No agent command configured. Set SYMPHIFO_AGENT_COMMAND or configure codex.command / claude.command in WORKFLOW.md.",
+        ? "No agent command configured and no providers (claude, codex) found in PATH.\nInstall claude or codex, or set SYMPHIFONY_AGENT_COMMAND / configure codex.command or claude.command in WORKFLOW.md."
+        : "No agent command configured. Set SYMPHIFONY_AGENT_COMMAND or configure codex.command / claude.command in WORKFLOW.md.",
     );
   }
 
@@ -154,6 +154,7 @@ async function main() {
     const runForever = !runOnce && (Boolean(dashboardPort) || interfaceMode === "mcp");
     await scheduler(state, running, runForever, workflowDefinition);
   } catch (error) {
+    console.error("FATAL STACK TRACE:", error);
     addEvent(state, undefined, "error", `Fatal runtime error: ${String(error)}`);
     await persistState(state);
     throw error;
@@ -166,6 +167,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  logger.error(`Fatal runtime error: ${String(error)}`);
+  logger.error({ err: error }, `Fatal runtime error: ${String(error)}`);
   exit(1);
 });

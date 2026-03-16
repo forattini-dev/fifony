@@ -1,11 +1,28 @@
-import { createHash, randomUUID } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { env, stdin, stdout } from "node:process";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { buildIntegrationSnippet, discoverIntegrations } from "../integrations/catalog.ts";
 import { inferCapabilityPaths, resolveTaskCapabilities } from "../routing/capability-resolver.ts";
+import {
+  type IssueRecord,
+  initDatabase,
+  getDatabase,
+  getResources,
+  getIssues,
+  getIssue,
+  listIssues,
+  listEvents,
+  listRecords,
+  getRuntimeSnapshot,
+  appendEvent,
+  nowIso,
+  safeRead,
+  WORKSPACE_ROOT,
+  PERSISTENCE_ROOT,
+  STATE_ROOT,
+} from "./database.ts";
 
 type JsonRpcId = string | number | null;
 
@@ -27,388 +44,28 @@ type JsonRpcResponse = {
   };
 };
 
-type IssueRecord = {
-  id: string;
-  identifier?: string;
-  title: string;
-  description?: string;
-  priority?: number;
-  state?: string;
-  labels?: string[];
-  paths?: string[];
-  url?: string;
-  assigned_to_worker?: boolean;
-  [key: string]: unknown;
-};
-
-type RuntimeSnapshot = {
-  updatedAt?: string;
-  config?: Record<string, unknown>;
-  issues?: IssueRecord[];
-  metrics?: Record<string, unknown>;
-  notes?: string[];
-  [key: string]: unknown;
-};
-
-type S3dbResource = {
-  insert: (record: Record<string, unknown>) => Promise<Record<string, unknown>>;
-  get: (id: string) => Promise<Record<string, unknown> | null>;
-  update: (id: string, patch: Record<string, unknown>) => Promise<Record<string, unknown>>;
-  list: (options?: {
-    partition?: string | null;
-    partitionValues?: Record<string, string | number>;
-    limit?: number;
-    offset?: number;
-  }) => Promise<Record<string, unknown>[]>;
-  query?: (options?: Record<string, unknown>) => Promise<Record<string, unknown>[]>;
-};
-
-type S3dbDatabase = {
-  connect: () => Promise<void>;
-  disconnect: () => Promise<void>;
-  createResource: (config: Record<string, unknown>) => Promise<S3dbResource>;
-  resources: Record<string, S3dbResource>;
-};
-
-type S3dbModule = {
-  default: new (config: Record<string, unknown>) => S3dbDatabase;
-  FileSystemClient: new (config: Record<string, unknown>) => unknown;
-};
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const PACKAGE_ROOT = resolve(__dirname, "../..");
-const WORKSPACE_ROOT = resolve(env.SYMPHIFO_WORKSPACE_ROOT ?? process.cwd());
-const PERSISTENCE_ROOT = resolve(env.SYMPHIFO_PERSISTENCE ?? WORKSPACE_ROOT);
-const STATE_ROOT = join(PERSISTENCE_ROOT, ".symphifo");
-const DATABASE_PATH = join(STATE_ROOT, "s3db");
 const WORKFLOW_PATH = join(WORKSPACE_ROOT, "WORKFLOW.md");
 const README_PATH = join(PACKAGE_ROOT, "README.md");
-const SYMPHIFO_GUIDE_PATH = join(PACKAGE_ROOT, "SYMPHIFO.md");
-const STORAGE_BUCKET = env.SYMPHIFO_STORAGE_BUCKET ?? "symphifo";
-const STORAGE_KEY_PREFIX = env.SYMPHIFO_STORAGE_KEY_PREFIX ?? "state";
-const STORAGE_LIBRARY_PATH = "";
-const DEBUG_BOOT = env.SYMPHIFO_DEBUG_BOOT === "1";
-const RUNTIME_RESOURCE = "runtime_state";
-const ISSUE_RESOURCE = "issues";
-const EVENT_RESOURCE = "events";
-const SESSION_RESOURCE = "agent_sessions";
-const PIPELINE_RESOURCE = "agent_pipelines";
-const RUNTIME_RECORD_ID = "current";
+const SYMPHIFONY_GUIDE_PATH = join(PACKAGE_ROOT, "SYMPHIFONY.md");
+const DEBUG_BOOT = env.SYMPHIFONY_DEBUG_BOOT === "1";
 
 let incomingBuffer = Buffer.alloc(0);
-let database: S3dbDatabase | null = null;
-let runtimeResource: S3dbResource | null = null;
-let issueResource: S3dbResource | null = null;
-let eventResource: S3dbResource | null = null;
-let sessionResource: S3dbResource | null = null;
-let pipelineResource: S3dbResource | null = null;
 
 function debugBoot(message: string): void {
-  if (!DEBUG_BOOT) {
-    return;
-  }
-
-  process.stderr.write(`[SYMPHIFO_DEBUG_BOOT] ${message}\n`);
-}
-
-function nowIso(): string {
-  return new Date().toISOString();
-}
-
-function safeRead(path: string): string {
-  return existsSync(path) ? readFileSync(path, "utf8") : "";
+  if (!DEBUG_BOOT) return;
+  process.stderr.write(`[SYMPHIFONY_DEBUG_BOOT] ${message}\n`);
 }
 
 function hashInput(value: string): string {
   return createHash("sha1").update(value).digest("hex").slice(0, 10);
 }
 
-async function loadS3dbModule(): Promise<S3dbModule> {
-  try {
-    const imported = await import("s3db.js/lite");
-    const filesystemModule = await import("s3db.js/lite");
-
-    return {
-      default: imported.default,
-      FileSystemClient: filesystemModule.FileSystemClient,
-    };
-  } catch (error) {
-    throw new Error(`Unable to load s3db.js: ${String(error)}`);
-  }
-}
-
-async function getDatabase(): Promise<S3dbDatabase> {
-  if (database) {
-    return database;
-  }
-
-  debugBoot("mcp:getDatabase:start");
-  const s3db = await loadS3dbModule();
-  debugBoot("mcp:getDatabase:module-loaded");
-  const client = new s3db.FileSystemClient({
-    basePath: DATABASE_PATH,
-    bucket: STORAGE_BUCKET,
-    keyPrefix: STORAGE_KEY_PREFIX,
-    verbose: false,
-  });
-
-  database = new s3db.default({
-    client,
-    verbose: false,
-  });
-
-  await database.connect();
-  debugBoot("mcp:getDatabase:connected");
-
-  runtimeResource = database.resources[RUNTIME_RESOURCE] ?? await database.createResource({
-    name: RUNTIME_RESOURCE,
-    behavior: "body-overflow",
-    attributes: {
-      updatedAt: "datetime|required",
-      state: "json|required",
-    },
-  });
-
-  issueResource = database.resources[ISSUE_RESOURCE] ?? await database.createResource({
-    name: ISSUE_RESOURCE,
-    behavior: "body-overflow",
-    attributes: {
-      id: "string|required",
-      identifier: "string|required",
-      title: "string|required",
-      description: "string|optional",
-      priority: "number|required",
-      state: "string|required",
-      branchName: "string|optional",
-      labels: "json|required",
-      paths: "json|optional",
-      inferredPaths: "json|optional",
-      capabilityCategory: "string|optional",
-      capabilityOverlays: "json|optional",
-      capabilityRationale: "json|optional",
-      blockedBy: "json|required",
-      assignedToWorker: "boolean|required",
-      createdAt: "datetime|required",
-      updatedAt: "datetime|required",
-      history: "json|required",
-      attempts: "number|required",
-      maxAttempts: "number|required",
-      url: "string|optional",
-      assigneeId: "string|optional",
-      startedAt: "datetime|optional",
-      completedAt: "datetime|optional",
-      nextRetryAt: "datetime|optional",
-      workspacePath: "string|optional",
-      workspacePreparedAt: "datetime|optional",
-      lastError: "string|optional",
-      durationMs: "number|optional",
-      commandExitCode: "number|optional",
-      commandOutputTail: "string|optional",
-    },
-    partitions: {
-      byState: { fields: { state: "string" } },
-      byCapabilityCategory: { fields: { capabilityCategory: "string" } },
-      byStateAndCapability: {
-        fields: {
-          state: "string",
-          capabilityCategory: "string",
-        },
-      },
-    },
-    asyncPartitions: true,
-  });
-
-  eventResource = database.resources[EVENT_RESOURCE] ?? await database.createResource({
-    name: EVENT_RESOURCE,
-    behavior: "body-overflow",
-    attributes: {
-      id: "string|required",
-      issueId: "string|optional",
-      kind: "string|required",
-      message: "string|required",
-      at: "datetime|required",
-    },
-    partitions: {
-      byIssueId: { fields: { issueId: "string" } },
-      byKind: { fields: { kind: "string" } },
-      byIssueIdAndKind: {
-        fields: {
-          issueId: "string",
-          kind: "string",
-        },
-      },
-    },
-    asyncPartitions: true,
-  });
-
-  sessionResource = database.resources[SESSION_RESOURCE] ?? await database.createResource({
-    name: SESSION_RESOURCE,
-    behavior: "body-overflow",
-    attributes: {
-      id: "string|required",
-      issueId: "string|required",
-      issueIdentifier: "string|required",
-      attempt: "number|required",
-      provider: "string|required",
-      role: "string|required",
-      cycle: "number|required",
-      session: "json|required",
-      updatedAt: "datetime|required",
-    },
-    partitions: {
-      byIssueId: { fields: { issueId: "string" } },
-      byIssueAttempt: {
-        fields: {
-          issueId: "string",
-          attempt: "number",
-        },
-      },
-      byProviderRole: {
-        fields: {
-          provider: "string",
-          role: "string",
-        },
-      },
-    },
-    asyncPartitions: true,
-  });
-
-  pipelineResource = database.resources[PIPELINE_RESOURCE] ?? await database.createResource({
-    name: PIPELINE_RESOURCE,
-    behavior: "body-overflow",
-    attributes: {
-      id: "string|required",
-      issueId: "string|required",
-      issueIdentifier: "string|required",
-      attempt: "number|required",
-      pipeline: "json|required",
-      updatedAt: "datetime|required",
-    },
-    partitions: {
-      byIssueId: { fields: { issueId: "string" } },
-      byIssueAttempt: {
-        fields: {
-          issueId: "string",
-          attempt: "number",
-        },
-      },
-    },
-    asyncPartitions: true,
-  });
-
-  debugBoot("mcp:getDatabase:resources-ready");
-
-  return database;
-}
-
-async function listRecords(resource: S3dbResource | null, limit: number = 100): Promise<Record<string, unknown>[]> {
-  if (!resource) {
-    return [];
-  }
-
-  if (typeof resource.query === "function") {
-    return await resource.query({});
-  }
-
-  return await resource.list({ limit });
-}
-
-async function listIssues(filters: { state?: string; capabilityCategory?: string } = {}): Promise<IssueRecord[]> {
-  await getDatabase();
-  const { state, capabilityCategory } = filters;
-
-  if (!issueResource) {
-    return [];
-  }
-
-  const partition = state && capabilityCategory
-    ? "byStateAndCapability"
-    : state
-      ? "byState"
-      : capabilityCategory
-        ? "byCapabilityCategory"
-        : null;
-  const partitionValues = state && capabilityCategory
-    ? { state, capabilityCategory }
-    : state
-      ? { state }
-      : capabilityCategory
-        ? { capabilityCategory }
-        : {};
-
-  const records = await issueResource.list({
-    partition,
-    partitionValues,
-    limit: 500,
-  });
-  return records.map((record) => record as IssueRecord);
-}
-
-async function listEvents(filters: { issueId?: string; kind?: string; limit?: number } = {}): Promise<Record<string, unknown>[]> {
-  await getDatabase();
-  const { issueId, kind, limit = 100 } = filters;
-
-  if (!eventResource) {
-    return [];
-  }
-
-  const partition = issueId && kind
-    ? "byIssueIdAndKind"
-    : issueId
-      ? "byIssueId"
-      : kind
-        ? "byKind"
-        : null;
-  const partitionValues = issueId && kind
-    ? { issueId, kind }
-    : issueId
-      ? { issueId }
-      : kind
-        ? { kind }
-        : {};
-
-  return await eventResource.list({
-    partition,
-    partitionValues,
-    limit,
-  });
-}
-
-async function getRuntimeSnapshot(): Promise<RuntimeSnapshot> {
-  await getDatabase();
-  const record = await runtimeResource?.get(RUNTIME_RECORD_ID);
-  const state = record?.state;
-  if (state && typeof state === "object") {
-    return state as RuntimeSnapshot;
-  }
-  return {};
-}
-
-async function getIssues(): Promise<IssueRecord[]> {
-  return await listIssues();
-}
-
-async function getIssue(issueId: string): Promise<IssueRecord | null> {
-  await getDatabase();
-  const issue = await issueResource?.get(issueId);
-  return (issue as IssueRecord | null) ?? null;
-}
-
-async function appendEvent(level: string, message: string, payload: Record<string, unknown> = {}, issueId?: string): Promise<void> {
-  await getDatabase();
-  await eventResource?.insert({
-    id: randomUUID(),
-    issueId,
-    kind: level,
-    message,
-    at: nowIso(),
-  });
-}
-
 function buildIntegrationGuide(): string {
   return [
-    "# Symphifo MCP integration",
+    "# Symphifony MCP integration",
     "",
     `Workspace root: \`${WORKSPACE_ROOT}\``,
     `Persistence root: \`${PERSISTENCE_ROOT}\``,
@@ -419,9 +76,9 @@ function buildIntegrationGuide(): string {
     "```json",
     "{",
     '  "mcpServers": {',
-    '    "symphifo": {',
+    '    "symphifony": {',
     '      "command": "npx",',
-    `      "args": ["symphifo", "mcp", "--workspace", "${WORKSPACE_ROOT}", "--persistence", "${PERSISTENCE_ROOT}"]`,
+    `      "args": ["symphifony", "mcp", "--workspace", "${WORKSPACE_ROOT}", "--persistence", "${PERSISTENCE_ROOT}"]`,
     "    }",
     "  }",
     "}",
@@ -429,13 +86,13 @@ function buildIntegrationGuide(): string {
     "",
     "Expected workflow:",
     "",
-    "1. Read `symphifo://guide/overview` and `symphifo://state/summary`.",
-    "2. Use `symphifo.list_issues` or read `symphifo://issues`.",
-    "3. Create work with `symphifo.create_issue`.",
-    "4. Update workflow state with `symphifo.update_issue_state`.",
+    "1. Read `symphifony://guide/overview` and `symphifony://state/summary`.",
+    "2. Use `symphifony.list_issues` or read `symphifony://issues`.",
+    "3. Create work with `symphifony.create_issue`.",
+    "4. Update workflow state with `symphifony.update_issue_state`.",
     "5. Use the prompts exposed by this MCP server to structure planning or execution.",
     "",
-    "The MCP server is read-write against the same `s3db` filesystem store used by the Symphifo runtime.",
+    "The MCP server is read-write against the same `s3db` filesystem store used by the Symphifony runtime.",
   ].join("\n");
 }
 
@@ -452,6 +109,7 @@ function computeCapabilityCounts(issues: IssueRecord[]): Record<string, number> 
 async function buildStateSummary(): Promise<string> {
   const runtime = await getRuntimeSnapshot();
   const issues = await getIssues();
+  const { sessionResource, pipelineResource } = getResources();
   const sessions = await listRecords(sessionResource, 500);
   const pipelines = await listRecords(pipelineResource, 500);
   const events = await listEvents({ limit: 100 });
@@ -488,7 +146,7 @@ function buildIssuePrompt(issue: IssueRecord, provider: string, role: string): s
     paths: Array.isArray(issue.paths) ? issue.paths.filter((value): value is string => typeof value === "string") : [],
   });
   return [
-    `You are integrating with Symphifo as the ${role} using ${provider}.`,
+    `You are integrating with Symphifony as the ${role} using ${provider}.`,
     "",
     `Issue ID: ${issue.id}`,
     `Title: ${issue.title}`,
@@ -498,111 +156,48 @@ function buildIssuePrompt(issue: IssueRecord, provider: string, role: string): s
     ...(Array.isArray(issue.paths) && issue.paths.length ? [`Paths: ${issue.paths.join(", ")}`] : []),
     issue.description ? `Description:\n${issue.description}` : "Description:\nNo description provided.",
     "",
-    "Use Symphifo as the source of truth:",
+    "Use Symphifony as the source of truth:",
     "- Read the workflow contract from WORKFLOW.md if available.",
-    "- Persist transitions through the Symphifo tools instead of inventing local state.",
+    "- Persist transitions through the Symphifony tools instead of inventing local state.",
     "- Keep outputs actionable and aligned with the tracked issue lifecycle.",
   ].join("\n");
 }
 
-async function listResources(): Promise<Array<Record<string, unknown>>> {
+async function listResourcesMcp(): Promise<Array<Record<string, unknown>>> {
   const issues = await getIssues();
   const resources: Array<Record<string, unknown>> = [
-    {
-      uri: "symphifo://guide/overview",
-      name: "Symphifo overview",
-      description: "High-level overview and local integration guide.",
-      mimeType: "text/markdown",
-    },
-    {
-      uri: "symphifo://guide/runtime",
-      name: "Symphifo runtime guide",
-      description: "Detailed local runtime reference for the package.",
-      mimeType: "text/markdown",
-    },
-    {
-      uri: "symphifo://guide/integration",
-      name: "Symphifo MCP integration guide",
-      description: "How to wire an MCP client to this Symphifo workspace.",
-      mimeType: "text/markdown",
-    },
-    {
-      uri: "symphifo://state/summary",
-      name: "Symphifo state summary",
-      description: "Compact summary of the current runtime, issue, and pipeline state.",
-      mimeType: "application/json",
-    },
-    {
-      uri: "symphifo://issues",
-      name: "Symphifo issues",
-      description: "Full issue list from the durable Symphifo store.",
-      mimeType: "application/json",
-    },
-    {
-      uri: "symphifo://integrations",
-      name: "Symphifo integrations",
-      description: "Discovered local integrations such as agency-agents and impeccable skills.",
-      mimeType: "application/json",
-    },
-    {
-      uri: "symphifo://capabilities",
-      name: "Symphifo capability routing",
-      description: "How Symphifo would route current issues to providers, profiles, and overlays.",
-      mimeType: "application/json",
-    },
+    { uri: "symphifony://guide/overview", name: "Symphifony overview", description: "High-level overview and local integration guide.", mimeType: "text/markdown" },
+    { uri: "symphifony://guide/runtime", name: "Symphifony runtime guide", description: "Detailed local runtime reference for the package.", mimeType: "text/markdown" },
+    { uri: "symphifony://guide/integration", name: "Symphifony MCP integration guide", description: "How to wire an MCP client to this Symphifony workspace.", mimeType: "text/markdown" },
+    { uri: "symphifony://state/summary", name: "Symphifony state summary", description: "Compact summary of the current runtime, issue, and pipeline state.", mimeType: "application/json" },
+    { uri: "symphifony://issues", name: "Symphifony issues", description: "Full issue list from the durable Symphifony store.", mimeType: "application/json" },
+    { uri: "symphifony://integrations", name: "Symphifony integrations", description: "Discovered local integrations such as agency-agents and impeccable skills.", mimeType: "application/json" },
+    { uri: "symphifony://capabilities", name: "Symphifony capability routing", description: "How Symphifony would route current issues to providers, profiles, and overlays.", mimeType: "application/json" },
   ];
 
   if (existsSync(WORKFLOW_PATH)) {
-    resources.push({
-      uri: "symphifo://workspace/workflow",
-      name: "Workspace workflow",
-      description: "The active WORKFLOW.md from the target workspace.",
-      mimeType: "text/markdown",
-    });
+    resources.push({ uri: "symphifony://workspace/workflow", name: "Workspace workflow", description: "The active WORKFLOW.md from the target workspace.", mimeType: "text/markdown" });
   }
 
   for (const issue of issues.slice(0, 100)) {
-    resources.push({
-      uri: `symphifo://issue/${encodeURIComponent(issue.id)}`,
-      name: `Issue ${issue.id}`,
-      description: issue.title,
-      mimeType: "application/json",
-    });
+    resources.push({ uri: `symphifony://issue/${encodeURIComponent(issue.id)}`, name: `Issue ${issue.id}`, description: issue.title, mimeType: "application/json" });
   }
 
   return resources;
 }
 
 async function readResource(uri: string): Promise<Array<Record<string, unknown>>> {
-  if (uri === "symphifo://guide/overview") {
-    return [{ uri, mimeType: "text/markdown", text: safeRead(README_PATH) }];
+  if (uri === "symphifony://guide/overview") return [{ uri, mimeType: "text/markdown", text: safeRead(README_PATH) }];
+  if (uri === "symphifony://guide/runtime") return [{ uri, mimeType: "text/markdown", text: safeRead(SYMPHIFONY_GUIDE_PATH) }];
+  if (uri === "symphifony://guide/integration") return [{ uri, mimeType: "text/markdown", text: buildIntegrationGuide() }];
+  if (uri === "symphifony://state/summary") return [{ uri, mimeType: "application/json", text: await buildStateSummary() }];
+  if (uri === "symphifony://issues") return [{ uri, mimeType: "application/json", text: JSON.stringify(await getIssues(), null, 2) }];
+
+  if (uri === "symphifony://integrations") {
+    return [{ uri, mimeType: "application/json", text: JSON.stringify(discoverIntegrations(WORKSPACE_ROOT), null, 2) }];
   }
 
-  if (uri === "symphifo://guide/runtime") {
-    return [{ uri, mimeType: "text/markdown", text: safeRead(SYMPHIFO_GUIDE_PATH) }];
-  }
-
-  if (uri === "symphifo://guide/integration") {
-    return [{ uri, mimeType: "text/markdown", text: buildIntegrationGuide() }];
-  }
-
-  if (uri === "symphifo://state/summary") {
-    return [{ uri, mimeType: "application/json", text: await buildStateSummary() }];
-  }
-
-  if (uri === "symphifo://issues") {
-    return [{ uri, mimeType: "application/json", text: JSON.stringify(await getIssues(), null, 2) }];
-  }
-
-  if (uri === "symphifo://integrations") {
-    return [{
-      uri,
-      mimeType: "application/json",
-      text: JSON.stringify(discoverIntegrations(WORKSPACE_ROOT), null, 2),
-    }];
-  }
-
-  if (uri === "symphifo://capabilities") {
+  if (uri === "symphifony://capabilities") {
     const issues = await getIssues();
     return [{
       uri,
@@ -613,38 +208,27 @@ async function readResource(uri: string): Promise<Array<Record<string, unknown>>
           title: issue.title,
           paths: Array.isArray(issue.paths) ? issue.paths.filter((value): value is string => typeof value === "string") : [],
           inferredPaths: inferCapabilityPaths({
-            id: issue.id,
-            identifier: issue.identifier,
-            title: issue.title,
-            description: issue.description,
+            id: issue.id, identifier: issue.identifier, title: issue.title, description: issue.description,
             labels: Array.isArray(issue.labels) ? issue.labels.filter((value): value is string => typeof value === "string") : [],
             paths: Array.isArray(issue.paths) ? issue.paths.filter((value): value is string => typeof value === "string") : [],
           }),
           resolution: resolveTaskCapabilities({
-            id: issue.id,
-            identifier: issue.identifier,
-            title: issue.title,
-            description: issue.description,
+            id: issue.id, identifier: issue.identifier, title: issue.title, description: issue.description,
             labels: Array.isArray(issue.labels) ? issue.labels.filter((value): value is string => typeof value === "string") : [],
             paths: Array.isArray(issue.paths) ? issue.paths.filter((value): value is string => typeof value === "string") : [],
           }),
         })),
-        null,
-        2,
+        null, 2,
       ),
     }];
   }
 
-  if (uri === "symphifo://workspace/workflow") {
-    return [{ uri, mimeType: "text/markdown", text: safeRead(WORKFLOW_PATH) }];
-  }
+  if (uri === "symphifony://workspace/workflow") return [{ uri, mimeType: "text/markdown", text: safeRead(WORKFLOW_PATH) }];
 
-  if (uri.startsWith("symphifo://issue/")) {
-    const issueId = decodeURIComponent(uri.substring("symphifo://issue/".length));
+  if (uri.startsWith("symphifony://issue/")) {
+    const issueId = decodeURIComponent(uri.substring("symphifony://issue/".length));
     const issue = await getIssue(issueId);
-    if (!issue) {
-      throw new Error(`Issue not found: ${issueId}`);
-    }
+    if (!issue) throw new Error(`Issue not found: ${issueId}`);
     return [{ uri, mimeType: "application/json", text: JSON.stringify(issue, null, 2) }];
   }
 
@@ -653,171 +237,46 @@ async function readResource(uri: string): Promise<Array<Record<string, unknown>>
 
 function listPrompts(): Array<Record<string, unknown>> {
   return [
-    {
-      name: "symphifo-integrate-client",
-      description: "Generate setup instructions for connecting an MCP-capable client to Symphifo.",
-      arguments: [
-        { name: "client", description: "Client name, e.g. codex or claude.", required: true },
-        { name: "goal", description: "What the client should do with Symphifo.", required: false },
-      ],
-    },
-    {
-      name: "symphifo-plan-issue",
-      description: "Generate a planning prompt for a specific issue in the Symphifo store.",
-      arguments: [
-        { name: "issueId", description: "Issue identifier.", required: true },
-        { name: "provider", description: "Agent provider name.", required: false },
-      ],
-    },
-    {
-      name: "symphifo-review-workflow",
-      description: "Review the current WORKFLOW.md and propose improvements for orchestration quality.",
-      arguments: [
-        { name: "provider", description: "Reviewing model or client.", required: false },
-      ],
-    },
-    {
-      name: "symphifo-use-integration",
-      description: "Generate a concrete integration prompt for agency-agents or impeccable.",
-      arguments: [
-        { name: "integration", description: "Integration id: agency-agents or impeccable.", required: true },
-      ],
-    },
-    {
-      name: "symphifo-route-task",
-      description: "Explain which providers, profiles, and overlays Symphifo would choose for a task.",
-      arguments: [
-        { name: "title", description: "Task title.", required: true },
-        { name: "description", description: "Task description.", required: false },
-        { name: "labels", description: "Comma-separated labels.", required: false },
-        { name: "paths", description: "Comma-separated target paths or files.", required: false },
-      ],
-    },
+    { name: "symphifony-integrate-client", description: "Generate setup instructions for connecting an MCP-capable client to Symphifony.", arguments: [{ name: "client", description: "Client name, e.g. codex or claude.", required: true }, { name: "goal", description: "What the client should do with Symphifony.", required: false }] },
+    { name: "symphifony-plan-issue", description: "Generate a planning prompt for a specific issue in the Symphifony store.", arguments: [{ name: "issueId", description: "Issue identifier.", required: true }, { name: "provider", description: "Agent provider name.", required: false }] },
+    { name: "symphifony-review-workflow", description: "Review the current WORKFLOW.md and propose improvements for orchestration quality.", arguments: [{ name: "provider", description: "Reviewing model or client.", required: false }] },
+    { name: "symphifony-use-integration", description: "Generate a concrete integration prompt for agency-agents or impeccable.", arguments: [{ name: "integration", description: "Integration id: agency-agents or impeccable.", required: true }] },
+    { name: "symphifony-route-task", description: "Explain which providers, profiles, and overlays Symphifony would choose for a task.", arguments: [{ name: "title", description: "Task title.", required: true }, { name: "description", description: "Task description.", required: false }, { name: "labels", description: "Comma-separated labels.", required: false }, { name: "paths", description: "Comma-separated target paths or files.", required: false }] },
   ];
 }
 
 async function getPrompt(name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
-  if (name === "symphifo-integrate-client") {
+  if (name === "symphifony-integrate-client") {
     const client = typeof args.client === "string" && args.client.trim() ? args.client.trim() : "mcp-client";
-    const goal = typeof args.goal === "string" && args.goal.trim() ? args.goal.trim() : "integrate with the local Symphifo workspace";
-    return {
-      description: "Client integration prompt for Symphifo.",
-      messages: [
-        {
-          role: "user",
-          content: {
-            type: "text",
-            text: [
-              `Integrate ${client} with the local Symphifo MCP server.`,
-              "",
-              `Goal: ${goal}`,
-              "",
-              buildIntegrationGuide(),
-              "",
-              "Use the available Symphifo resources and tools instead of inventing your own persistence model.",
-            ].join("\n"),
-          },
-        },
-      ],
-    };
+    const goal = typeof args.goal === "string" && args.goal.trim() ? args.goal.trim() : "integrate with the local Symphifony workspace";
+    return { description: "Client integration prompt for Symphifony.", messages: [{ role: "user", content: { type: "text", text: [`Integrate ${client} with the local Symphifony MCP server.`, "", `Goal: ${goal}`, "", buildIntegrationGuide(), "", "Use the available Symphifony resources and tools instead of inventing your own persistence model."].join("\n") } }] };
   }
 
-  if (name === "symphifo-plan-issue") {
+  if (name === "symphifony-plan-issue") {
     const issueId = typeof args.issueId === "string" ? args.issueId : "";
     const provider = typeof args.provider === "string" && args.provider.trim() ? args.provider.trim() : "codex";
     const issue = issueId ? await getIssue(issueId) : null;
-    if (!issue) {
-      throw new Error(`Issue not found: ${issueId}`);
-    }
-    return {
-      description: "Issue planning prompt grounded in the Symphifo issue store.",
-      messages: [
-        {
-          role: "user",
-          content: {
-            type: "text",
-            text: buildIssuePrompt(issue, provider, "planner"),
-          },
-        },
-      ],
-    };
+    if (!issue) throw new Error(`Issue not found: ${issueId}`);
+    return { description: "Issue planning prompt grounded in the Symphifony issue store.", messages: [{ role: "user", content: { type: "text", text: buildIssuePrompt(issue, provider, "planner") } }] };
   }
 
-  if (name === "symphifo-review-workflow") {
+  if (name === "symphifony-review-workflow") {
     const provider = typeof args.provider === "string" && args.provider.trim() ? args.provider.trim() : "claude";
-    return {
-      description: "Workflow review prompt for Symphifo orchestration.",
-      messages: [
-        {
-          role: "user",
-          content: {
-            type: "text",
-            text: [
-              `Review the WORKFLOW.md for this Symphifo workspace as ${provider}.`,
-              "",
-              `Workspace: ${WORKSPACE_ROOT}`,
-              `Workflow present: ${existsSync(WORKFLOW_PATH) ? "yes" : "no"}`,
-              "",
-              "Focus on:",
-              "- provider orchestration quality",
-              "- hooks safety",
-              "- prompt clarity",
-              "- issue lifecycle correctness",
-              "- what an MCP client needs in order to integrate cleanly",
-            ].join("\n"),
-          },
-        },
-      ],
-    };
+    return { description: "Workflow review prompt for Symphifony orchestration.", messages: [{ role: "user", content: { type: "text", text: [`Review the WORKFLOW.md for this Symphifony workspace as ${provider}.`, "", `Workspace: ${WORKSPACE_ROOT}`, `Workflow present: ${existsSync(WORKFLOW_PATH) ? "yes" : "no"}`, "", "Focus on:", "- provider orchestration quality", "- hooks safety", "- prompt clarity", "- issue lifecycle correctness", "- what an MCP client needs in order to integrate cleanly"].join("\n") } }] };
   }
 
-  if (name === "symphifo-use-integration") {
+  if (name === "symphifony-use-integration") {
     const integration = typeof args.integration === "string" ? args.integration : "";
-    return {
-      description: "Integration guidance for a discovered Symphifo extension.",
-      messages: [
-        {
-          role: "user",
-          content: {
-            type: "text",
-            text: buildIntegrationSnippet(integration, WORKSPACE_ROOT),
-          },
-        },
-      ],
-    };
+    return { description: "Integration guidance for a discovered Symphifony extension.", messages: [{ role: "user", content: { type: "text", text: buildIntegrationSnippet(integration, WORKSPACE_ROOT) } }] };
   }
 
-  if (name === "symphifo-route-task") {
+  if (name === "symphifony-route-task") {
     const title = typeof args.title === "string" ? args.title : "";
     const description = typeof args.description === "string" ? args.description : "";
-    const labels = typeof args.labels === "string"
-      ? args.labels.split(",").map((label) => label.trim()).filter(Boolean)
-      : [];
-    const paths = typeof args.paths === "string"
-      ? args.paths.split(",").map((value) => value.trim()).filter(Boolean)
-      : [];
-    const resolution = resolveTaskCapabilities({
-      title,
-      description,
-      labels,
-      paths,
-    });
-    return {
-      description: "Task routing prompt produced by the Symphifo capability resolver.",
-      messages: [
-        {
-          role: "user",
-          content: {
-            type: "text",
-            text: [
-              "Use this routing decision as the execution plan for the task.",
-              "",
-              JSON.stringify(resolution, null, 2),
-            ].join("\n"),
-          },
-        },
-      ],
-    };
+    const labels = typeof args.labels === "string" ? args.labels.split(",").map((label) => label.trim()).filter(Boolean) : [];
+    const paths = typeof args.paths === "string" ? args.paths.split(",").map((value) => value.trim()).filter(Boolean) : [];
+    const resolution = resolveTaskCapabilities({ title, description, labels, paths });
+    return { description: "Task routing prompt produced by the Symphifony capability resolver.", messages: [{ role: "user", content: { type: "text", text: ["Use this routing decision as the execution plan for the task.", "", JSON.stringify(resolution, null, 2)].join("\n") } }] };
   }
 
   throw new Error(`Unknown prompt: ${name}`);
@@ -825,263 +284,100 @@ async function getPrompt(name: string, args: Record<string, unknown> = {}): Prom
 
 function listTools(): Array<Record<string, unknown>> {
   return [
-    {
-      name: "symphifo.status",
-      description: "Return a compact status summary for the current Symphifo workspace.",
-      inputSchema: {
-        type: "object",
-        properties: {},
-        additionalProperties: false,
-      },
-    },
-    {
-      name: "symphifo.list_issues",
-      description: "List issues from the Symphifo durable store.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          state: { type: "string" },
-          capabilityCategory: { type: "string" },
-          category: { type: "string" },
-        },
-        additionalProperties: false,
-      },
-    },
-    {
-      name: "symphifo.create_issue",
-      description: "Create a new issue directly in the Symphifo durable store.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          id: { type: "string" },
-          title: { type: "string" },
-          description: { type: "string" },
-          priority: { type: "number" },
-          state: { type: "string" },
-          labels: {
-            type: "array",
-            items: { type: "string" },
-          },
-          paths: {
-            type: "array",
-            items: { type: "string" },
-          },
-        },
-        required: ["title"],
-        additionalProperties: false,
-      },
-    },
-    {
-      name: "symphifo.update_issue_state",
-      description: "Update an issue state in the Symphifo store and append an event.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          issueId: { type: "string" },
-          state: { type: "string" },
-          note: { type: "string" },
-        },
-        required: ["issueId", "state"],
-        additionalProperties: false,
-      },
-    },
-    {
-      name: "symphifo.integration_config",
-      description: "Generate a ready-to-paste MCP client configuration snippet for this Symphifo workspace.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          client: { type: "string" },
-        },
-        additionalProperties: false,
-      },
-    },
-    {
-      name: "symphifo.list_integrations",
-      description: "List discovered local integrations such as agency-agents profiles and impeccable skills.",
-      inputSchema: {
-        type: "object",
-        properties: {},
-        additionalProperties: false,
-      },
-    },
-    {
-      name: "symphifo.integration_snippet",
-      description: "Generate a workflow or prompt snippet for a discovered integration.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          integration: { type: "string" },
-        },
-        required: ["integration"],
-        additionalProperties: false,
-      },
-    },
-    {
-      name: "symphifo.resolve_capabilities",
-      description: "Resolve which providers, roles, profiles, and overlays Symphifo should use for a task.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          title: { type: "string" },
-          description: { type: "string" },
-          labels: {
-            type: "array",
-            items: { type: "string" },
-          },
-          paths: {
-            type: "array",
-            items: { type: "string" },
-          },
-        },
-        required: ["title"],
-        additionalProperties: false,
-      },
-    },
+    { name: "symphifony.status", description: "Return a compact status summary for the current Symphifony workspace.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
+    { name: "symphifony.list_issues", description: "List issues from the Symphifony durable store.", inputSchema: { type: "object", properties: { state: { type: "string" }, capabilityCategory: { type: "string" }, category: { type: "string" } }, additionalProperties: false } },
+    { name: "symphifony.create_issue", description: "Create a new issue directly in the Symphifony durable store.", inputSchema: { type: "object", properties: { id: { type: "string" }, title: { type: "string" }, description: { type: "string" }, priority: { type: "number" }, state: { type: "string" }, labels: { type: "array", items: { type: "string" } }, paths: { type: "array", items: { type: "string" } } }, required: ["title"], additionalProperties: false } },
+    { name: "symphifony.update_issue_state", description: "Update an issue state in the Symphifony store and append an event.", inputSchema: { type: "object", properties: { issueId: { type: "string" }, state: { type: "string" }, note: { type: "string" } }, required: ["issueId", "state"], additionalProperties: false } },
+    { name: "symphifony.integration_config", description: "Generate a ready-to-paste MCP client configuration snippet for this Symphifony workspace.", inputSchema: { type: "object", properties: { client: { type: "string" } }, additionalProperties: false } },
+    { name: "symphifony.list_integrations", description: "List discovered local integrations such as agency-agents profiles and impeccable skills.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
+    { name: "symphifony.integration_snippet", description: "Generate a workflow or prompt snippet for a discovered integration.", inputSchema: { type: "object", properties: { integration: { type: "string" } }, required: ["integration"], additionalProperties: false } },
+    { name: "symphifony.resolve_capabilities", description: "Resolve which providers, roles, profiles, and overlays Symphifony should use for a task.", inputSchema: { type: "object", properties: { title: { type: "string" }, description: { type: "string" }, labels: { type: "array", items: { type: "string" } }, paths: { type: "array", items: { type: "string" } } }, required: ["title"], additionalProperties: false } },
   ];
 }
 
 function toolText(text: string): Record<string, unknown> {
-  return {
-    content: [
-      {
-        type: "text",
-        text,
-      },
-    ],
-  };
+  return { content: [{ type: "text", text }] };
 }
 
 async function callTool(name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
-  if (name === "symphifo.status") {
-    return toolText(await buildStateSummary());
-  }
+  if (name === "symphifony.status") return toolText(await buildStateSummary());
 
-  if (name === "symphifo.list_issues") {
+  if (name === "symphifony.list_issues") {
     const stateFilter = typeof args.state === "string" && args.state.trim() ? args.state.trim() : "";
     const capabilityCategory = typeof args.capabilityCategory === "string" && args.capabilityCategory.trim()
       ? args.capabilityCategory.trim()
-      : typeof args.category === "string" && args.category.trim()
-        ? args.category.trim()
-        : "";
-    const issues = await listIssues({
-      state: stateFilter || undefined,
-      capabilityCategory: capabilityCategory || undefined,
-    });
-    return toolText(JSON.stringify(issues, null, 2));
+      : typeof args.category === "string" && args.category.trim() ? args.category.trim() : "";
+    return toolText(JSON.stringify(await listIssues({ state: stateFilter || undefined, capabilityCategory: capabilityCategory || undefined }), null, 2));
   }
 
-  if (name === "symphifo.create_issue") {
-    await getDatabase();
+  if (name === "symphifony.create_issue") {
+    await initDatabase();
+    const { issueResource } = getResources();
     const title = typeof args.title === "string" ? args.title.trim() : "";
-    if (!title) {
-      throw new Error("title is required");
-    }
+    if (!title) throw new Error("title is required");
 
     const explicitId = typeof args.id === "string" && args.id.trim() ? args.id.trim() : "";
     const issueId = explicitId || `LOCAL-${hashInput(`${title}:${nowIso()}`)}`.toUpperCase();
     const description = typeof args.description === "string" ? args.description : "";
     const priority = typeof args.priority === "number" ? args.priority : 2;
     const state = typeof args.state === "string" && args.state.trim() ? args.state.trim() : "Todo";
-    const baseLabels = Array.isArray(args.labels) ? args.labels.filter((value): value is string => typeof value === "string") : ["symphifo", "mcp"];
+    const baseLabels = Array.isArray(args.labels) ? args.labels.filter((value): value is string => typeof value === "string") : ["symphifony", "mcp"];
     const paths = Array.isArray(args.paths) ? args.paths.filter((value): value is string => typeof value === "string") : [];
     const inferredPaths = inferCapabilityPaths({ id: issueId, identifier: issueId, title, description, labels: baseLabels, paths });
     const resolution = resolveTaskCapabilities({ id: issueId, identifier: issueId, title, description, labels: baseLabels, paths });
-    const labels = [...new Set([
-      ...baseLabels,
-      resolution.category ? `capability:${resolution.category}` : "",
-      ...resolution.overlays.map((overlay) => `overlay:${overlay}`),
-    ].filter(Boolean))];
+    const labels = [...new Set([...baseLabels, resolution.category ? `capability:${resolution.category}` : "", ...resolution.overlays.map((overlay) => `overlay:${overlay}`)].filter(Boolean))];
 
     const record = await issueResource?.insert({
-      id: issueId,
-      identifier: issueId,
-      title,
-      description,
-      priority,
-      state,
-      labels,
-      paths,
-      inferredPaths,
-      capabilityCategory: resolution.category,
-      capabilityOverlays: resolution.overlays,
-      capabilityRationale: resolution.rationale,
-      blockedBy: [],
-      assignedToWorker: false,
-      createdAt: nowIso(),
-      url: `symphifo://local/${issueId}`,
-      updatedAt: nowIso(),
-      history: [`[${nowIso()}] Issue created via MCP.`],
-      attempts: 0,
-      maxAttempts: 3,
+      id: issueId, identifier: issueId, title, description, priority, state, labels, paths, inferredPaths,
+      capabilityCategory: resolution.category, capabilityOverlays: resolution.overlays, capabilityRationale: resolution.rationale,
+      blockedBy: [], assignedToWorker: false, createdAt: nowIso(), url: `symphifony://local/${issueId}`,
+      updatedAt: nowIso(), history: [`[${nowIso()}] Issue created via MCP.`], attempts: 0, maxAttempts: 3,
     });
 
     await appendEvent("info", `Issue ${issueId} created through MCP.`, { title, state, labels, paths, inferredPaths, capabilityCategory: resolution.category }, issueId);
     return toolText(JSON.stringify(record ?? { id: issueId }, null, 2));
   }
 
-  if (name === "symphifo.update_issue_state") {
-    await getDatabase();
+  if (name === "symphifony.update_issue_state") {
+    await initDatabase();
+    const { issueResource } = getResources();
     const issueId = typeof args.issueId === "string" ? args.issueId.trim() : "";
     const state = typeof args.state === "string" ? args.state.trim() : "";
     const note = typeof args.note === "string" ? args.note : "";
-
-    if (!issueId || !state) {
-      throw new Error("issueId and state are required");
-    }
+    if (!issueId || !state) throw new Error("issueId and state are required");
 
     const current = await issueResource?.get(issueId);
-    if (!current) {
-      throw new Error(`Issue not found: ${issueId}`);
-    }
+    if (!current) throw new Error(`Issue not found: ${issueId}`);
 
-    const updated = await issueResource?.update(issueId, {
-      state,
-      updatedAt: nowIso(),
-    });
-
+    const updated = await issueResource?.update(issueId, { state, updatedAt: nowIso() });
     await appendEvent("info", note || `Issue ${issueId} moved to ${state} through MCP.`, { state }, issueId);
     return toolText(JSON.stringify(updated ?? { id: issueId, state }, null, 2));
   }
 
-  if (name === "symphifo.integration_config") {
+  if (name === "symphifony.integration_config") {
     const client = typeof args.client === "string" && args.client.trim() ? args.client.trim() : "client";
-    return toolText(JSON.stringify({
-      client,
-      mcpServers: {
-        symphifo: {
-          command: "npx",
-          args: ["symphifo", "mcp", "--workspace", WORKSPACE_ROOT, "--persistence", PERSISTENCE_ROOT],
-        },
-      },
-    }, null, 2));
+    return toolText(JSON.stringify({ client, mcpServers: { symphifony: { command: "npx", args: ["symphifony", "mcp", "--workspace", WORKSPACE_ROOT, "--persistence", PERSISTENCE_ROOT] } } }, null, 2));
   }
 
-  if (name === "symphifo.list_integrations") {
-    return toolText(JSON.stringify(discoverIntegrations(WORKSPACE_ROOT), null, 2));
-  }
+  if (name === "symphifony.list_integrations") return toolText(JSON.stringify(discoverIntegrations(WORKSPACE_ROOT), null, 2));
 
-  if (name === "symphifo.integration_snippet") {
+  if (name === "symphifony.integration_snippet") {
     const integration = typeof args.integration === "string" ? args.integration : "";
     return toolText(buildIntegrationSnippet(integration, WORKSPACE_ROOT));
   }
 
-  if (name === "symphifo.resolve_capabilities") {
+  if (name === "symphifony.resolve_capabilities") {
     const title = typeof args.title === "string" ? args.title : "";
     const description = typeof args.description === "string" ? args.description : "";
-    const labels = Array.isArray(args.labels)
-      ? args.labels.filter((value): value is string => typeof value === "string")
-      : [];
-    const paths = Array.isArray(args.paths)
-      ? args.paths.filter((value): value is string => typeof value === "string")
-      : [];
-    const inferredPaths = inferCapabilityPaths({ title, description, labels, paths });
-    const resolution = resolveTaskCapabilities({ title, description, labels, paths });
-    return toolText(JSON.stringify({ inferredPaths, resolution }, null, 2));
+    const labels = Array.isArray(args.labels) ? args.labels.filter((value): value is string => typeof value === "string") : [];
+    const paths = Array.isArray(args.paths) ? args.paths.filter((value): value is string => typeof value === "string") : [];
+    return toolText(JSON.stringify({ inferredPaths: inferCapabilityPaths({ title, description, labels, paths }), resolution: resolveTaskCapabilities({ title, description, labels, paths }) }, null, 2));
   }
 
   throw new Error(`Unknown tool: ${name}`);
 }
+
+// ── JSON-RPC transport ───────────────────────────────────────────────────────
 
 function sendMessage(message: JsonRpcResponse): void {
   const payload = Buffer.from(JSON.stringify(message), "utf8");
@@ -1090,69 +386,29 @@ function sendMessage(message: JsonRpcResponse): void {
 }
 
 function sendResult(id: JsonRpcId, result: unknown): void {
-  sendMessage({
-    jsonrpc: "2.0",
-    id,
-    result,
-  });
+  sendMessage({ jsonrpc: "2.0", id, result });
 }
 
 function sendError(id: JsonRpcId, code: number, message: string, data?: unknown): void {
-  sendMessage({
-    jsonrpc: "2.0",
-    id,
-    error: {
-      code,
-      message,
-      data,
-    },
-  });
+  sendMessage({ jsonrpc: "2.0", id, error: { code, message, data } });
 }
 
 async function handleRequest(request: JsonRpcRequest): Promise<void> {
   const id = request.id ?? null;
-
   try {
     switch (request.method) {
       case "initialize":
-        sendResult(id, {
-          protocolVersion: "2024-11-05",
-          capabilities: {
-            resources: {},
-            tools: {},
-            prompts: {},
-          },
-          serverInfo: {
-            name: "symphifo",
-            version: "0.1.0",
-          },
-        });
+        sendResult(id, { protocolVersion: "2024-11-05", capabilities: { resources: {}, tools: {}, prompts: {} }, serverInfo: { name: "symphifony", version: "0.1.0" } });
         return;
-      case "notifications/initialized":
-        return;
-      case "ping":
-        sendResult(id, {});
-        return;
-      case "resources/list":
-        sendResult(id, { resources: await listResources() });
-        return;
-      case "resources/read":
-        sendResult(id, { contents: await readResource(String(request.params?.uri ?? "")) });
-        return;
-      case "tools/list":
-        sendResult(id, { tools: listTools() });
-        return;
-      case "tools/call":
-        sendResult(id, await callTool(String(request.params?.name ?? ""), (request.params?.arguments as Record<string, unknown> | undefined) ?? {}));
-        return;
-      case "prompts/list":
-        sendResult(id, { prompts: listPrompts() });
-        return;
-      case "prompts/get":
-        sendResult(id, await getPrompt(String(request.params?.name ?? ""), (request.params?.arguments as Record<string, unknown> | undefined) ?? {}));
-        return;
-      default:
-        sendError(id, -32601, `Method not found: ${request.method}`);
+      case "notifications/initialized": return;
+      case "ping": sendResult(id, {}); return;
+      case "resources/list": sendResult(id, { resources: await listResourcesMcp() }); return;
+      case "resources/read": sendResult(id, { contents: await readResource(String(request.params?.uri ?? "")) }); return;
+      case "tools/list": sendResult(id, { tools: listTools() }); return;
+      case "tools/call": sendResult(id, await callTool(String(request.params?.name ?? ""), (request.params?.arguments as Record<string, unknown> | undefined) ?? {})); return;
+      case "prompts/list": sendResult(id, { prompts: listPrompts() }); return;
+      case "prompts/get": sendResult(id, await getPrompt(String(request.params?.name ?? ""), (request.params?.arguments as Record<string, unknown> | undefined) ?? {})); return;
+      default: sendError(id, -32601, `Method not found: ${request.method}`);
     }
   } catch (error) {
     sendError(id, -32000, String(error));
@@ -1162,27 +418,16 @@ async function handleRequest(request: JsonRpcRequest): Promise<void> {
 function processIncomingBuffer(): void {
   while (true) {
     const separatorIndex = incomingBuffer.indexOf("\r\n\r\n");
-    if (separatorIndex === -1) {
-      return;
-    }
+    if (separatorIndex === -1) return;
 
     const headerText = incomingBuffer.subarray(0, separatorIndex).toString("utf8");
-    const contentLengthHeader = headerText
-      .split("\r\n")
-      .find((line) => line.toLowerCase().startsWith("content-length:"));
-
-    if (!contentLengthHeader) {
-      incomingBuffer = Buffer.alloc(0);
-      return;
-    }
+    const contentLengthHeader = headerText.split("\r\n").find((line) => line.toLowerCase().startsWith("content-length:"));
+    if (!contentLengthHeader) { incomingBuffer = Buffer.alloc(0); return; }
 
     const contentLength = Number.parseInt(contentLengthHeader.split(":")[1]?.trim() ?? "0", 10);
     const messageStart = separatorIndex + 4;
     const messageEnd = messageStart + contentLength;
-
-    if (incomingBuffer.length < messageEnd) {
-      return;
-    }
+    if (incomingBuffer.length < messageEnd) return;
 
     const messageBody = incomingBuffer.subarray(messageStart, messageEnd).toString("utf8");
     incomingBuffer = incomingBuffer.subarray(messageEnd);
@@ -1199,14 +444,13 @@ function processIncomingBuffer(): void {
   }
 }
 
+// ── Bootstrap ────────────────────────────────────────────────────────────────
+
 async function bootstrap(): Promise<void> {
   debugBoot("mcp:bootstrap:start");
-  await getDatabase();
+  await initDatabase();
   debugBoot("mcp:bootstrap:database-ready");
-  await appendEvent("info", "Symphifo MCP server started.", {
-    workspaceRoot: WORKSPACE_ROOT,
-    persistenceRoot: PERSISTENCE_ROOT,
-  });
+  await appendEvent("info", "Symphifony MCP server started.", { workspaceRoot: WORKSPACE_ROOT, persistenceRoot: PERSISTENCE_ROOT });
 
   stdin.on("data", (chunk: Buffer) => {
     incomingBuffer = Buffer.concat([incomingBuffer, chunk]);
@@ -1218,20 +462,18 @@ async function bootstrap(): Promise<void> {
 }
 
 bootstrap().catch((error) => {
-  sendError(null, -32001, `Failed to start Symphifo MCP server: ${String(error)}`);
+  sendError(null, -32001, `Failed to start Symphifony MCP server: ${String(error)}`);
   process.exit(1);
 });
 
 process.on("SIGINT", async () => {
-  if (database) {
-    await database.disconnect();
-  }
+  const db = getDatabase();
+  if (db) await db.disconnect();
   process.exit(0);
 });
 
 process.on("SIGTERM", async () => {
-  if (database) {
-    await database.disconnect();
-  }
+  const db = getDatabase();
+  if (db) await db.disconnect();
   process.exit(0);
 });

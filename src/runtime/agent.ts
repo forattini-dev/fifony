@@ -56,7 +56,7 @@ import {
 } from "./providers.ts";
 import {
   addEvent,
-  transition,
+  transitionIssueState,
   computeMetrics,
   getNextRetryAt,
 } from "./issues.ts";
@@ -81,7 +81,7 @@ function extractOutputMarker(output: string, name: string): string {
 
 function readAgentDirective(workspacePath: string, output: string, success: boolean): AgentDirective {
   const fallbackStatus: AgentDirectiveStatus = success ? "done" : "failed";
-  const resultFile = join(workspacePath, "symphifo-result.json");
+  const resultFile = join(workspacePath, "symphifony-result.json");
   let resultPayload: JsonRecord = {};
 
   if (existsSync(resultFile)) {
@@ -91,18 +91,18 @@ function readAgentDirective(workspacePath: string, output: string, success: bool
         resultPayload = parsed as JsonRecord;
       }
     } catch (error) {
-      logger.warn(`Invalid symphifo-result.json in ${workspacePath}: ${String(error)}`);
+      logger.warn(`Invalid symphifony-result.json in ${workspacePath}: ${String(error)}`);
     }
   }
 
   const status = normalizeAgentDirectiveStatus(
-    resultPayload.status ?? extractOutputMarker(output, "SYMPHIFO_STATUS"),
+    resultPayload.status ?? extractOutputMarker(output, "SYMPHIFONY_STATUS"),
     fallbackStatus,
   );
   const summary =
     toStringValue(resultPayload.summary)
     || toStringValue(resultPayload.message)
-    || extractOutputMarker(output, "SYMPHIFO_SUMMARY");
+    || extractOutputMarker(output, "SYMPHIFONY_SUMMARY");
   const nextPrompt =
     toStringValue(resultPayload.nextPrompt)
     || toStringValue(resultPayload.next_prompt)
@@ -142,18 +142,18 @@ function issueDepsResolved(issue: IssueEntry, allIssues: IssueEntry[]): boolean 
 
 function shouldSkipRoutingPath(relativePath: string): boolean {
   const parts = relativePath.split("/");
-  if (parts.some((segment) => segment === ".git" || segment === "node_modules" || segment === ".symphifo")) {
+  if (parts.some((segment) => segment === ".git" || segment === "node_modules" || segment === ".symphifony")) {
     return true;
   }
   const base = parts.at(-1) ?? "";
-  return base === "symphifo-issue.json"
-    || base === "symphifo-prompt.md"
-    || base === "symphifo-result.json"
+  return base === "symphifony-issue.json"
+    || base === "symphifony-prompt.md"
+    || base === "symphifony-result.json"
     || base === "WORKFLOW.local.md"
-    || base.startsWith("symphifo-result-")
-    || base.startsWith("symphifo-turn-")
-    || base.startsWith("symphifo-session")
-    || base.startsWith("symphifo-pipeline");
+    || base.startsWith("symphifony-result-")
+    || base.startsWith("symphifony-turn-")
+    || base.startsWith("symphifony-session")
+    || base.startsWith("symphifony-pipeline");
 }
 
 function inferChangedWorkspacePaths(workspacePath: string, limit = 32): string[] {
@@ -549,10 +549,10 @@ function buildTurnPrompt(
     "```",
     "",
     "Before exiting successfully, emit one of the following control markers:",
-    "- `SYMPHIFO_STATUS=continue` if more turns are required.",
-    "- `SYMPHIFO_STATUS=done` if the issue is complete.",
-    "- `SYMPHIFO_STATUS=blocked` if manual intervention is required.",
-    'You may also write `symphifo-result.json` with `{ "status": "...", "summary": "...", "nextPrompt": "..." }`.',
+    "- `SYMPHIFONY_STATUS=continue` if more turns are required.",
+    "- `SYMPHIFONY_STATUS=done` if the issue is complete.",
+    "- `SYMPHIFONY_STATUS=blocked` if manual intervention is required.",
+    'You may also write `symphifony-result.json` with `{ "status": "...", "summary": "...", "nextPrompt": "..." }`.',
   ].join("\n");
 }
 
@@ -573,8 +573,8 @@ function buildProviderBasePrompt(
       ? [
           "Role: reviewer.",
           "Inspect the workspace and review the current implementation critically.",
-          "If rework is required, emit `SYMPHIFO_STATUS=continue` and provide actionable `nextPrompt` feedback.",
-          "Emit `SYMPHIFO_STATUS=done` only when the work is acceptable.",
+          "If rework is required, emit `SYMPHIFONY_STATUS=continue` and provide actionable `nextPrompt` feedback.",
+          "Emit `SYMPHIFONY_STATUS=done` only when the work is acceptable.",
         ]
       : [
           "Role: executor.",
@@ -635,27 +635,47 @@ async function runCommandWithTimeout(
 ): Promise<{ success: boolean; code: number | null; output: string }> {
   return new Promise((resolve) => {
     const started = Date.now();
-    const resultFile = extraEnv.SYMPHIFO_RESULT_FILE;
-    if (resultFile && extraEnv.SYMPHIFO_PRESERVE_RESULT_FILE !== "1") {
+    const resultFile = extraEnv.SYMPHIFONY_RESULT_FILE;
+    if (resultFile && extraEnv.SYMPHIFONY_PRESERVE_RESULT_FILE !== "1") {
       rmSync(resultFile, { force: true });
     }
 
-    const child = spawn(command, {
+    // Write all SYMPHIFONY_* vars to an env file and source it in the command.
+    // This avoids E2BIG: child inherits process.env naturally (no ...env spread),
+    // and our custom vars are loaded from a file instead of argv/env.
+    const allVars: Record<string, string> = {
+      SYMPHIFONY_ISSUE_ID: issue.id,
+      SYMPHIFONY_ISSUE_IDENTIFIER: issue.identifier,
+      SYMPHIFONY_ISSUE_TITLE: issue.title,
+      SYMPHIFONY_ISSUE_PRIORITY: String(issue.priority),
+      SYMPHIFONY_WORKSPACE_PATH: workspacePath,
+      SYMPHIFONY_PROMPT_FILE: promptFile,
+    };
+    for (const [key, value] of Object.entries(extraEnv)) {
+      if (value.length > 4000) {
+        const valFile = join(workspacePath, `${key.toLowerCase()}.txt`);
+        writeFileSync(valFile, value, "utf8");
+        allVars[`${key}_FILE`] = valFile;
+      } else {
+        allVars[key] = value;
+      }
+    }
+
+    const envFilePath = join(workspacePath, ".symphifony-env.sh");
+    const envFileLines = Object.entries(allVars)
+      .map(([k, v]) => `export ${k}=${JSON.stringify(v)}`)
+      .join("\n");
+    writeFileSync(envFilePath, envFileLines, "utf8");
+
+    const wrappedCommand = `. "${envFilePath}" && ${command}`;
+    const child = spawn(wrappedCommand, {
       shell: true,
       cwd: workspacePath,
-      env: {
-        ...env,
-        SYMPHIFO_ISSUE_ID: issue.id,
-        SYMPHIFO_ISSUE_IDENTIFIER: issue.identifier,
-        SYMPHIFO_ISSUE_TITLE: issue.title,
-        SYMPHIFO_ISSUE_PRIORITY: String(issue.priority),
-        SYMPHIFO_WORKSPACE_PATH: workspacePath,
-        SYMPHIFO_ISSUE_JSON: JSON.stringify(issue),
-        SYMPHIFO_PROMPT: promptText,
-        SYMPHIFO_PROMPT_FILE: promptFile,
-        ...extraEnv,
-      },
     });
+
+    if (child.stdin) {
+      child.stdin.end();
+    }
 
     let output = "";
     let timedOut = false;
@@ -708,11 +728,11 @@ async function runHook(
     retryDelayMs: 0,
     staleInProgressTimeoutMs: 0,
     logLinesTail: 12_000,
-    agentProvider: normalizeAgentProvider(env.SYMPHIFO_AGENT_PROVIDER ?? "codex"),
+    agentProvider: normalizeAgentProvider(env.SYMPHIFONY_AGENT_PROVIDER ?? "codex"),
     agentCommand: command,
     maxTurns: 1,
     runMode: "filesystem",
-  }, "", "", { SYMPHIFO_HOOK_NAME: hookName, ...extraEnv });
+  }, "", "", { SYMPHIFONY_HOOK_NAME: hookName, ...extraEnv });
 
   if (!result.success) {
     throw new Error(`${hookName} hook failed: ${result.output}`);
@@ -766,9 +786,9 @@ async function prepareWorkspace(
     }
   }
 
-  const metaPath = join(workspaceRoot, "symphifo-issue.json");
+  const metaPath = join(workspaceRoot, "symphifony-issue.json");
   const promptText = buildPrompt(issue, workflowDefinition);
-  const promptFile = join(workspaceRoot, "symphifo-prompt.md");
+  const promptFile = join(workspaceRoot, "symphifony-prompt.md");
   writeFileSync(metaPath, JSON.stringify({ ...issue, runtimeSource: SOURCE_ROOT, bootstrapAt: now() }, null, 2), "utf8");
   writeFileSync(promptFile, `${promptText}\n`, "utf8");
 
@@ -797,7 +817,7 @@ async function runAgentSession(
   let nextPrompt = session.nextPrompt;
   let lastCode: number | null = session.lastCode;
   let lastOutput = session.lastOutput;
-  const resultFile = join(workspacePath, `symphifo-result-${provider.role}-${provider.provider}.json`);
+  const resultFile = join(workspacePath, `symphifony-result-${provider.role}-${provider.provider}.json`);
 
   if (session.status === "done" && session.turns.length > 0) {
     return { success: true, blocked: false, continueRequested: false, code: session.lastCode, output: session.lastOutput, turns: session.turns.length };
@@ -814,7 +834,7 @@ async function runAgentSession(
   const turnPrompt = buildTurnPrompt(issue, basePromptText, previousOutput, turnIndex, maxTurns, nextPrompt);
   const turnPromptFile = turnIndex === 1
     ? basePromptFile
-    : join(workspacePath, `symphifo-turn-${String(turnIndex).padStart(2, "0")}.md`);
+    : join(workspacePath, `symphifony-turn-${String(turnIndex).padStart(2, "0")}.md`);
 
   if (turnIndex > 1) writeFileSync(turnPromptFile, `${turnPrompt}\n`, "utf8");
 
@@ -826,20 +846,20 @@ async function runAgentSession(
 
   const turnStartedAt = now();
   const turnEnv = {
-    SYMPHIFO_AGENT_PROVIDER: provider.provider,
-    SYMPHIFO_AGENT_ROLE: provider.role,
-    SYMPHIFO_SESSION_KEY: sessionKey,
-    SYMPHIFO_SESSION_ID: `${issue.id}-attempt-${attempt}`,
-    SYMPHIFO_TURN_INDEX: String(turnIndex),
-    SYMPHIFO_MAX_TURNS: String(maxTurns),
-    SYMPHIFO_TURN_PROMPT: turnPrompt,
-    SYMPHIFO_TURN_PROMPT_FILE: turnPromptFile,
-    SYMPHIFO_CONTINUE: turnIndex > 1 ? "1" : "0",
-    SYMPHIFO_PREVIOUS_OUTPUT: previousOutput,
-    SYMPHIFO_RESULT_FILE: resultFile,
-    SYMPHIFO_AGENT_PROFILE: provider.profile,
-    SYMPHIFO_AGENT_PROFILE_FILE: provider.profilePath,
-    SYMPHIFO_AGENT_PROFILE_INSTRUCTIONS: provider.profileInstructions,
+    SYMPHIFONY_AGENT_PROVIDER: provider.provider,
+    SYMPHIFONY_AGENT_ROLE: provider.role,
+    SYMPHIFONY_SESSION_KEY: sessionKey,
+    SYMPHIFONY_SESSION_ID: `${issue.id}-attempt-${attempt}`,
+    SYMPHIFONY_TURN_INDEX: String(turnIndex),
+    SYMPHIFONY_MAX_TURNS: String(maxTurns),
+    SYMPHIFONY_TURN_PROMPT: turnPrompt,
+    SYMPHIFONY_TURN_PROMPT_FILE: turnPromptFile,
+    SYMPHIFONY_CONTINUE: turnIndex > 1 ? "1" : "0",
+    SYMPHIFONY_PREVIOUS_OUTPUT: previousOutput,
+    SYMPHIFONY_RESULT_FILE: resultFile,
+    SYMPHIFONY_AGENT_PROFILE: provider.profile,
+    SYMPHIFONY_AGENT_PROFILE_FILE: provider.profilePath,
+    SYMPHIFONY_AGENT_PROFILE_INSTRUCTIONS: provider.profileInstructions,
   };
 
   const workflowDefinition = state._workflowDefinition as WorkflowDefinition | null | undefined;
@@ -854,9 +874,9 @@ async function runAgentSession(
   if (workflowDefinition?.afterRunHook) {
     await runHook(workflowDefinition.afterRunHook, workspacePath, issue, "after_run", {
       ...turnEnv,
-      SYMPHIFO_LAST_EXIT_CODE: String(turnResult.code ?? ""),
-      SYMPHIFO_LAST_OUTPUT: turnResult.output,
-      SYMPHIFO_PRESERVE_RESULT_FILE: "1",
+      SYMPHIFONY_LAST_EXIT_CODE: String(turnResult.code ?? ""),
+      SYMPHIFONY_LAST_OUTPUT: turnResult.output,
+      SYMPHIFONY_PRESERVE_RESULT_FILE: "1",
     });
   }
 
@@ -932,7 +952,7 @@ export async function runAgentPipeline(
 
   // Write skills reference to workspace
   if (skillContext) {
-    writeFileSync(join(workspacePath, "symphifo-skills.md"), skillContext, "utf8");
+    writeFileSync(join(workspacePath, "symphifony-skills.md"), skillContext, "utf8");
   }
 
   const providerPrompt = buildProviderBasePrompt(activeProvider, issue, basePromptText, workspacePath, skillContext);
@@ -1003,7 +1023,7 @@ export async function runIssueOnce(
     issue.history.push(`[${issue.updatedAt}] Resuming persisted runner for ${issue.identifier}.`);
     addEvent(state, issue.id, "progress", `Runner resumed for ${issue.identifier}.`);
   } else {
-    transition(issue, "In Progress", `Starting local runner for ${issue.identifier}.`);
+    await transitionIssueState(issue, "In Progress", `Starting local runner for ${issue.identifier}.`);
     state.metrics.inProgress += 1;
     state.metrics.queued = Math.max(state.metrics.queued - 1, 0);
     addEvent(state, issue.id, "progress", `Runner started for ${issue.identifier}.`);
@@ -1041,10 +1061,10 @@ export async function runIssueOnce(
     issue.commandOutputTail = runResult.output;
 
     if (runResult.success) {
-      transition(issue, "In Review", `Agent session finished successfully in ${runResult.turns} turn(s) for ${issue.identifier}.`);
+      await transitionIssueState(issue, "In Review", `Agent session finished successfully in ${runResult.turns} turn(s) for ${issue.identifier}.`);
       issue.lastError = undefined;
       await sleep(250);
-      transition(issue, "Done", `Issue accepted by local review stage.`);
+      await transitionIssueState(issue, "Done", `Issue accepted by local review stage.`);
       addEvent(state, issue.id, "runner", `Issue ${issue.identifier} moved to Done.`);
       issue.completedAt = now();
     } else if (runResult.continueRequested) {
@@ -1062,11 +1082,12 @@ export async function runIssueOnce(
 
       if (issue.attempts >= issue.maxAttempts) {
         issue.commandExitCode = runResult.code;
-        transition(issue, "Cancelled", `Max attempts reached (${issue.attempts}/${issue.maxAttempts}).`);
+        await transitionIssueState(issue, "Cancelled", `Max attempts reached (${issue.attempts}/${issue.maxAttempts}).`);
         addEvent(state, issue.id, "error", `Issue ${issue.identifier} cancelled after repeated failures.`);
       } else {
         issue.nextRetryAt = getNextRetryAt(issue, state.config.retryDelayMs);
-        transition(issue, "Blocked",
+        await transitionIssueState(issue,
+          "Blocked",
           `${runResult.blocked ? "Agent requested manual intervention" : "Failure"} on attempt ${issue.attempts}/${issue.maxAttempts}; retry scheduled at ${issue.nextRetryAt}.`);
         addEvent(state, issue.id, "error", `Issue ${issue.identifier} blocked waiting for retry.`);
       }
@@ -1076,11 +1097,11 @@ export async function runIssueOnce(
     issue.lastError = String(error);
 
     if (issue.attempts >= issue.maxAttempts) {
-      transition(issue, "Cancelled", `Issue failed unexpectedly: ${issue.lastError}`);
+      await transitionIssueState(issue, "Cancelled", `Issue failed unexpectedly: ${issue.lastError}`);
       addEvent(state, issue.id, "error", `Issue ${issue.identifier} cancelled unexpectedly.`);
     } else {
       issue.nextRetryAt = getNextRetryAt(issue, state.config.retryDelayMs);
-      transition(issue, "Blocked", `Unexpected failure. Retry scheduled at ${issue.nextRetryAt}.`);
+      await transitionIssueState(issue, "Blocked", `Unexpected failure. Retry scheduled at ${issue.nextRetryAt}.`);
       addEvent(state, issue.id, "error", `Issue ${issue.identifier} blocked after unexpected failure.`);
     }
   } finally {

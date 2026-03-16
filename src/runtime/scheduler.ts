@@ -9,12 +9,13 @@ import { EXECUTING_STATES, TERMINAL_STATES } from "./constants.ts";
 import { now, sleep, normalizeState, toStringValue } from "./helpers.ts";
 import { logger } from "./logger.ts";
 import { persistState } from "./store.ts";
+import { detectAvailableProviders, resolveDefaultProvider, getProviderDefaultCommand } from "./providers.ts";
 import {
   addEvent,
   computeMetrics,
   getNextRetryAt,
   issueDependenciesResolved,
-  transition,
+  transitionIssueState,
 } from "./issues.ts";
 import {
   getIssueCapabilityPriority,
@@ -127,7 +128,7 @@ export function analyzeParallelizability(issues: IssueEntry[]): ParallelismAnaly
   };
 }
 
-export function ensureNotStale(state: RuntimeState, staleTimeoutMs: number): void {
+export async function ensureNotStale(state: RuntimeState, staleTimeoutMs: number): Promise<void> {
   const limit = Date.now() - staleTimeoutMs;
   for (const issue of state.issues) {
     if (
@@ -139,7 +140,7 @@ export function ensureNotStale(state: RuntimeState, staleTimeoutMs: number): voi
       issue.attempts += 1;
       issue.nextRetryAt = getNextRetryAt(issue, state.config.retryDelayMs);
       issue.startedAt = undefined;
-      transition(issue, "Blocked", `Issue state auto-recovered from stale execution.`);
+      await transitionIssueState(issue, "Blocked", `Issue state auto-recovered from stale execution.`);
     }
   }
 }
@@ -172,9 +173,23 @@ export function pickNextIssues(
     });
 }
 
+let lastDispatchWarning = "";
+
 function validateDispatchConfig(state: RuntimeState): string | null {
   if (!state.config.agentCommand?.trim()) {
-    return "No agent command configured.";
+    // Self-healing: try to auto-detect a provider
+    const detected = detectAvailableProviders();
+    const provider = resolveDefaultProvider(detected);
+    if (provider) {
+      const command = getProviderDefaultCommand(provider);
+      if (command) {
+        state.config.agentProvider = provider;
+        state.config.agentCommand = command;
+        logger.info(`Self-healed: auto-detected provider ${provider} → ${command}`);
+        return null;
+      }
+    }
+    return "No agent command configured. Install claude or codex, or set SYMPHIFONY_AGENT_COMMAND.";
   }
   if (state.config.workerConcurrency < 1) {
     return "Worker concurrency must be >= 1.";
@@ -183,6 +198,12 @@ function validateDispatchConfig(state: RuntimeState): string | null {
     return "Max turns must be >= 1.";
   }
   return null; // valid
+}
+
+function warnOncePerMessage(message: string): void {
+  if (message === lastDispatchWarning) return;
+  lastDispatchWarning = message;
+  logger.warn(`Dispatch skipped: ${message}`);
 }
 
 export function hasTerminalQueue(state: RuntimeState): boolean {
@@ -197,12 +218,12 @@ export async function scheduler(
 ): Promise<void> {
   if (runForever) {
     while (!shuttingDown) {
-      ensureNotStale(state, state.config.staleInProgressTimeoutMs);
+      await ensureNotStale(state, state.config.staleInProgressTimeoutMs);
 
       // Per-tick dispatch validation (spec §6.3)
       const validationError = validateDispatchConfig(state);
       if (validationError) {
-        logger.warn(`Dispatch skipped: ${validationError}`);
+        warnOncePerMessage(validationError);
       } else {
         const ready = pickNextIssues(state, running, workflowDefinition);
         const slots = state.config.workerConcurrency - running.size;
@@ -220,11 +241,11 @@ export async function scheduler(
   }
 
   while (!hasTerminalQueue(state) && !shuttingDown) {
-    ensureNotStale(state, state.config.staleInProgressTimeoutMs);
+    await ensureNotStale(state, state.config.staleInProgressTimeoutMs);
 
     const batchValidationError = validateDispatchConfig(state);
     if (batchValidationError) {
-      logger.warn(`Dispatch skipped: ${batchValidationError}`);
+      warnOncePerMessage(batchValidationError);
       await sleep(state.config.pollIntervalMs);
       continue;
     }

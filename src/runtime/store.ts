@@ -21,6 +21,11 @@ import { computeMetrics, computeCapabilityCounts } from "./issues.ts";
 import { clearApiRuntimeContext } from "./api-runtime-context.ts";
 import { broadcastToWebSocketClients } from "./api-server.ts";
 import { NATIVE_RESOURCE_CONFIGS, NATIVE_RESOURCE_NAMES } from "./resources/index.ts";
+import {
+  setIssueStateMachinePlugin,
+  ISSUE_STATE_MACHINE_DEFINITION,
+  ISSUE_STATE_MACHINE_ID,
+} from "./issue-state-machine.ts";
 
 let loadedS3dbModule: S3dbModule | null = null;
 let stateDb: S3dbDatabase | null = null;
@@ -30,6 +35,7 @@ let eventStateResource: S3dbResource | null = null;
 let agentSessionResource: S3dbResource | null = null;
 let agentPipelineResource: S3dbResource | null = null;
 let activeApiPlugin: { stop?: () => Promise<void> } | null = null;
+let activeStateMachinePlugin: { stop?: () => Promise<void> } | null = null;
 
 export function getStateDb(): S3dbDatabase | null { return stateDb; }
 export function getRuntimeStateResource(): S3dbResource | null { return runtimeStateResource; }
@@ -42,6 +48,8 @@ export function setActiveApiPlugin(plugin: { stop?: () => Promise<void> } | null
 let activeWebSocketPlugin: { stop?: () => Promise<void> } | null = null;
 export function getActiveWebSocketPlugin(): { stop?: () => Promise<void> } | null { return activeWebSocketPlugin; }
 export function setActiveWebSocketPlugin(plugin: { stop?: () => Promise<void> } | null): void { activeWebSocketPlugin = plugin; }
+export function getActiveStateMachinePlugin(): { stop?: () => Promise<void> } | null { return activeStateMachinePlugin; }
+export function setActiveStateMachinePlugin(plugin: { stop?: () => Promise<void> } | null): void { activeStateMachinePlugin = plugin; }
 
 export async function loadS3dbModule(): Promise<S3dbModule> {
   if (loadedS3dbModule) return loadedS3dbModule;
@@ -52,6 +60,7 @@ export async function loadS3dbModule(): Promise<S3dbModule> {
 
     let ApiPluginCtor: S3dbModule["ApiPlugin"] | undefined;
     let WebSocketPluginCtor: S3dbModule["WebSocketPlugin"] | undefined;
+    let StateMachinePluginCtor: S3dbModule["StateMachinePlugin"] | undefined;
 
     if (typeof (pluginModule as Record<string, unknown>).ApiPlugin === "function") {
       ApiPluginCtor = (pluginModule as { ApiPlugin: S3dbModule["ApiPlugin"] }).ApiPlugin;
@@ -69,11 +78,16 @@ export async function loadS3dbModule(): Promise<S3dbModule> {
       WebSocketPluginCtor = await (pluginModule as { loadWebSocketPlugin: () => Promise<S3dbModule["WebSocketPlugin"]> }).loadWebSocketPlugin();
     }
 
+    if (typeof (pluginModule as Record<string, unknown>).StateMachinePlugin === "function") {
+      StateMachinePluginCtor = (pluginModule as { StateMachinePlugin: S3dbModule["StateMachinePlugin"] }).StateMachinePlugin;
+    }
+
     loadedS3dbModule = {
       S3db: imported.S3db as S3dbModule["S3db"],
       FileSystemClient: imported.FileSystemClient as S3dbModule["FileSystemClient"],
       ApiPlugin: ApiPluginCtor,
       WebSocketPlugin: WebSocketPluginCtor,
+      StateMachinePlugin: StateMachinePluginCtor,
     };
     return loadedS3dbModule;
   } catch (error) {
@@ -83,7 +97,7 @@ export async function loadS3dbModule(): Promise<S3dbModule> {
 
 export async function initStateStore(): Promise<void> {
   debugBoot("initStateStore:start");
-  const { S3db, FileSystemClient } = await loadS3dbModule();
+  const { S3db, FileSystemClient, StateMachinePlugin } = await loadS3dbModule();
   debugBoot("initStateStore:module-loaded");
 
   mkdirSync(S3DB_DATABASE_PATH, { recursive: true });
@@ -101,6 +115,31 @@ export async function initStateStore(): Promise<void> {
 
   for (const resourceConfig of NATIVE_RESOURCE_CONFIGS) {
     await stateDb.createResource(resourceConfig);
+  }
+
+  if (StateMachinePlugin) {
+    const stateMachinePlugin = await stateDb.usePlugin(
+      new StateMachinePlugin({
+        stateMachines: {
+          [ISSUE_STATE_MACHINE_ID]: ISSUE_STATE_MACHINE_DEFINITION,
+        },
+      }) as unknown,
+      "state-machine",
+    ) as Record<string, unknown>;
+
+    activeStateMachinePlugin = stateMachinePlugin as { stop?: () => Promise<void> };
+    const bindPluginMethod = <T extends (...args: never[]) => unknown>(method: unknown): T | undefined => {
+      return typeof method === "function" ? method.bind(stateMachinePlugin) as T : undefined;
+    };
+    setIssueStateMachinePlugin({
+      send: bindPluginMethod<S3dbModule["StateMachinePlugin"] extends { send?: infer T } ? T & ((...args: never[]) => unknown) : never>(stateMachinePlugin.send),
+      getMachineDefinition: bindPluginMethod<S3dbModule["StateMachinePlugin"] extends { getMachineDefinition?: infer T } ? T & ((...args: never[]) => unknown) : never>(stateMachinePlugin.getMachineDefinition),
+      getState: bindPluginMethod<S3dbModule["StateMachinePlugin"] extends { getState?: infer T } ? T & ((...args: never[]) => unknown) : never>(stateMachinePlugin.getState),
+      initializeEntity: bindPluginMethod<S3dbModule["StateMachinePlugin"] extends { initializeEntity?: infer T } ? T & ((...args: never[]) => unknown) : never>(stateMachinePlugin.initializeEntity),
+      getValidEvents: bindPluginMethod<S3dbModule["StateMachinePlugin"] extends { getValidEvents?: infer T } ? T & ((...args: never[]) => unknown) : never>(stateMachinePlugin.getValidEvents),
+    });
+  } else {
+    logger.warn("StateMachinePlugin not available. Issue transitions will use local logic only.");
   }
 
   const [
@@ -190,6 +229,16 @@ export async function persistState(state: RuntimeState): Promise<void> {
 
 export async function closeStateStore(): Promise<void> {
   clearApiRuntimeContext();
+  if (activeStateMachinePlugin?.stop) {
+    try {
+      await activeStateMachinePlugin.stop();
+    } catch (error) {
+      logger.warn(`Failed to stop StateMachine plugin: ${String(error)}`);
+    } finally {
+      activeStateMachinePlugin = null;
+      setIssueStateMachinePlugin(null);
+    }
+  }
   if (activeWebSocketPlugin?.stop) {
     try {
       await activeWebSocketPlugin.stop();

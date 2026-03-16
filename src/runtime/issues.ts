@@ -13,6 +13,14 @@ import type {
   WorkflowDefinition,
 } from "./types.ts";
 import {
+  ISSUE_STATE_MACHINE_ID,
+  findIssueStateMachineTransitionPath,
+  getIssueStateMachineDefinition,
+  getIssueStateMachineInitialState,
+  getIssueStateMachinePlugin,
+  type IssueStateMachinePluginLike,
+} from "./issue-state-machine.ts";
+import {
   ALLOWED_STATES,
   PERSIST_EVENTS_MAX,
   TERMINAL_STATES,
@@ -102,7 +110,7 @@ export function loadSeedIssues(
   path: string,
   workflowDefinition: WorkflowDefinition | null,
 ): IssueEntry[] {
-  const sourcePath = env.SYMPHIFO_ISSUES_JSON ?? path;
+  const sourcePath = env.SYMPHIFONY_ISSUES_JSON ?? path;
 
   if (sourcePath !== path && sourcePath) {
     mkdirSync(dirname(path), { recursive: true });
@@ -191,11 +199,11 @@ export function createIssueFromPayload(
 }
 
 export function deriveConfig(args: string[]): RuntimeConfig {
-  const parsedConcurrency = parsePositiveIntEnv("SYMPHIFO_WORKER_CONCURRENCY", 2);
-  let pollIntervalMs = parseEnvNumber("SYMPHIFO_POLL_INTERVAL_MS", 1200);
+  const parsedConcurrency = parsePositiveIntEnv("SYMPHIFONY_WORKER_CONCURRENCY", 2);
+  let pollIntervalMs = parseEnvNumber("SYMPHIFONY_POLL_INTERVAL_MS", 1200);
   let workerConcurrency = parsedConcurrency;
-  let maxAttemptsDefault = parseEnvNumber("SYMPHIFO_MAX_ATTEMPTS", 3);
-  let commandTimeoutMs = parseEnvNumber("SYMPHIFO_AGENT_TIMEOUT_MS", 120000);
+  let maxAttemptsDefault = parseEnvNumber("SYMPHIFONY_MAX_ATTEMPTS", 3);
+  let commandTimeoutMs = parseEnvNumber("SYMPHIFONY_AGENT_TIMEOUT_MS", 120000);
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
@@ -221,12 +229,12 @@ export function deriveConfig(args: string[]): RuntimeConfig {
     workerConcurrency: clamp(workerConcurrency, 1, 16),
     commandTimeoutMs: clamp(commandTimeoutMs, 1_000, 600_000),
     maxAttemptsDefault: clamp(maxAttemptsDefault, 1, 10),
-    maxTurns: clamp(parseEnvNumber("SYMPHIFO_AGENT_MAX_TURNS", 4), 1, 16),
-    retryDelayMs: parseEnvNumber("SYMPHIFO_RETRY_DELAY_MS", 3_000),
-    staleInProgressTimeoutMs: parseEnvNumber("SYMPHIFO_STALE_IN_PROGRESS_MS", 20_000),
-    logLinesTail: parseEnvNumber("SYMPHIFO_LOG_TAIL_CHARS", 12_000),
-    agentProvider: normalizeAgentProvider(env.SYMPHIFO_AGENT_PROVIDER ?? "codex"),
-    agentCommand: toStringValue(env.SYMPHIFO_AGENT_COMMAND, ""),
+    maxTurns: clamp(parseEnvNumber("SYMPHIFONY_AGENT_MAX_TURNS", 4), 1, 16),
+    retryDelayMs: parseEnvNumber("SYMPHIFONY_RETRY_DELAY_MS", 3_000),
+    staleInProgressTimeoutMs: parseEnvNumber("SYMPHIFONY_STALE_IN_PROGRESS_MS", 20_000),
+    logLinesTail: parseEnvNumber("SYMPHIFONY_LOG_TAIL_CHARS", 12_000),
+    agentProvider: normalizeAgentProvider(env.SYMPHIFONY_AGENT_PROVIDER ?? "codex"),
+    agentCommand: toStringValue(env.SYMPHIFONY_AGENT_COMMAND, ""),
     maxConcurrentByState: {},
     runMode: "filesystem",
   };
@@ -508,7 +516,132 @@ export function getNextRetryAt(issue: IssueEntry, baseMs: number): string {
   return new Date(Date.now() + nextDelay).toISOString();
 }
 
-export function handleStatePatch(state: RuntimeState, issue: IssueEntry, payload: JsonRecord): void {
+async function syncIssueWithStateMachineIfNeeded(issue: IssueEntry): Promise<void> {
+  const plugin = getIssueStateMachinePlugin();
+  if (!plugin || !plugin.getState || !plugin.send || !plugin.initializeEntity) {
+    return;
+  }
+
+  let machineDefinition: unknown;
+  try {
+    machineDefinition = plugin.getMachineDefinition
+      ? plugin.getMachineDefinition(ISSUE_STATE_MACHINE_ID)
+      : getIssueStateMachineDefinition();
+  } catch {
+    machineDefinition = getIssueStateMachineDefinition();
+  }
+  const targetState = normalizeState(issue.state);
+  let machineState = await plugin.getState(ISSUE_STATE_MACHINE_ID, issue.id).catch(() => null);
+
+  if (!machineState) {
+    await plugin.initializeEntity(ISSUE_STATE_MACHINE_ID, issue.id, {
+      issueId: issue.id,
+      issueIdentifier: issue.identifier,
+      state: targetState,
+    });
+    machineState = await plugin.getState(ISSUE_STATE_MACHINE_ID, issue.id).catch(() => {
+      return getIssueStateMachineInitialState(machineDefinition);
+    });
+  }
+
+  if (machineState === targetState) {
+    return;
+  }
+
+  const path = findIssueStateMachineTransitionPath(machineDefinition, machineState, targetState);
+  if (!path) {
+    throw new Error(`State machine cannot synchronize issue ${issue.id} from '${machineState}' to '${targetState}'.`);
+  }
+
+  for (const event of path) {
+    await plugin.send(ISSUE_STATE_MACHINE_ID, issue.id, event, {
+      issueId: issue.id,
+      issueIdentifier: issue.identifier,
+      transition: "sync",
+      targetState,
+    });
+  }
+}
+
+export async function syncIssueStateMachineState(issue: IssueEntry): Promise<void> {
+  await syncIssueWithStateMachineIfNeeded(issue);
+}
+
+export async function syncIssueStateMachineStates(issues: IssueEntry[]): Promise<void> {
+  for (const issue of issues) {
+    try {
+      await syncIssueWithStateMachineIfNeeded(issue);
+    } catch (error) {
+      logger.warn(`State machine sync failed for issue ${issue.id}: ${String(error)}`);
+    }
+  }
+}
+
+async function runStateMachineTransition(issue: IssueEntry, targetState: IssueState, note: string): Promise<void> {
+  const plugin = getIssueStateMachinePlugin() as IssueStateMachinePluginLike | null;
+  if (!plugin?.send || !plugin.getState) {
+    transition(issue, targetState, note);
+    return;
+  }
+
+  let machineDefinition: unknown;
+  try {
+    machineDefinition = plugin.getMachineDefinition
+      ? plugin.getMachineDefinition(ISSUE_STATE_MACHINE_ID)
+      : getIssueStateMachineDefinition();
+  } catch {
+    machineDefinition = getIssueStateMachineDefinition();
+  }
+  const currentRuntimeState = normalizeState(issue.state);
+  const target = normalizeState(targetState);
+
+  await syncIssueWithStateMachineIfNeeded(issue);
+  const machineState = await plugin.getState(ISSUE_STATE_MACHINE_ID, issue.id).catch(() => currentRuntimeState);
+
+  if (machineState !== currentRuntimeState) {
+    throw new Error(`State machine desync while transitioning issue ${issue.id}: expected ${currentRuntimeState}, machine has ${machineState}.`);
+  }
+
+  if (currentRuntimeState !== target) {
+    const path = findIssueStateMachineTransitionPath(machineDefinition, currentRuntimeState, target);
+    if (!path) {
+      throw new Error(`State machine does not allow transition from '${currentRuntimeState}' to '${target}' for issue ${issue.id}.`);
+    }
+
+    for (const event of path) {
+      await plugin.send(ISSUE_STATE_MACHINE_ID, issue.id, event, {
+        issueId: issue.id,
+        issueIdentifier: issue.identifier,
+        fromState: issue.state,
+        toState: target,
+        note,
+      });
+    }
+  }
+
+  transition(issue, target, note);
+}
+
+export async function transitionIssueState(
+  issue: IssueEntry,
+  target: IssueState,
+  note: string,
+  options?: { fallbackToLocal?: boolean },
+): Promise<void> {
+  try {
+    await runStateMachineTransition(issue, target, note);
+    return;
+  } catch (error) {
+    if (options?.fallbackToLocal || !getIssueStateMachinePlugin()) {
+      logger.warn(`State machine transition failed for issue ${issue.id}, falling back to local transition: ${String(error)}`);
+      transition(issue, target, note);
+      return;
+    }
+    throw error;
+  }
+}
+
+export async function handleStatePatch(state: RuntimeState, issue: IssueEntry, payload: JsonRecord): Promise<void> {
   const nextState = normalizeState(payload.state);
   const allowed = new Set([...ALLOWED_STATES]);
 
@@ -516,7 +649,7 @@ export function handleStatePatch(state: RuntimeState, issue: IssueEntry, payload
     throw new Error(`Unsupported state: ${String(payload.state)}`);
   }
 
-  transition(issue, nextState, `Manual state update: ${nextState}`);
+  await transitionIssueState(issue, nextState, `Manual state update: ${nextState}`);
   if (nextState === "Todo") {
     issue.nextRetryAt = undefined;
     issue.lastError = undefined;

@@ -2,7 +2,7 @@
 tracker:
   kind: filesystem
 workspace:
-  root: ./.symphifo/workspaces
+  root: ./.symphifony/workspaces
 agent:
   provider: codex
   profile: ""

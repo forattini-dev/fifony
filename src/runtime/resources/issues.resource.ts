@@ -5,7 +5,7 @@ import { loadAgentPipelineSnapshotForIssue, loadAgentSessionSnapshotsForIssue } 
 import { getApiRuntimeContextOrThrow } from "../api-runtime-context.ts";
 import { persistState } from "../store.ts";
 import { getEffectiveAgentProviders } from "../providers.ts";
-import { addEvent, createIssueFromPayload, handleStatePatch, transition } from "../issues.ts";
+import { addEvent, createIssueFromPayload, handleStatePatch, transitionIssueState } from "../issues.ts";
 import { now } from "../helpers.ts";
 
 function getIssueId(c: unknown): string | null {
@@ -72,7 +72,7 @@ async function patchIssueState(c: unknown) {
 
   try {
     const payload = await (c as { req: { json: () => Promise<unknown> } }).req.json() as JsonRecord;
-    handleStatePatch(context.state, issue, payload);
+    await handleStatePatch(context.state, issue, payload);
     await persistState(context.state);
     return { body: { ok: true, issue } };
   } catch (error) {
@@ -93,12 +93,9 @@ async function retryIssue(c: unknown) {
   }
 
   if (TERMINAL_STATES.has(issue.state)) {
-    issue.state = "Todo";
-    issue.attempts = Math.max(0, issue.attempts - 1);
     issue.lastError = undefined;
     issue.nextRetryAt = undefined;
-    issue.updatedAt = now();
-    transition(issue, "Todo", "Manual retry requested.");
+    await transitionIssueState(issue, "Todo", "Manual retry requested.");
   } else {
     issue.nextRetryAt = undefined;
     issue.lastError = undefined;
@@ -136,7 +133,7 @@ async function cancelIssue(c: unknown) {
     return { status: 404, body: { ok: false, error: "Issue not found" } };
   }
 
-  transition(issue, "Cancelled", "Manual cancel requested.");
+  await transitionIssueState(issue, "Cancelled", "Manual cancel requested.");
   addEvent(context.state, issue.id, "manual", `Manual cancel requested for ${issue.id}.`);
   await persistState(context.state);
   return { body: { ok: true, issue } };
@@ -192,12 +189,19 @@ export default {
     auth: false,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
     description: "Issue registry for orchestration runtime",
+    "POST /create": async (c: unknown) => {
+      const result = await createIssue(c);
+      if (result.status) {
+        return c.json(result.body, result.status);
+      }
+      return c.json(result.body, 201);
+    },
     "POST /": async (c: unknown) => {
       const result = await createIssue(c);
       if (result.status) {
-        return (c as any).json(result.body, result.status);
+        return c.json(result.body, result.status);
       }
-      return (c as any).json(result.body, 201);
+      return c.json(result.body, 201);
     },
     "GET /:id/pipeline": async (c: unknown) => {
       const result = await getIssuePipeline(c);

@@ -1,0 +1,17 @@
+{
+  "name": "Symphifony Dashboard",
+  "short_name": "Symphifony",
+  "description": "Symphifony local orchestrator dashboard (React + PWA)",
+  "start_url": "/",
+  "scope": "/",
+  "display": "fullscreen",
+  "background_color": "#020617",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any"
+    }
+  ]
+}

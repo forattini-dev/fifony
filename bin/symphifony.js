@@ -8,7 +8,7 @@ import { cwd, env, exit, argv, execPath } from "node:process";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const packageRoot = resolve(__dirname, "..");
-const workspaceRoot = env.SYMPHIFO_WORKSPACE_ROOT ?? cwd();
+const workspaceRoot = env.SYMPHIFONY_WORKSPACE_ROOT ?? cwd();
 const cliScript = resolve(packageRoot, "src", "cli.ts");
 const require = createRequire(import.meta.url);
 const tsxCli = require.resolve("tsx/cli");
@@ -18,7 +18,7 @@ const child = spawn(execPath, [tsxCli, cliScript, ...argv.slice(2)], {
   stdio: "inherit",
   env: {
     ...env,
-    SYMPHIFO_WORKSPACE_ROOT: workspaceRoot,
+    SYMPHIFONY_WORKSPACE_ROOT: workspaceRoot,
   },
 });
 
@@ -32,6 +32,6 @@ child.on("exit", (code, signal) => {
 });
 
 child.on("error", (error) => {
-  console.error(`Failed to start symphifo CLI: ${String(error)}`);
+  console.error(`Failed to start symphifony CLI: ${String(error)}`);
   exit(1);
 });

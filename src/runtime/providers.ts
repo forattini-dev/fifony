@@ -76,12 +76,14 @@ export function resolveAgentCommand(
   if (explicitCommand.trim()) return explicitCommand.trim();
   if (provider === "claude" && claudeCommand.trim()) return claudeCommand.trim();
   if (provider === "codex" && codexCommand.trim()) return codexCommand.trim();
-  return "";
+  return getProviderDefaultCommand(provider);
 }
 
 export function getProviderDefaultCommand(provider: string): string {
-  if (provider === "codex") return "codex --quiet";
-  if (provider === "claude") return "claude --print --dangerously-skip-permissions";
+  // Prompt is piped via stdin and also written to SYMPHIFONY_PROMPT_FILE.
+  // Use stdin redirection as primary for large prompts (avoids E2BIG).
+  if (provider === "codex") return "codex exec --skip-git-repo-check < \"$SYMPHIFONY_PROMPT_FILE\"";
+  if (provider === "claude") return "claude --print --dangerously-skip-permissions < \"$SYMPHIFONY_PROMPT_FILE\"";
   return "";
 }
 
