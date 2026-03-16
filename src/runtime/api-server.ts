@@ -397,6 +397,40 @@ export async function startApiServer(
         await persistState(state);
         return c.json({ queued: true, requestedAt: now() }, 202);
       },
+      "GET /issues/:id/live": async (c: any) => {
+        const issueId = parseIssue(c);
+        if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
+        const issue = findIssue(issueId);
+        if (!issue) return c.json({ ok: false, error: "Issue not found." }, 404);
+        const wp = issue.workspacePath;
+        const liveLog = wp ? `${wp}/symphifony-live-output.log` : null;
+        let logTail = "";
+        let logSize = 0;
+        if (liveLog && existsSync(liveLog)) {
+          try {
+            const stat = require("node:fs").statSync(liveLog);
+            logSize = stat.size;
+            // Read last 8KB
+            const fd = require("node:fs").openSync(liveLog, "r");
+            const readSize = Math.min(logSize, 8192);
+            const buf = Buffer.alloc(readSize);
+            require("node:fs").readSync(fd, buf, 0, readSize, Math.max(0, logSize - readSize));
+            require("node:fs").closeSync(fd);
+            logTail = buf.toString("utf8");
+          } catch {}
+        }
+        return c.json({
+          ok: true,
+          issueId: issue.id,
+          state: issue.state,
+          running: issue.state === "In Progress" || issue.state === "In Review",
+          startedAt: issue.startedAt,
+          elapsed: issue.startedAt ? Date.now() - Date.parse(issue.startedAt) : 0,
+          logSize,
+          logTail,
+          outputTail: issue.commandOutputTail || "",
+        });
+      },
       "GET /issues/:id/diff": async (c: any) => {
         const issueId = parseIssue(c);
         if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);

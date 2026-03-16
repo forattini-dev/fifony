@@ -1,81 +1,88 @@
+<div align="center">
+
 # Symphifony
 
-Symphifony is a filesystem-backed local orchestrator with a TypeScript runtime, `codex` and `claude` agent support, and durable state stored under the current workspace by default.
+### Local multi-agent orchestration for real codebases
 
-## Features
+Run `codex` and `claude` against a workspace, persist everything locally, and
+watch the whole pipeline in a browser UI or through MCP.
 
-- Pure TypeScript runtime with no external tracker dependency.
-- Automatic provider detection (`claude`, `codex`) with sensible defaults.
-- Structured logging via `pino` with file + console output.
-- Skill hydration — agent profiles and discovered skills injected into prompts.
-- Parallelism intelligence — analyzes path overlap and dependencies to recommend safe concurrency.
-- Graceful shutdown — persists state on SIGINT/SIGTERM before exiting.
-- Persists runtime, issues, sessions, and pipelines through `s3db.js`.
-- Serves the HTTP API through the `s3db.js` `ApiPlugin`.
-- Supports mixed multi-agent workflows with `codex` and `claude`.
+**One local runtime for issues, sessions, routing, reviews, and state.**
 
-## CLI
+</div>
 
-Install dependencies and run from the package root:
+---
+
+## Quick Start
+
+Symphifony requires Node.js 23+.
 
 ```bash
 pnpm install --ignore-workspace
+npx -y symphifony --port 4040
 ```
 
-Runtime requirement:
+Then open:
 
-- Node.js 23 or newer
+- `http://localhost:4040`
+- `http://localhost:4040/docs`
 
-Run the standard local runtime:
+Default behavior:
+
+- the current directory is treated as the workspace root
+- state is stored under `./.symphifony/`
+- the runtime can start with zero seed issues
+
+## Why Symphifony
+
+- Local-first orchestration with durable state in `s3db.js`
+- Mixed-agent workflows with `codex` and `claude`
+- Capability routing based on labels, paths, and workflow rules
+- Browser dashboard with issues, events, runtime state, sessions, and provider visibility
+- MCP server for editor and assistant integrations
+- No external tracker required to get started
+
+## Run Modes
+
+### Local runtime
+
+Run the scheduler in the current workspace:
 
 ```bash
 npx -y symphifony
 ```
 
-Run the MCP server over stdio:
+### Dashboard and API
+
+Start the HTTP API and UI on a local port:
+
+```bash
+npx -y symphifony --port 4040
+```
+
+### MCP server
+
+Run Symphifony as an MCP server over stdio:
 
 ```bash
 npx -y symphifony mcp
 ```
 
-Start the API and dashboard:
+### Custom persistence root
 
-```bash
-npx -y symphifony --port 4040
-```
-
-Override the persistence root:
+Store runtime state outside the current repo:
 
 ```bash
 npx -y symphifony --persistence /path/to/root
 ```
 
-By default:
+## The Flow
 
-- the current directory is the workspace root
-- state is stored under `./.symphifony/`
-- the runtime can start with zero seed issues
-
-When `--port` is set, open:
-
-- `http://localhost:4040`
-- `http://localhost:4040/docs`
-
-## Use the app
-
-Run the local UI:
-
-```bash
-npx -y symphifony --port 4040
-```
-
-Default local flow:
-
-1. Open `http://localhost:4040`
-2. Create an issue from the UI or `POST /issues/create`
-3. Add `labels` and `paths` when you want stronger automatic routing
-4. Watch the queue, capability category, overlays, events, and agent sessions
-5. Use `View Sessions` on an issue to inspect the current pipeline, turns, directives, and latest output
+1. Start Symphifony in the repo you want to orchestrate.
+2. Create an issue in the dashboard or call `POST /issues/create`.
+3. Add `labels` and `paths` when you want better routing and provider selection.
+4. Let the scheduler run the issue through planning, execution, review, retries, and completion.
+5. Inspect events, sessions, pipeline state, output tails, and provider usage from the UI.
 
 Minimal issue payload:
 
@@ -88,7 +95,36 @@ Minimal issue payload:
 }
 ```
 
-Useful app routes:
+Create it over HTTP:
+
+```bash
+curl -X POST http://localhost:4040/issues/create \
+  -H 'content-type: application/json' \
+  -d '{
+    "title":"Prepare release notes",
+    "labels":["documentation","release"],
+    "paths":["README.md","RELEASE.md"]
+  }'
+```
+
+Read filtered events:
+
+```bash
+curl 'http://localhost:4040/events/feed?kind=info&issueId=LOCAL-1'
+```
+
+## What You Get
+
+| Area | What it does |
+|:-----|:-------------|
+| Runtime | Schedules issues, tracks retries, persists state, and handles graceful shutdown |
+| Routing | Uses labels, paths, overlays, and workflow rules to choose providers and roles |
+| Agents | Runs `codex` and `claude` with profile hydration and structured result handling |
+| Dashboard | Shows queue state, issue details, sessions, events, runtime health, and provider data |
+| API | Exposes issue lifecycle, state snapshots, sessions, pipelines, and event feeds |
+| MCP | Makes Symphifony available as tools for editor and assistant workflows |
+
+## Useful Routes
 
 - `/` — dashboard
 - `/docs` — OpenAPI docs from `ApiPlugin`
@@ -101,43 +137,21 @@ Useful app routes:
 - `/issues/:id/cancel` — cancel issue
 - `/events/feed` — filtered event feed with `?since=&kind=&issueId=`
 
-Useful API examples:
-
-```bash
-curl -X POST http://localhost:4040/issues/create \
-  -H 'content-type: application/json' \
-  -d '{
-    "title":"Prepare release notes",
-    "labels":["documentation","release"],
-    "paths":["README.md","RELEASE.md"]
-  }'
-```
-
-```bash
-curl 'http://localhost:4040/events/feed?kind=info&issueId=LOCAL-1'
-```
-
-## Package layout
+## Package Layout
 
 - `bin/symphifony.js` — published CLI entrypoint
 - `src/cli.ts` — command router built on `cli-args-parser`
 - `src/mcp/server.ts` — stdio MCP server
-- `src/runtime/run-local.ts` — thin main entrypoint
-- `src/runtime/types.ts` — shared type definitions
-- `src/runtime/logger.ts` — pino-based structured logging
-- `src/runtime/constants.ts` — paths, env vars, state constants
-- `src/runtime/helpers.ts` — pure utility functions
-- `src/runtime/store.ts` — s3db state persistence
-- `src/runtime/providers.ts` — provider detection, profile resolution, capability routing
-- `src/runtime/workflow.ts` — WORKFLOW.md loading and source bootstrapping
-- `src/runtime/issues.ts` — issue CRUD, config, metrics, events
-- `src/runtime/agent.ts` — agent session/pipeline execution
-- `src/runtime/scheduler.ts` — issue scheduling, parallelism analysis, graceful shutdown
-- `src/runtime/api-server.ts` — HTTP API and dashboard serving
-- `src/runtime/skills.ts` — skill discovery and hydration
-- `src/routing/capability-resolver.ts` — task classification engine
-- `src/integrations/catalog.ts` — agent/skill integration discovery
-- `src/dashboard/{index.html,app-react.js,styles.css,manifest.webmanifest,service-worker.js,icon.svg}` — web UI
+- `src/runtime/run-local.ts` — local runtime entrypoint
+- `src/runtime/store.ts` — `s3db.js` persistence and plugin wiring
+- `src/runtime/issues.ts` — issue CRUD, transitions, metrics, and events
+- `src/runtime/agent.ts` — agent session and pipeline execution
+- `src/runtime/scheduler.ts` — scheduling, retries, and concurrency
+- `src/runtime/api-server.ts` — HTTP API, WebSocket updates, and dashboard serving
+- `src/runtime/providers.ts` — provider detection and runtime provider selection
+- `src/runtime/issue-state-machine.ts` — issue lifecycle state machine helpers
+- `src/integrations/catalog.ts` — agent and integration discovery
+- `src/dashboard/` — browser app sources and generated assets
 - `src/fixtures/local-issues.json` — optional seed issue catalog
 
 ## Workflow contract

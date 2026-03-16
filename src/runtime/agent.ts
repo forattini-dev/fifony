@@ -1,4 +1,5 @@
 import {
+  appendFileSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -723,13 +724,23 @@ async function runCommandWithTimeout(
 
     let output = "";
     let timedOut = false;
+    let outputBytes = 0;
+    const liveLogFile = join(workspacePath, "symphifony-live-output.log");
+    // Truncate live log at start
+    writeFileSync(liveLogFile, "", "utf8");
 
-    child.stdout?.on("data", (chunk) => {
-      output = appendFileTail(output, String(chunk), config.logLinesTail);
-    });
-    child.stderr?.on("data", (chunk) => {
-      output = appendFileTail(output, String(chunk), config.logLinesTail);
-    });
+    const onChunk = (chunk: Buffer | string) => {
+      const text = String(chunk);
+      output = appendFileTail(output, text, config.logLinesTail);
+      outputBytes += text.length;
+      // Append to live log file for monitoring
+      try { appendFileSync(liveLogFile, text); } catch {}
+      // Update issue output tail in-place for real-time visibility
+      issue.commandOutputTail = output;
+    };
+
+    child.stdout?.on("data", onChunk);
+    child.stderr?.on("data", onChunk);
 
     const timer = setTimeout(() => { timedOut = true; child.kill("SIGTERM"); }, config.commandTimeoutMs);
 

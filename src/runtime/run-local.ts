@@ -26,7 +26,7 @@ function usage() {
     "  --concurrency <n>      Maximum number of local workers\n" +
     "  --attempts <n>         Maximum attempts per issue\n" +
     "  --poll <ms>            Scheduler interval in ms\n" +
-    "  --timeout <ms>         Agent command timeout in ms (default: 600000)\n" +
+    "  --timeout <ms>         Agent command timeout in ms (default: 1800000)\n" +
     "  --once                  Process once and exit\n",
   );
 }

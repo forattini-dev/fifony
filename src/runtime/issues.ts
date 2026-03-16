@@ -204,7 +204,7 @@ export function deriveConfig(args: string[]): RuntimeConfig {
   let pollIntervalMs = parseEnvNumber("SYMPHIFONY_POLL_INTERVAL_MS", 1200);
   let workerConcurrency = parsedConcurrency;
   let maxAttemptsDefault = parseEnvNumber("SYMPHIFONY_MAX_ATTEMPTS", 3);
-  let commandTimeoutMs = parseEnvNumber("SYMPHIFONY_AGENT_TIMEOUT_MS", 600000);
+  let commandTimeoutMs = parseEnvNumber("SYMPHIFONY_AGENT_TIMEOUT_MS", 1_800_000);
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
@@ -233,11 +233,11 @@ export function deriveConfig(args: string[]): RuntimeConfig {
   return {
     pollIntervalMs: clamp(pollIntervalMs, 200, 10_000),
     workerConcurrency: clamp(workerConcurrency, 1, 16),
-    commandTimeoutMs: clamp(commandTimeoutMs, 1_000, 1_800_000),
+    commandTimeoutMs: clamp(commandTimeoutMs, 1_000, 3_600_000),
     maxAttemptsDefault: clamp(maxAttemptsDefault, 1, 10),
     maxTurns: clamp(parseEnvNumber("SYMPHIFONY_AGENT_MAX_TURNS", 4), 1, 16),
     retryDelayMs: parseEnvNumber("SYMPHIFONY_RETRY_DELAY_MS", 3_000),
-    staleInProgressTimeoutMs: parseEnvNumber("SYMPHIFONY_STALE_IN_PROGRESS_MS", 20_000),
+    staleInProgressTimeoutMs: parseEnvNumber("SYMPHIFONY_STALE_IN_PROGRESS_MS", 2_400_000),
     logLinesTail: parseEnvNumber("SYMPHIFONY_LOG_TAIL_CHARS", 12_000),
     agentProvider: normalizeAgentProvider(env.SYMPHIFONY_AGENT_PROVIDER ?? "codex"),
     agentCommand: toStringValue(env.SYMPHIFONY_AGENT_COMMAND, ""),
