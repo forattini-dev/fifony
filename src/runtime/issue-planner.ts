@@ -9,11 +9,23 @@ import { replacePersistedSetting, getSettingStateResource } from "./store.ts";
 import { getWorkflowConfig, loadRuntimeSettings } from "./settings.ts";
 import { logger } from "./logger.ts";
 import { buildClaudeCommand, buildCodexCommand } from "./adapters/commands.ts";
+import { record as recordTokens } from "./token-ledger.ts";
+import type { AgentTokenUsage, IssueEntry } from "./types.ts";
 import { renderPrompt } from "../prompting.ts";
 
 // ── Planning session persistence ────────────────────────────────────────────
 
 export type PlanningSessionStatus = "input" | "planning" | "done" | "error" | "interrupted";
+
+export type PlanningSessionUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  model: string;
+  promptChars: number;
+  outputChars: number;
+  durationMs: number;
+};
 
 export type PlanningSession = {
   title: string;
@@ -26,6 +38,10 @@ export type PlanningSession = {
   startedAt: string | null;
   completedAt: string | null;
   updatedAt: string;
+  /** Live progress: output bytes received so far (updated during planning) */
+  outputBytes: number;
+  /** Token usage extracted after planning completes */
+  usage: PlanningSessionUsage | null;
 };
 
 const PLANNING_SETTING_ID = "planning:active";
@@ -35,6 +51,7 @@ function emptySession(): PlanningSession {
     title: "", description: "", status: "input",
     plan: null, error: null, pid: null, provider: null,
     startedAt: null, completedAt: null, updatedAt: now(),
+    outputBytes: 0, usage: null,
   };
 }
 
@@ -226,9 +243,43 @@ export async function savePlanningInput(title: string, description: string): Pro
     title, description, status: "input",
     plan: null, error: null, pid: null, provider: null,
     startedAt: null, completedAt: null, updatedAt: now(),
+    outputBytes: 0, usage: null,
   };
   await persistSession(session);
   return session;
+}
+
+/** Extract token usage from CLI output (Claude JSON or Codex text) */
+function extractPlanTokenUsage(raw: string): { inputTokens: number; outputTokens: number; totalTokens: number; model: string } | null {
+  // 1. Claude --output-format json: parse the outer JSON envelope
+  try {
+    const parsed = JSON.parse(raw.trim());
+    const usage = parsed?.usage;
+    if (usage && typeof usage === "object") {
+      const input = Number(usage.input_tokens) || 0;
+      const output = Number(usage.output_tokens) || 0;
+      if (input > 0 || output > 0) {
+        return {
+          inputTokens: input,
+          outputTokens: output,
+          totalTokens: input + output,
+          model: typeof parsed.model === "string" ? parsed.model : "",
+        };
+      }
+    }
+  } catch { /* not JSON — try Codex format */ }
+
+  // 2. Codex: "tokens used\n1,681\n"
+  const codexMatch = raw.match(/tokens?\s+used\s*\n\s*([\d,]+)/i);
+  if (codexMatch) {
+    const total = parseInt(codexMatch[1].replace(/,/g, ""), 10);
+    const modelMatch = raw.match(/^model:\s*(.+)$/im);
+    if (total > 0) {
+      return { inputTokens: 0, outputTokens: 0, totalTokens: total, model: modelMatch?.[1]?.trim() || "" };
+    }
+  }
+
+  return null;
 }
 
 export async function generatePlan(
@@ -266,10 +317,12 @@ export async function generatePlan(
   if (!command) throw new Error(`No command configured for provider ${preferred}.`);
 
   // Persist: planning started
+  const planStartMs = Date.now();
   const session: PlanningSession = {
     title, description, status: "planning",
     plan: null, error: null, pid: null, provider: preferred,
     startedAt: now(), completedAt: null, updatedAt: now(),
+    outputBytes: 0, usage: null,
   };
   await persistSession(session);
 
@@ -286,6 +339,10 @@ export async function generatePlan(
   ].join("\n"), "utf8");
 
   const wrappedCommand = `. "${envFile}" && ${command}`;
+
+  // Track output bytes live — persist progress periodically so the UI can show it
+  let lastProgressPersist = 0;
+  const PROGRESS_INTERVAL_MS = 2000;
 
   const output = await new Promise<string>((resolve, reject) => {
     let stdout = "";
@@ -304,8 +361,20 @@ export async function generatePlan(
       persistSession(session).catch(() => {});
     }
 
-    child.stdout?.on("data", (chunk) => { stdout = appendFileTail(stdout, String(chunk), 32_000); });
-    child.stderr?.on("data", (chunk) => { stdout = appendFileTail(stdout, String(chunk), 32_000); });
+    child.stdout?.on("data", (chunk) => {
+      stdout = appendFileTail(stdout, String(chunk), 32_000);
+      session.outputBytes += String(chunk).length;
+      // Persist progress periodically so the UI can show live output size
+      const elapsed = Date.now() - planStartMs;
+      if (elapsed - lastProgressPersist > PROGRESS_INTERVAL_MS) {
+        lastProgressPersist = elapsed;
+        persistSession(session).catch(() => {});
+      }
+    });
+    child.stderr?.on("data", (chunk) => {
+      stdout = appendFileTail(stdout, String(chunk), 32_000);
+      session.outputBytes += String(chunk).length;
+    });
 
     const timer = setTimeout(() => {
       if (child.pid) { try { process.kill(-child.pid, "SIGTERM"); } catch {} }
@@ -340,14 +409,43 @@ export async function generatePlan(
 
   plan.provider = planStageModel ? `${preferred}/${planStageModel}` : preferred;
 
-  // Persist: done with plan
+  // Extract token usage from the CLI output
+  const durationMs = Date.now() - planStartMs;
+  const tokenInfo = extractPlanTokenUsage(output);
+  const planUsage: PlanningSessionUsage = {
+    inputTokens: tokenInfo?.inputTokens ?? 0,
+    outputTokens: tokenInfo?.outputTokens ?? 0,
+    totalTokens: tokenInfo?.totalTokens ?? 0,
+    model: tokenInfo?.model || planStageModel || preferred,
+    promptChars: prompt.length,
+    outputChars: output.length,
+    durationMs,
+  };
+
+  // Record planning tokens in the ledger (counted as "planner" phase)
+  if (planUsage.totalTokens > 0) {
+    const tokenUsage: AgentTokenUsage = {
+      inputTokens: planUsage.inputTokens,
+      outputTokens: planUsage.outputTokens,
+      totalTokens: planUsage.totalTokens,
+      model: planUsage.model,
+    };
+    // Use a synthetic issue for the ledger record
+    recordTokens({ id: "planning", identifier: "PLAN", title } as IssueEntry, tokenUsage, "planner");
+  }
+
+  // Persist: done with plan + usage
   session.status = "done";
   session.plan = plan;
   session.pid = null;
   session.completedAt = now();
   session.error = null;
+  session.usage = planUsage;
   await persistSession(session);
 
-  logger.info(`Plan generated for "${title}" via ${preferred}${planStageModel ? `/${planStageModel}` : ""}${planStageEffort ? ` [${planStageEffort}]` : ""}: ${plan.steps.length} steps, complexity: ${plan.estimatedComplexity}`);
+  const tokenSummary = planUsage.totalTokens > 0
+    ? `, ${planUsage.totalTokens.toLocaleString()} tokens (in: ${planUsage.inputTokens.toLocaleString()}, out: ${planUsage.outputTokens.toLocaleString()})`
+    : `, ${planUsage.outputChars.toLocaleString()} output chars`;
+  logger.info(`Plan generated for "${title}" via ${planUsage.model}: ${plan.steps.length} steps, complexity: ${plan.estimatedComplexity}${tokenSummary}, ${durationMs}ms`);
   return plan;
 }

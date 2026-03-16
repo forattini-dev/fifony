@@ -1,4 +1,5 @@
 import { env } from "node:process";
+import * as tokenLedger from "./token-ledger.ts";
 import type {
   EffortConfig,
   IssueEntry,
@@ -490,6 +491,10 @@ export function addEvent(
   };
 
   state.events = [event, ...state.events].slice(0, PERSIST_EVENTS_MAX);
+
+  // Track event in hourly counter for sparklines
+  try { tokenLedger.recordEvent(); } catch { /* non-critical */ }
+
   logger.info({ issueId, kind }, message);
 }
 

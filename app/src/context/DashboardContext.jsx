@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useCallback, useEffect, useState } from "react";
+import { createContext, useContext, useMemo, useCallback, useEffect, useState, useRef } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import {
@@ -181,6 +181,31 @@ export function DashboardProvider({ children }) {
 
   const toggleEvents = useCallback(() => setIsEventsOpen((prev) => !prev), []);
   const notifications = useNotifications(issues);
+
+  // Track previous issue states to detect Done transitions and fire confetti on the card
+  const prevIssueStatesRef = useRef(new Map());
+  useEffect(() => {
+    const prev = prevIssueStatesRef.current;
+    for (const issue of issues) {
+      const prevState = prev.get(issue.id);
+      if (prevState && prevState !== "Done" && issue.state === "Done") {
+        // Find the card element in the DOM to position confetti on it
+        const cardEl = document.querySelector(`[data-issue-id="${issue.id}"]`);
+        if (cardEl) {
+          const rect = cardEl.getBoundingClientRect();
+          showConfetti(rect.left + rect.width / 2, rect.top + rect.height / 2, 12);
+        } else {
+          showConfetti(undefined, undefined, 12);
+        }
+      }
+    }
+    // Update the map with current states
+    const next = new Map();
+    for (const issue of issues) {
+      next.set(issue.id, issue.state);
+    }
+    prevIssueStatesRef.current = next;
+  }, [issues, showConfetti]);
 
   const value = useMemo(() => ({
     // Theme

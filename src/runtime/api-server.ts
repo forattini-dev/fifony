@@ -50,7 +50,7 @@ import { collectProvidersUsage } from "./providers-usage.ts";
 import { analyzeParallelizability } from "./scheduler.ts";
 import { setApiRuntimeContext } from "./api-runtime-context.ts";
 import { TERMINAL_STATES } from "./constants.ts";
-import { getAnalytics as getTokenAnalytics } from "./token-ledger.ts";
+import { getAnalytics as getTokenAnalytics, getHourlySnapshot } from "./token-ledger.ts";
 import { enhanceIssueField } from "./issue-enhancer.ts";
 import { generatePlan, loadPlanningSession, savePlanningInput, clearPlanningSession } from "./issue-planner.ts";
 import {
@@ -782,6 +782,10 @@ export async function startApiServer(
       "GET /api/analytics/tokens/weekly": async (c: any) => {
         // Weekly is part of the daily data in the ledger — filter client-side
         return c.json({ ok: true, ...getTokenAnalytics() });
+      },
+      "GET /api/analytics/hourly": async (c: any) => {
+        const hours = Math.min(parseInt(c.req.query("hours") || "24", 10) || 24, 48);
+        return c.json({ ok: true, ...getHourlySnapshot(hours) });
       },
       "GET /api/events/feed": async (c: any) => {
         const since = c.req.query("since");

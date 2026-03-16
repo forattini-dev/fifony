@@ -22,6 +22,15 @@ export type DailyBucket = TokenBucket & {
   date: string; // "2026-03-16"
 };
 
+export type HourlyBucket = TokenBucket & {
+  hour: string; // "2026-03-16T14" (ISO date + hour)
+};
+
+export type HourlySnapshot = {
+  tokensPerHour: HourlyBucket[];
+  eventsPerHour: Array<{ hour: string; count: number }>;
+};
+
 export type TokenAnalytics = {
   overall: TokenBucket;
   byPhase: Record<string, TokenBucket>;
@@ -57,10 +66,33 @@ const dailyByModel = new Map<string, TokenBucket>();
 /** Per-issue totals (for top-N) */
 const byIssue = new Map<string, { identifier: string; title: string; totalTokens: number }>();
 
+/** Hourly token buckets: "2026-03-16T14" → bucket */
+const hourly = new Map<string, TokenBucket>();
+
+/** Hourly event counter: "2026-03-16T14" → count */
+const eventsHourly = new Map<string, number>();
+
+const HOURLY_RETENTION = 48; // keep last 48 hours
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function todayDate(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+function currentHour(): string {
+  return new Date().toISOString().slice(0, 13); // "2026-03-16T14"
+}
+
+function pruneOldHours(): void {
+  if (hourly.size <= HOURLY_RETENTION && eventsHourly.size <= HOURLY_RETENTION) return;
+  const cutoff = new Date(Date.now() - HOURLY_RETENTION * 3600_000).toISOString().slice(0, 13);
+  for (const key of hourly.keys()) {
+    if (key < cutoff) hourly.delete(key);
+  }
+  for (const key of eventsHourly.keys()) {
+    if (key < cutoff) eventsHourly.delete(key);
+  }
 }
 
 function addTo(target: TokenBucket, usage: AgentTokenUsage): void {
@@ -103,6 +135,7 @@ export function record(
   if (!usage || usage.totalTokens === 0) return;
 
   const date = todayDate();
+  const hour = currentHour();
   const model = usage.model || "unknown";
 
   // Overall
@@ -110,6 +143,10 @@ export function record(
 
   // Daily overall
   addTo(getOrCreate(daily, date), usage);
+
+  // Hourly overall
+  addTo(getOrCreate(hourly, hour), usage);
+  pruneOldHours();
 
   // By phase
   if (role) {
@@ -133,6 +170,43 @@ export function record(
       totalTokens: usage.totalTokens,
     });
   }
+}
+
+/**
+ * Record an event occurrence. Called from addEvent().
+ * Tracks event frequency per hour for sparkline display.
+ */
+export function recordEvent(): void {
+  const hour = currentHour();
+  eventsHourly.set(hour, (eventsHourly.get(hour) || 0) + 1);
+  pruneOldHours();
+}
+
+/**
+ * Get hourly snapshot for sparkline display.
+ * Returns last 24 hours of token usage and event counts.
+ */
+export function getHourlySnapshot(hours = 24): HourlySnapshot {
+  const now = Date.now();
+  const tokensPerHour: HourlyBucket[] = [];
+  const eventsPerHour: Array<{ hour: string; count: number }> = [];
+
+  for (let i = hours - 1; i >= 0; i--) {
+    const h = new Date(now - i * 3600_000).toISOString().slice(0, 13);
+    const tokenBucket = hourly.get(h);
+    tokensPerHour.push({
+      hour: h,
+      inputTokens: tokenBucket?.inputTokens || 0,
+      outputTokens: tokenBucket?.outputTokens || 0,
+      totalTokens: tokenBucket?.totalTokens || 0,
+    });
+    eventsPerHour.push({
+      hour: h,
+      count: eventsHourly.get(h) || 0,
+    });
+  }
+
+  return { tokensPerHour, eventsPerHour };
 }
 
 /**

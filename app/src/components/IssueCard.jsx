@@ -82,6 +82,7 @@ export function IssueCard({ issue, onSelect, dragHandlers, isDragging }) {
 
   return (
     <div
+      data-issue-id={issue.id}
       className={`card card-compact bg-base-100 border border-base-300 border-l-[3px] ${STATE_BORDER_LEFT[issue.state] || ""} card-interactive cursor-pointer ${isRunning ? "animate-pulse-border" : ""} ${isDragging ? "kanban-card-source-opacity" : ""} ${completionFlash ? "issue-card-done-flash" : ""}`}
       style={{ overflow: "hidden" }}
       role="button"

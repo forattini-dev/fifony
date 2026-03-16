@@ -326,6 +326,15 @@ export function useTokenAnalytics() {
   });
 }
 
+/** Fetch hourly sparkline data (tokens/hour + events/hour). Polls every 30s. */
+export function useHourlyAnalytics(hours = 24) {
+  return useQuery({
+    queryKey: ["hourly-analytics", hours],
+    queryFn: () => api.get(`/analytics/hourly?hours=${hours}`),
+    refetchInterval: 30_000,
+  });
+}
+
 export function usePwa() {
   const [isOnline, setIsOnline] = useState(() => navigator.onLine);
   const [installPrompt, setInstallPrompt] = useState(null);

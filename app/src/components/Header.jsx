@@ -102,8 +102,7 @@ export function Header({ issueCount, sourceRepo, updatedAt, onToggleEvents, even
                 <li key={to}>
                   <Link
                     to={to}
-                    className={isActive ? "active" : ""}
-                    style={isActive ? { color: 'oklch(var(--p))', fontWeight: 600, backgroundColor: 'oklch(var(--p) / 0.08)' } : undefined}
+                    className={`nav-link ${isActive ? "active nav-link-active" : ""}`}
                   >
                     <Icon className="size-4" />
                     {label}

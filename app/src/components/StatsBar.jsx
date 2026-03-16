@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState } from "react";
-import { Zap, TrendingUp, Layers } from "lucide-react";
-import { useTokenAnalytics } from "../hooks.js";
+import { Zap, TrendingUp, Layers, Activity } from "lucide-react";
+import { useTokenAnalytics, useHourlyAnalytics } from "../hooks.js";
 
 /**
  * Smooth count-up animation using requestAnimationFrame.
@@ -131,14 +131,62 @@ function MiniBarChart({ data, height = 32, className = "" }) {
   );
 }
 
+/** Sparkline for hourly data — thin line chart. */
+function HourlySparkline({ data, valueKey = "totalTokens", height = 28, color = "stroke-primary", className = "" }) {
+  if (!data || data.length === 0) return null;
+  const values = data.map((d) => d[valueKey] || d.count || 0);
+  const max = Math.max(...values, 1);
+  const w = 100;
+  const points = values.map((v, i) => {
+    const x = (i / Math.max(values.length - 1, 1)) * w;
+    const y = height - (v / max) * (height - 2) - 1;
+    return `${x},${y}`;
+  }).join(" ");
+
+  const lastVal = values[values.length - 1] || 0;
+  const prevVal = values[values.length - 2] || 0;
+  const trend = lastVal > prevVal ? "up" : lastVal < prevVal ? "down" : "flat";
+
+  return (
+    <div className={`flex items-center gap-1.5 ${className}`}>
+      <svg viewBox={`0 0 ${w} ${height}`} className="flex-1" style={{ height }} preserveAspectRatio="none">
+        <polyline
+          points={points}
+          fill="none"
+          className={color}
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          vectorEffect="non-scaling-stroke"
+        />
+        {/* Fill area under the line */}
+        <polyline
+          points={`0,${height} ${points} ${w},${height}`}
+          fill="currentColor"
+          className={color.replace("stroke-", "text-")}
+          opacity="0.08"
+        />
+      </svg>
+      <span className={`text-[9px] font-mono opacity-50 shrink-0 ${trend === "up" ? "text-success" : trend === "down" ? "text-error" : ""}`}>
+        {formatTokens(lastVal)}/h
+      </span>
+    </div>
+  );
+}
+
 export function StatsBar({ metrics, total, issues = [], compact = false }) {
   const { data: analytics } = useTokenAnalytics();
+  const { data: hourlyData } = useHourlyAnalytics(24);
 
   const totalTokens = analytics?.overall?.totalTokens || 0;
   const byPhase = analytics?.byPhase || null;
   const dailyData = analytics?.daily || [];
   const byModel = analytics?.byModel || {};
   const hasTokenData = totalTokens > 0;
+
+  const tokensPerHour = hourlyData?.tokensPerHour || [];
+  const eventsPerHour = hourlyData?.eventsPerHour || [];
+  const hasHourlyData = tokensPerHour.some((h) => h.totalTokens > 0) || eventsPerHour.some((h) => h.count > 0);
 
   const modelEntries = Object.entries(byModel)
     .map(([model, data]) => [model, data?.totalTokens || 0])
@@ -166,13 +214,27 @@ export function StatsBar({ metrics, total, issues = [], compact = false }) {
           </div>
         )}
 
-        {/* Sparkline */}
-        <div className="flex flex-col justify-center py-2 px-3 border-l border-base-300 min-w-[180px]">
-          <span className="text-[10px] uppercase tracking-wide opacity-40 mb-1">Last 7 days</span>
-          {hasTokenData && dailyData.length > 0 ? (
-            <MiniBarChart data={dailyData} height={32} />
+        {/* Hourly tokens sparkline */}
+        <div className="flex flex-col justify-center py-2 px-3 border-l border-base-300 min-w-[140px]">
+          <span className="text-[10px] uppercase tracking-wide opacity-40 mb-1 flex items-center gap-1">
+            <Zap className="size-2.5" /> Tokens/h
+          </span>
+          {hasHourlyData && tokensPerHour.length > 0 ? (
+            <HourlySparkline data={tokensPerHour} valueKey="totalTokens" height={28} color="stroke-primary" />
           ) : (
-            <div className="text-xs opacity-20 h-8 flex items-center">No data yet</div>
+            <div className="text-xs opacity-20 h-7 flex items-center">--</div>
+          )}
+        </div>
+
+        {/* Hourly events sparkline */}
+        <div className="flex flex-col justify-center py-2 px-3 border-l border-base-300 min-w-[140px]">
+          <span className="text-[10px] uppercase tracking-wide opacity-40 mb-1 flex items-center gap-1">
+            <Activity className="size-2.5" /> Events/h
+          </span>
+          {hasHourlyData && eventsPerHour.length > 0 ? (
+            <HourlySparkline data={eventsPerHour} valueKey="count" height={28} color="stroke-secondary" />
+          ) : (
+            <div className="text-xs opacity-20 h-7 flex items-center">--</div>
           )}
         </div>
 

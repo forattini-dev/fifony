@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @plugin "daisyui";
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&display=swap');
 
 /* Fifony Dashboard — layout helpers + micro-interactions */
 
@@ -364,7 +365,19 @@ h1, h2, h3, .stat-value {
 
 .dock a,
 .dock button {
-  transition: color 0.2s ease, background-color 0.2s ease !important;
+  transition: color 0.2s ease, background-color 0.2s ease, transform 0.15s ease !important;
+}
+
+.dock a.dock-active,
+.dock button.dock-active {
+  color: oklch(var(--p)) !important;
+  font-weight: 600;
+  background-color: oklch(var(--p) / 0.08) !important;
+}
+
+.dock a:active:not(.dock-active),
+.dock button:active:not(.dock-active) {
+  transform: scale(0.92);
 }
 
 /* ── Input focus glow ──────────────────────────────────────────────────── */
@@ -498,6 +511,37 @@ h1, h2, h3, .stat-value {
 
 .issue-card-done-flash {
   animation: done-flash 0.8s ease-out both !important;
+}
+
+/* ── Responsive kanban — mobile horizontal scroll + scroll-snap ────────── */
+
+@media (max-width: 767px) {
+  .overflow-x-auto > .grid {
+    display: flex !important;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    scroll-padding: 0 12px;
+    gap: 12px;
+    padding-bottom: 8px;
+  }
+
+  .overflow-x-auto > .grid > .kanban-column {
+    min-width: 260px;
+    max-width: 85vw;
+    flex-shrink: 0;
+    scroll-snap-align: start;
+  }
+
+  /* Touch-friendly: increase card padding on mobile */
+  .card-interactive .card-body {
+    padding: 14px !important;
+  }
+
+  /* Slightly larger touch targets for badges and buttons inside cards */
+  .card-interactive .badge {
+    padding: 4px 8px;
+  }
 }
 
 /* ── Reduced motion ────────────────────────────────────────────────────── */
