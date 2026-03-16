@@ -59,6 +59,10 @@ export type IssueEntry = {
   durationMs?: number;
   commandExitCode?: number | null;
   commandOutputTail?: string;
+  terminalWeek?: string; // e.g. "2026-W12" — set when issue reaches Done/Cancelled, "" when active
+  tokenUsage?: AgentTokenUsage; // aggregated across all turns/attempts
+  usage?: { tokens: Record<string, number> }; // { tokens: { "claude-opus-4-6": 12345, "gpt-5.3": 6789 } }
+  effort?: EffortConfig; // per-issue reasoning effort override
 };
 
 export type RuntimeConfig = {
@@ -73,6 +77,7 @@ export type RuntimeConfig = {
   logLinesTail: number;
   agentProvider: string;
   agentCommand: string;
+  defaultEffort: EffortConfig;
   dashboardPort?: string;
   runMode: "filesystem";
 };
@@ -116,6 +121,14 @@ export type RuntimeStateRecord = {
 };
 
 export type AgentProviderRole = "planner" | "executor" | "reviewer";
+export type ReasoningEffort = "low" | "medium" | "high" | "extra-high";
+
+export type EffortConfig = {
+  default?: ReasoningEffort;
+  planner?: ReasoningEffort;
+  executor?: ReasoningEffort;
+  reviewer?: ReasoningEffort;
+};
 
 export type AgentProviderDefinition = {
   provider: string;
@@ -127,14 +140,24 @@ export type AgentProviderDefinition = {
   selectionReason?: string;
   overlays?: string[];
   capabilityCategory?: string;
+  reasoningEffort?: ReasoningEffort;
 };
 
 export type AgentDirectiveStatus = "done" | "continue" | "blocked" | "failed";
+
+export type AgentTokenUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  costUsd?: number;
+  model?: string;
+};
 
 export type AgentDirective = {
   status: AgentDirectiveStatus;
   summary: string;
   nextPrompt: string;
+  tokenUsage?: AgentTokenUsage;
 };
 
 export type AgentSessionResult = {
@@ -158,6 +181,7 @@ export type AgentSessionTurn = {
   directiveStatus: AgentDirectiveStatus;
   directiveSummary: string;
   nextPrompt: string;
+  tokenUsage?: AgentTokenUsage;
 };
 
 export type AgentSessionState = {
@@ -211,6 +235,15 @@ export type AgentPipelineRecord = {
 
 export type IssueRecord = IssueEntry;
 export type EventRecord = RuntimeEvent;
+export type RuntimeSettingScope = "runtime" | "providers" | "ui" | "system";
+export type RuntimeSettingSource = "user" | "detected" | "workflow" | "system";
+export type RuntimeSettingRecord = {
+  id: string;
+  scope: RuntimeSettingScope;
+  value: unknown;
+  source: RuntimeSettingSource;
+  updatedAt: string;
+};
 
 export type WorkflowDefinition = {
   workflowPath: string;
@@ -288,6 +321,14 @@ export type S3dbModule = {
       broadcast?: (message: unknown) => void;
     }
   >;
+  EventualConsistencyPlugin?: new (options: Record<string, unknown>) => {
+    stop?: () => Promise<void>;
+    getAnalytics?: (resource: string, field: string, options?: Record<string, unknown>) => Promise<unknown[]>;
+    getLastNDays?: (resource: string, field: string, days?: number, options?: Record<string, unknown>) => Promise<unknown[]>;
+    getLastNWeeks?: (resource: string, field: string, weeks?: number, options?: Record<string, unknown>) => Promise<unknown[]>;
+    getTopRecords?: (resource: string, field: string, options?: Record<string, unknown>) => Promise<unknown[]>;
+    getStatus?: () => Record<string, unknown>;
+  };
 };
 
 export type ParallelismAnalysis = {

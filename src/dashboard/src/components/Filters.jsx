@@ -1,9 +1,22 @@
 import { Search, SlidersHorizontal } from "lucide-react";
 
-const STATES = ["Todo", "In Progress", "In Review", "Blocked", "Done", "Cancelled"];
+const STATES = ["Todo", "Queued", "Running", "Interrupted", "In Review", "Blocked", "Done", "Cancelled"];
 
-export function Filters({ query, setQuery, stateFilter, setStateFilter, categoryFilter, setCategoryFilter, categoryOptions }) {
-  const hasActiveFilters = stateFilter !== "all" || categoryFilter !== "all" || query.trim() !== "";
+const COMPLETION_OPTIONS = [
+  { value: "recent", label: "Active + recent" },
+  { value: "all", label: "All issues" },
+];
+
+export function Filters({
+  query, setQuery,
+  stateFilter, setStateFilter,
+  categoryFilter, setCategoryFilter,
+  categoryOptions,
+  completionFilter, setCompletionFilter,
+  totalIssues, visibleIssues,
+}) {
+  const hasActiveFilters = stateFilter !== "all" || categoryFilter !== "all" || query.trim() !== "" || completionFilter !== "recent";
+  const hiddenCount = (totalIssues ?? 0) - (visibleIssues ?? 0);
 
   return (
     <div className="collapse collapse-arrow bg-base-200 rounded-box">
@@ -13,6 +26,9 @@ export function Filters({ query, setQuery, stateFilter, setStateFilter, category
         Filters
         {hasActiveFilters && (
           <span className="badge badge-xs badge-primary">active</span>
+        )}
+        {hiddenCount > 0 && completionFilter === "recent" && (
+          <span className="text-xs opacity-40 ml-auto">{hiddenCount} older hidden</span>
         )}
       </div>
       <div className="collapse-content px-4 pb-3">
@@ -54,10 +70,21 @@ export function Filters({ query, setQuery, stateFilter, setStateFilter, category
             ))}
           </select>
 
+          <select
+            className="select select-bordered select-sm"
+            value={completionFilter}
+            onChange={(e) => setCompletionFilter(e.target.value)}
+            aria-label="Filter by completion"
+          >
+            {COMPLETION_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+
           {hasActiveFilters && (
             <button
               className="btn btn-xs btn-ghost opacity-60"
-              onClick={() => { setQuery(""); setStateFilter("all"); setCategoryFilter("all"); }}
+              onClick={() => { setQuery(""); setStateFilter("all"); setCategoryFilter("all"); setCompletionFilter("recent"); }}
             >
               Clear
             </button>

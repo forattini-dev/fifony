@@ -4,6 +4,7 @@ import type {
   RuntimeStateRecord,
   IssueRecord,
   EventRecord,
+  RuntimeSettingRecord,
   S3dbModule,
   S3dbDatabase,
   S3dbResource,
@@ -11,6 +12,7 @@ import type {
 import {
   S3DB_DATABASE_PATH,
   S3DB_BUCKET,
+  S3DB_ISSUE_RESOURCE,
   S3DB_KEY_PREFIX,
   S3DB_RUNTIME_RECORD_ID,
   S3DB_RUNTIME_SCHEMA_VERSION,
@@ -32,15 +34,18 @@ let stateDb: S3dbDatabase | null = null;
 let runtimeStateResource: S3dbResource | null = null;
 let issueStateResource: S3dbResource | null = null;
 let eventStateResource: S3dbResource | null = null;
+let settingStateResource: S3dbResource | null = null;
 let agentSessionResource: S3dbResource | null = null;
 let agentPipelineResource: S3dbResource | null = null;
 let activeApiPlugin: { stop?: () => Promise<void> } | null = null;
 let activeStateMachinePlugin: { stop?: () => Promise<void> } | null = null;
+let activeEcPlugin: S3dbModule["EventualConsistencyPlugin"] extends new (...a: never[]) => infer R ? R | null : null = null;
 
 export function getStateDb(): S3dbDatabase | null { return stateDb; }
 export function getRuntimeStateResource(): S3dbResource | null { return runtimeStateResource; }
 export function getIssueStateResource(): S3dbResource | null { return issueStateResource; }
 export function getEventStateResource(): S3dbResource | null { return eventStateResource; }
+export function getSettingStateResource(): S3dbResource | null { return settingStateResource; }
 export function getAgentSessionResource(): S3dbResource | null { return agentSessionResource; }
 export function getAgentPipelineResource(): S3dbResource | null { return agentPipelineResource; }
 export function getActiveApiPlugin(): { stop?: () => Promise<void> } | null { return activeApiPlugin; }
@@ -49,6 +54,7 @@ let activeWebSocketPlugin: { stop?: () => Promise<void> } | null = null;
 export function getActiveWebSocketPlugin(): { stop?: () => Promise<void> } | null { return activeWebSocketPlugin; }
 export function setActiveWebSocketPlugin(plugin: { stop?: () => Promise<void> } | null): void { activeWebSocketPlugin = plugin; }
 export function getActiveStateMachinePlugin(): { stop?: () => Promise<void> } | null { return activeStateMachinePlugin; }
+export function getActiveEcPlugin() { return activeEcPlugin; }
 export function setActiveStateMachinePlugin(plugin: { stop?: () => Promise<void> } | null): void { activeStateMachinePlugin = plugin; }
 
 export async function loadS3dbModule(): Promise<S3dbModule> {
@@ -82,12 +88,18 @@ export async function loadS3dbModule(): Promise<S3dbModule> {
       StateMachinePluginCtor = (pluginModule as { StateMachinePlugin: S3dbModule["StateMachinePlugin"] }).StateMachinePlugin;
     }
 
+    let EventualConsistencyPluginCtor: S3dbModule["EventualConsistencyPlugin"] | undefined;
+    if (typeof (pluginModule as Record<string, unknown>).EventualConsistencyPlugin === "function") {
+      EventualConsistencyPluginCtor = (pluginModule as { EventualConsistencyPlugin: S3dbModule["EventualConsistencyPlugin"] }).EventualConsistencyPlugin;
+    }
+
     loadedS3dbModule = {
       S3db: imported.S3db as S3dbModule["S3db"],
       FileSystemClient: imported.FileSystemClient as S3dbModule["FileSystemClient"],
       ApiPlugin: ApiPluginCtor,
       WebSocketPlugin: WebSocketPluginCtor,
       StateMachinePlugin: StateMachinePluginCtor,
+      EventualConsistencyPlugin: EventualConsistencyPluginCtor,
     };
     return loadedS3dbModule;
   } catch (error) {
@@ -142,16 +154,43 @@ export async function initStateStore(): Promise<void> {
     logger.warn("StateMachinePlugin not available. Issue transitions will use local logic only.");
   }
 
+  // EventualConsistency plugin for token usage analytics
+  const { EventualConsistencyPlugin } = await loadS3dbModule();
+  if (EventualConsistencyPlugin) {
+    try {
+      const ecPlugin = new EventualConsistencyPlugin({
+        resources: {
+          [S3DB_ISSUE_RESOURCE]: [
+            { field: "usage.tokens", fieldPath: "usage.tokens", initialValue: 0, cohort: { granularity: "day" } },
+          ],
+        },
+        enableAnalytics: true,
+        analytics: { enabled: true },
+        cohort: { granularity: "day", timezone: "UTC" },
+        analyticsConfig: { rollupStrategy: "incremental", retentionDays: 90 },
+        autoConsolidate: true,
+        consolidationInterval: 30_000,
+      });
+      await stateDb.usePlugin(ecPlugin as unknown, "eventual-consistency");
+      activeEcPlugin = ecPlugin as typeof activeEcPlugin;
+      logger.info("EventualConsistency plugin installed for token usage analytics.");
+    } catch (error) {
+      logger.warn(`EventualConsistency plugin failed to install: ${String(error)}`);
+    }
+  }
+
   const [
     runtimeStateResourceName,
     issueResourceName,
     eventResourceName,
+    settingResourceName,
     agentSessionResourceName,
     agentPipelineResourceName,
   ] = NATIVE_RESOURCE_NAMES;
   runtimeStateResource = await stateDb.getResource(runtimeStateResourceName);
   issueStateResource = await stateDb.getResource(issueResourceName);
   eventStateResource = await stateDb.getResource(eventResourceName);
+  settingStateResource = await stateDb.getResource(settingResourceName);
   agentSessionResource = await stateDb.getResource(agentSessionResourceName);
   agentPipelineResource = await stateDb.getResource(agentPipelineResourceName);
   debugBoot("initStateStore:resources-ready");
@@ -277,8 +316,42 @@ export async function persistState(state: RuntimeState): Promise<void> {
   });
 }
 
+export async function loadPersistedSettings(): Promise<RuntimeSettingRecord[]> {
+  if (!settingStateResource?.list) return [];
+
+  try {
+    const records = await settingStateResource.list({ limit: 500 });
+    return Array.isArray(records)
+      ? records.filter((record): record is RuntimeSettingRecord =>
+        Boolean(
+          record &&
+          typeof record.id === "string" &&
+          typeof record.scope === "string",
+        ),
+      )
+      : [];
+  } catch (error) {
+    logger.warn(`Failed to load persisted settings from s3db: ${String(error)}`);
+    return [];
+  }
+}
+
+export async function replacePersistedSetting(setting: RuntimeSettingRecord): Promise<void> {
+  if (!settingStateResource) return;
+  await settingStateResource.replace(setting.id, setting);
+}
+
 export async function closeStateStore(): Promise<void> {
   clearApiRuntimeContext();
+  if (activeEcPlugin?.stop) {
+    try {
+      await activeEcPlugin.stop();
+    } catch (error) {
+      logger.warn(`Failed to stop EventualConsistency plugin: ${String(error)}`);
+    } finally {
+      activeEcPlugin = null;
+    }
+  }
   if (activeStateMachinePlugin?.stop) {
     try {
       await activeStateMachinePlugin.stop();
@@ -319,6 +392,7 @@ export async function closeStateStore(): Promise<void> {
     runtimeStateResource = null;
     issueStateResource = null;
     eventStateResource = null;
+    settingStateResource = null;
     agentSessionResource = null;
     agentPipelineResource = null;
   }

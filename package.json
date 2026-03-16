@@ -9,15 +9,21 @@
   },
   "scripts": {
     "start": "node ./bin/symphifony.js",
-    "dev": "node ./bin/symphifony.js --port 4000 & vite --config src/dashboard/vite.config.js & wait",
+    "dev": "node ./bin/symphifony.js --port 4000 --dev",
     "dev:api": "node ./bin/symphifony.js --port 4000",
     "dev:ui": "vite --config src/dashboard/vite.config.js",
+    "build": "tsup && vite build --config src/dashboard/vite.config.js",
+    "build:server": "tsup",
     "build:ui": "vite build --config src/dashboard/vite.config.js",
+    "prepublishOnly": "pnpm build",
     "mcp": "node ./bin/symphifony.js mcp"
   },
   "files": [
     "bin/",
-    "src/",
+    "dist/",
+    "src/dashboard/dist/",
+    "src/dashboard/public/",
+    "src/fixtures/",
     "WORKFLOW.md",
     "README.md",
     "SYMPHIFONY.md",
@@ -40,6 +46,7 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.90.21",
+    "@tanstack/react-router": "^1.167.3",
     "cli-args-parser": "^1.0.6",
     "lucide-react": "^0.577.0",
     "node-cron": "^4.2.1",
@@ -49,11 +56,14 @@
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "s3db.js": "21.2.10",
-    "tsx": "^4.21.0",
     "yaml": "^2.8.2"
   },
   "devDependencies": {
+    "@tanstack/router-plugin": "^1.166.12",
     "@vitejs/plugin-react": "^6.0.1",
+    "tsup": "^8.5.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
     "vite": "^8.0.0"
   }
 }

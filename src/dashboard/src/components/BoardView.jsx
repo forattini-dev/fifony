@@ -1,18 +1,16 @@
-import { useMemo } from "react";
+import { useMemo, useCallback, useRef, useEffect } from "react";
 import { IssueCard } from "./IssueCard.jsx";
 import { EmptyState } from "./EmptyState.jsx";
-import { Plus, ListOrdered, Play, Pause, Eye, AlertTriangle, CheckCircle, XCircle } from "lucide-react";
+import { Plus, Play, Eye, AlertTriangle, CheckCircle, XCircle } from "lucide-react";
+import { useDragAndDrop } from "../hooks/useDragAndDrop.js";
 
-const STATES = ["Todo", "Queued", "Running", "Interrupted", "In Review", "Blocked", "Done", "Cancelled"];
+// Kanban columns — Queued/Running/Interrupted are grouped as "In Progress"
+const COLUMNS = ["Todo", "In Progress", "In Review", "Blocked", "Done", "Cancelled"];
+const IN_PROGRESS_STATES = new Set(["Queued", "Running", "Interrupted"]);
 
-// Columns that only show when they have issues
-const COLLAPSIBLE = new Set(["Queued", "Interrupted"]);
-
-const STATE_BADGE = {
+const COLUMN_BADGE = {
   Todo: "badge-warning",
-  Queued: "badge-info",
-  Running: "badge-primary",
-  Interrupted: "badge-accent",
+  "In Progress": "badge-primary",
   "In Review": "badge-secondary",
   Blocked: "badge-error",
   Done: "badge-success",
@@ -21,75 +19,169 @@ const STATE_BADGE = {
 
 const EMPTY_CONFIG = {
   Todo: { icon: Plus, desc: "Create an issue to get started" },
-  Queued: { icon: ListOrdered, desc: "Waiting for a worker slot" },
-  Running: { icon: Play, desc: "Agent is executing" },
-  Interrupted: { icon: Pause, desc: "Interrupted by restart" },
+  "In Progress": { icon: Play, desc: "Issues move here when agents start" },
   "In Review": { icon: Eye, desc: "Awaiting review" },
   Blocked: { icon: AlertTriangle, desc: "Needs attention" },
   Done: { icon: CheckCircle, desc: "Completed" },
   Cancelled: { icon: XCircle, desc: "Cancelled" },
 };
 
+function DragGhost({ dragState, ghostRef }) {
+  if (!dragState) return null;
+  const { issue } = dragState;
+  return (
+    <div
+      ref={ghostRef}
+      className="drag-ghost"
+      aria-hidden="true"
+    >
+      <div className="card card-compact bg-base-100 border border-primary border-l-[3px] shadow-2xl p-3 w-56">
+        <span className="font-mono text-xs opacity-50">{issue.identifier}</span>
+        <h3 className="font-semibold text-sm truncate">{issue.title}</h3>
+      </div>
+    </div>
+  );
+}
+
+function KanbanColumn({ col, issues, empty, badgeClass, dragState, registerColumn, getCardHandlers, onSelect }) {
+  const colRef = useRef(null);
+
+  useEffect(() => {
+    registerColumn(col, colRef.current);
+    return () => registerColumn(col, null);
+  }, [col, registerColumn]);
+
+  const isDragging = dragState != null;
+  const isOver = dragState?.overColumn === col;
+  const isSource = dragState?.sourceColumn === col;
+  const isValid = dragState?.validColumns?.has(col) ?? false;
+  const isDimmed = isDragging && !isValid && !isSource;
+
+  let columnClass = "kanban-column bg-base-200 rounded-box p-3 flex flex-col";
+  if (isDragging) {
+    if (isOver && isValid) {
+      columnClass += " kanban-column-drop-valid";
+    } else if (isOver && !isValid) {
+      columnClass += " kanban-column-drop-invalid";
+    } else if (isDimmed) {
+      columnClass += " kanban-column-dimmed";
+    }
+  }
+
+  return (
+    <div key={col} ref={colRef} className={columnClass}>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-xs font-bold uppercase tracking-wide opacity-70">
+          {col}
+        </h3>
+        <span className={`badge badge-xs ${badgeClass}`}>
+          {issues.length}
+        </span>
+      </div>
+
+      <div className="space-y-2 flex-1 overflow-y-auto kanban-card-list">
+        {issues.length === 0 ? (
+          isOver && isValid ? (
+            <div className="kanban-drop-placeholder" />
+          ) : (
+            <EmptyState
+              icon={empty.icon}
+              title="No issues"
+              description={empty.desc}
+            />
+          )
+        ) : (
+          <div className="stagger-children space-y-2">
+            {issues.map((issue) => {
+              const beingDragged = dragState?.issueId === issue.id;
+              return (
+                <div
+                  key={issue.id}
+                  className={beingDragged ? "kanban-card-dragging-source" : ""}
+                >
+                  <IssueCard
+                    issue={issue}
+                    onSelect={onSelect}
+                    dragHandlers={getCardHandlers(issue, col)}
+                    isDragging={beingDragged}
+                  />
+                </div>
+              );
+            })}
+            {isOver && isValid && (
+              <div className="kanban-drop-placeholder" />
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function BoardView({ issues, onStateChange, onRetry, onCancel, onSelect }) {
   const grouped = useMemo(() => {
-    const buckets = Object.fromEntries(STATES.map((s) => [s, []]));
+    const buckets = Object.fromEntries(COLUMNS.map((c) => [c, []]));
     for (const issue of issues) {
-      (buckets[issue.state] || buckets.Todo).push(issue);
+      const col = IN_PROGRESS_STATES.has(issue.state) ? "In Progress" : (buckets[issue.state] ? issue.state : "Todo");
+      buckets[col].push(issue);
     }
-    for (const s of STATES) {
-      buckets[s].sort((a, b) => a.priority - b.priority);
+    for (const c of COLUMNS) {
+      buckets[c].sort((a, b) => a.priority - b.priority);
     }
     return buckets;
   }, [issues]);
 
-  const visibleStates = useMemo(() =>
-    STATES.filter((s) => !COLLAPSIBLE.has(s) || grouped[s].length > 0),
-    [grouped],
+  const {
+    dragState,
+    ghostRef,
+    getCardHandlers,
+    registerColumn,
+    onBoardPointerMove,
+    onBoardPointerUp,
+    onBoardPointerCancel,
+    shouldSuppressClick,
+  } = useDragAndDrop({ onStateChange });
+
+  // Wrap onSelect to suppress clicks that follow a drag
+  const guardedOnSelect = useCallback(
+    (issue) => {
+      if (shouldSuppressClick()) return;
+      onSelect?.(issue);
+    },
+    [onSelect, shouldSuppressClick]
   );
 
   return (
-    <div className="overflow-x-auto pb-2 flex-1 flex flex-col min-h-0">
+    <div
+      className="overflow-x-auto pb-2 flex-1 flex flex-col min-h-0"
+      onPointerMove={onBoardPointerMove}
+      onPointerUp={onBoardPointerUp}
+      onPointerCancel={onBoardPointerCancel}
+      style={{ touchAction: dragState ? "none" : undefined }}
+    >
       <div
-        className="grid gap-3 flex-1"
+        className={`grid gap-3 flex-1 ${dragState ? "kanban-dragging" : ""}`}
         style={{
-          gridTemplateColumns: `repeat(${visibleStates.length}, minmax(0, 1fr))`,
-          minWidth: `${visibleStates.length * 160}px`,
+          gridTemplateColumns: `repeat(${COLUMNS.length}, minmax(0, 1fr))`,
+          minWidth: `${COLUMNS.length * 180}px`,
         }}
       >
-        {visibleStates.map((state) => {
-          const empty = EMPTY_CONFIG[state] || EMPTY_CONFIG.Todo;
-          return (
-            <div key={state} className="bg-base-200 rounded-box p-3 flex flex-col">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-xs font-bold uppercase tracking-wide opacity-70">
-                  {state}
-                </h3>
-                <span className={`badge badge-xs ${STATE_BADGE[state]}`}>
-                  {grouped[state].length}
-                </span>
-              </div>
-
-              <div className="space-y-2 flex-1 overflow-y-auto">
-                {grouped[state].length === 0 ? (
-                  <EmptyState
-                    icon={empty.icon}
-                    title="No issues"
-                    description={empty.desc}
-                  />
-                ) : (
-                  grouped[state].map((issue) => (
-                    <IssueCard
-                      key={issue.id}
-                      issue={issue}
-                      onSelect={onSelect}
-                    />
-                  ))
-                )}
-              </div>
-            </div>
-          );
-        })}
+        {COLUMNS.map((col) => (
+          <KanbanColumn
+            key={col}
+            col={col}
+            issues={grouped[col]}
+            empty={EMPTY_CONFIG[col]}
+            badgeClass={COLUMN_BADGE[col]}
+            dragState={dragState}
+            registerColumn={registerColumn}
+            getCardHandlers={getCardHandlers}
+            onSelect={guardedOnSelect}
+          />
+        ))}
       </div>
+
+      <DragGhost dragState={dragState} ghostRef={ghostRef} />
     </div>
   );
 }

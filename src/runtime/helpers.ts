@@ -8,6 +8,19 @@ export function now(): string {
   return new Date().toISOString();
 }
 
+/** Returns ISO week string like "2026-W12" for a given date (defaults to now). */
+export function isoWeek(date?: Date | string): string {
+  const d = date ? new Date(date) : new Date();
+  if (Number.isNaN(d.getTime())) return "";
+  // ISO week: week starts Monday, week 1 contains Jan 4
+  const tmp = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const dayNum = tmp.getUTCDay() || 7; // Monday=1 ... Sunday=7
+  tmp.setUTCDate(tmp.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil(((tmp.getTime() - yearStart.getTime()) / 86_400_000 + 1) / 7);
+  return `${tmp.getUTCFullYear()}-W${String(weekNo).padStart(2, "0")}`;
+}
+
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

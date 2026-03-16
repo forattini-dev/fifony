@@ -182,7 +182,7 @@ export function pickNextIssues(
   return state.issues
     .filter((issue) => canRunIssue(issue, running, state) && !isPerStateFull(issue, state, running))
     .sort((a, b) => {
-      const stateWeight = (c: IssueEntry) => c.state === "In Progress" ? 0 : c.state === "Blocked" ? 2 : 1;
+      const stateWeight = (c: IssueEntry) => c.state === "Running" ? 0 : c.state === "Blocked" ? 2 : 1;
       const weightDiff = stateWeight(a) - stateWeight(b);
       if (weightDiff !== 0) return weightDiff;
       if (a.priority !== b.priority) return a.priority - b.priority;

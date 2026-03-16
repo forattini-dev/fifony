@@ -32,11 +32,11 @@ export function EventsDrawer({ open, onClose, events, kind, setKind, issueId, se
 
   return (
     <div
-      className={`fixed inset-0 z-40 transition-opacity bg-black/35`}
+      className="fixed inset-0 z-40 bg-black/35 animate-fade-in"
       onClick={onClose}
     >
       <div
-        className="fixed top-0 right-0 z-50 h-full w-full md:w-[480px] lg:w-[540px] bg-base-100 shadow-2xl transform transition-transform duration-200 ease-out translate-x-0 flex flex-col"
+        className="fixed top-0 right-0 z-50 h-full w-full md:w-[480px] lg:w-[540px] bg-base-100 shadow-2xl animate-slide-in-right flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -108,7 +108,7 @@ export function EventsDrawer({ open, onClose, events, kind, setKind, issueId, se
               description="Events will appear here as issues are processed."
             />
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-2 stagger-children">
               {rows.slice(0, 100).map((ev, i) => (
                 <div key={`${ev.at}-${i}`} className="bg-base-200 rounded-box px-3 py-2">
                   <div className="flex items-center gap-2 text-xs">

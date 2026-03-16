@@ -6,6 +6,11 @@ import { debugBoot, fail, now } from "./helpers.ts";
 import { initLogger, logger } from "./logger.ts";
 import { initStateStore, loadPersistedState, persistState, closeStateStore } from "./store.ts";
 import {
+  applyPersistedSettings,
+  loadRuntimeSettings,
+  persistDetectedProvidersSetting,
+} from "./settings.ts";
+import {
   detectAvailableProviders,
   resolveDefaultProvider,
   getProviderDefaultCommand,
@@ -14,7 +19,8 @@ import { bootstrapSource, loadWorkflowDefinition, parsePort, watchWorkflowFile }
 import { deriveConfig, applyWorkflowConfig, buildRuntimeState, computeMetrics, addEvent, validateConfig } from "./issues.ts";
 import { startApiServer } from "./api-server.ts";
 import { scheduler, installGracefulShutdown } from "./scheduler.ts";
-import { cleanWorkspace } from "./agent.ts";
+import { cleanWorkspace, isAgentStillRunning, cleanStalePidFile } from "./agent.ts";
+import { startDevFrontend } from "./dev-server.ts";
 
 function usage() {
   console.log(
@@ -27,6 +33,7 @@ function usage() {
     "  --attempts <n>         Maximum attempts per issue\n" +
     "  --poll <ms>            Scheduler interval in ms\n" +
     "  --timeout <ms>         Agent command timeout in ms (default: 1800000)\n" +
+    "  --dev                   Start Vite dev server alongside API (HMR on port+1)\n" +
     "  --once                  Process once and exit\n",
   );
 }
@@ -54,6 +61,7 @@ async function main() {
 
   const interfaceMode = (env.SYMPHIFONY_INTERFACE ?? "cli").trim().toLowerCase();
   const runOnce = args.includes("--once");
+  const devMode = args.includes("--dev") || env.NODE_ENV === "development";
 
   debugBoot("main:state-root-ready");
   const workflowDefinition = loadWorkflowDefinition();
@@ -80,9 +88,12 @@ async function main() {
   debugBoot("main:source-bootstrapped");
   await initStateStore();
   debugBoot("main:store-initialized");
+  await persistDetectedProvidersSetting(detectedProviders);
 
   const previous = await loadPersistedState();
+  let persistedSettings = await loadRuntimeSettings();
   debugBoot("main:state-loaded");
+  config = applyPersistedSettings(config, persistedSettings);
   const state = buildRuntimeState(previous, config, workflowDefinition);
   debugBoot("main:state-merged");
 
@@ -124,6 +135,26 @@ async function main() {
     });
   }
 
+  // Recover orphaned agent processes from previous session
+  for (const issue of state.issues) {
+    if (issue.state === "Running" || issue.state === "Interrupted" || issue.state === "Queued") {
+      const { alive, pid } = isAgentStillRunning(issue);
+      if (alive && pid) {
+        logger.info(`Agent for ${issue.identifier} still alive (PID ${pid.pid}), keeping state as Running.`);
+        issue.state = "Running" as any;
+        addEvent(state, issue.id, "info", `Orphaned agent detected (PID ${pid.pid}), still alive — tracking resumed.`);
+      } else {
+        // Agent died — clean PID file, mark as Interrupted for resumption
+        if (issue.workspacePath) cleanStalePidFile(issue.workspacePath);
+        if (issue.state === "Running") {
+          issue.state = "Interrupted" as any;
+          issue.history.push(`[${now()}] Agent process not found on boot — marked Interrupted.`);
+          addEvent(state, issue.id, "info", `Agent for ${issue.identifier} not found, marked Interrupted.`);
+        }
+      }
+    }
+  }
+
   state.metrics = computeMetrics(state.issues);
   await persistState(state);
 
@@ -140,15 +171,29 @@ async function main() {
 
   if (dashboardPort) {
     await startApiServer(state, dashboardPort, workflowDefinition);
+
+    // In dev mode, start Vite on a separate port with proxy back to API
+    if (devMode) {
+      const devPort = dashboardPort + 1;
+      await startDevFrontend(dashboardPort, devPort);
+    }
   }
 
   // Watch WORKFLOW.md for dynamic reload
   watchWorkflowFile((newDefinition) => {
-    const newConfig = applyWorkflowConfig(deriveConfig(args), newDefinition, port);
-    Object.assign(state.config, newConfig);
-    addEvent(state, undefined, "info", `WORKFLOW.md reloaded — config updated (concurrency: ${newConfig.workerConcurrency}, turns: ${newConfig.maxTurns}).`);
-    state.updatedAt = now();
-    persistState(state).catch(() => {});
+    void (async () => {
+      persistedSettings = await loadRuntimeSettings();
+      const newConfig = applyPersistedSettings(
+        applyWorkflowConfig(deriveConfig(args), newDefinition, port),
+        persistedSettings,
+      );
+      Object.assign(state.config, newConfig);
+      addEvent(state, undefined, "info", `WORKFLOW.md reloaded — config updated (concurrency: ${newConfig.workerConcurrency}, turns: ${newConfig.maxTurns}).`);
+      state.updatedAt = now();
+      await persistState(state);
+    })().catch((error) => {
+      logger.warn(`Failed to apply reloaded workflow config: ${String(error)}`);
+    });
   });
 
   try {

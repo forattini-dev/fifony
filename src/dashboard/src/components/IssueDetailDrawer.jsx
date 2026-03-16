@@ -166,6 +166,10 @@ function OverviewTab({ issue, onStateChange, onRetry, onCancel }) {
           {issue.completedAt && <Field label="Completed" value={formatDate(issue.completedAt)} />}
           {issue.nextRetryAt && <Field label="Next retry" value={formatDate(issue.nextRetryAt)} />}
           <Field label="Duration" value={formatDuration(issue.durationMs)} />
+          {issue.tokenUsage?.totalTokens > 0 && (
+            <Field label="Tokens" value={`${issue.tokenUsage.totalTokens.toLocaleString()}${issue.tokenUsage.costUsd ? ` ($${issue.tokenUsage.costUsd.toFixed(4)})` : ""}`} />
+          )}
+          {issue.tokenUsage?.model && <Field label="Model" value={issue.tokenUsage.model} mono />}
         </div>
       </Section>
 
@@ -229,6 +233,8 @@ function LiveMonitor({ issueId, running, startedAt }) {
       </div>
       <div className="flex gap-3 text-xs opacity-60">
         <span>Log: {logKb} KB</span>
+        {live.agentPid && <span>PID: {live.agentPid}</span>}
+        {live.agentAlive === false && live.agentPid && <span className="text-error">process dead</span>}
       </div>
       {live.logTail && (
         <pre className="text-xs bg-base-200 rounded-box p-2 overflow-x-auto whitespace-pre-wrap max-h-48 overflow-y-auto font-mono opacity-80">
@@ -287,19 +293,59 @@ function ExecutionTab({ issue }) {
   );
 }
 
-// ── Tab: Diff ───────────────────────────────────────────────────────────────
+// ── Tab: Diff (GitHub PR style) ─────────────────────────────────────────────
+
+const FILE_STATUS_BADGE = {
+  added: "badge-success",
+  removed: "badge-error",
+  modified: "badge-info",
+};
+
+function DiffFileItem({ file, isOpen, onToggle }) {
+  return (
+    <div className="border border-base-300 rounded-box overflow-hidden">
+      <button
+        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-base-200 transition-colors"
+        onClick={onToggle}
+      >
+        <span className="text-xs opacity-40 transition-transform" style={{ transform: isOpen ? "rotate(90deg)" : "" }}>&#9654;</span>
+        <span className={`badge badge-xs ${FILE_STATUS_BADGE[file.status] || "badge-ghost"}`}>{file.status}</span>
+        <span className="font-mono text-xs truncate flex-1">{file.path}</span>
+        <span className="text-xs text-success">+{file.additions}</span>
+        <span className="text-xs text-error">-{file.deletions}</span>
+      </button>
+    </div>
+  );
+}
+
+function DiffViewer({ lines }) {
+  if (!lines || lines.length === 0) return null;
+  return (
+    <pre className="text-xs rounded-box p-3 overflow-x-auto max-h-[55vh] overflow-y-auto leading-relaxed bg-base-200 font-mono">
+      {lines.map((line, i) => {
+        let cls = "";
+        if (line.startsWith("+") && !line.startsWith("+++")) cls = "text-success bg-success/10";
+        else if (line.startsWith("-") && !line.startsWith("---")) cls = "text-error bg-error/10";
+        else if (line.startsWith("@@")) cls = "text-info opacity-60 text-[10px]";
+        else if (line.startsWith("diff ")) cls = "font-bold opacity-70 border-t border-base-300 pt-2 mt-2";
+        return <div key={i} className={cls}>{line || "\u00a0"}</div>;
+      })}
+    </pre>
+  );
+}
 
 function DiffTab({ issueId }) {
-  const [diff, setDiff] = useState(null);
+  const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [expandedFile, setExpandedFile] = useState(null);
 
   const fetchDiff = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const res = await api.get(`/diff/${encodeURIComponent(issueId)}`);
-      setDiff(res.diff || res.message || "(no changes)");
+      setData(res);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -307,63 +353,82 @@ function DiffTab({ issueId }) {
     }
   }, [issueId]);
 
-  useEffect(() => { setDiff(null); setError(null); }, [issueId]);
-
-  // Auto-load on mount
+  useEffect(() => { setData(null); setError(null); setExpandedFile(null); }, [issueId]);
   useEffect(() => { fetchDiff(); }, [fetchDiff]);
 
   if (loading) {
-    return <div className="flex items-center justify-center gap-2 text-sm opacity-50 py-12"><span className="loading loading-spinner loading-sm" /> Generating diff...</div>;
+    return <div className="flex items-center justify-center gap-2 text-sm opacity-50 py-12"><span className="loading loading-spinner loading-sm" /> Loading changes...</div>;
   }
   if (error) {
     return <div className="text-sm text-error py-4">{error}</div>;
   }
-  if (!diff) return null;
+  if (!data) return null;
 
-  const lines = (diff || "").split("\n");
-  const statSection = [];
-  const diffSection = [];
-  let pastSeparator = false;
-  for (const line of lines) {
-    if (line === "---") { pastSeparator = true; continue; }
-    if (pastSeparator) diffSection.push(line);
-    else statSection.push(line);
+  const { files = [], diff = "", message, totalAdditions = 0, totalDeletions = 0 } = data;
+
+  if (files.length === 0) {
+    return <div className="text-sm opacity-40 text-center py-8">{message || "No changes detected."}</div>;
+  }
+
+  // Parse diff into per-file chunks for expanding
+  const diffChunks = {};
+  if (diff) {
+    const chunks = diff.split(/(?=^diff --git )/m);
+    for (const chunk of chunks) {
+      const m = chunk.match(/^diff --git a\/(.+?) b\//);
+      if (m) diffChunks[m[1]] = chunk.split("\n");
+    }
   }
 
   return (
     <div className="space-y-4">
-      {statSection.length > 0 && (
-        <div>
-          <div className="text-xs opacity-50 font-semibold mb-1">Summary</div>
-          <pre className="text-xs bg-base-200 rounded-box p-2 overflow-x-auto whitespace-pre-wrap max-h-40 overflow-y-auto">{statSection.join("\n")}</pre>
+      {/* Summary bar */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3 text-sm">
+          <span className="opacity-60">{files.length} file{files.length !== 1 ? "s" : ""} changed</span>
+          <span className="text-success font-mono text-xs">+{totalAdditions}</span>
+          <span className="text-error font-mono text-xs">-{totalDeletions}</span>
         </div>
-      )}
-      {diffSection.length > 0 && (
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <div className="text-xs opacity-50 font-semibold">Full diff</div>
-            <CopyButton text={diffSection.join("\n")} />
-          </div>
-          <pre className="text-xs rounded-box p-3 overflow-x-auto max-h-[60vh] overflow-y-auto leading-relaxed bg-base-200">
-            {diffSection.map((line, i) => {
-              let cls = "";
-              if (line.startsWith("+") && !line.startsWith("+++")) cls = "text-success bg-success/10";
-              else if (line.startsWith("-") && !line.startsWith("---")) cls = "text-error bg-error/10";
-              else if (line.startsWith("@@")) cls = "text-info opacity-70";
-              else if (line.startsWith("diff ")) cls = "font-bold opacity-80 border-t border-base-300 pt-1 mt-1";
-              return <div key={i} className={cls}>{line}</div>;
-            })}
-          </pre>
+        <div className="flex items-center gap-1">
+          <CopyButton text={diff} />
+          <button className="btn btn-xs btn-ghost gap-1" onClick={fetchDiff}>
+            <RotateCcw className="size-3" /> Refresh
+          </button>
         </div>
-      )}
-      {diff === "(no changes)" && (
-        <div className="text-sm opacity-40 text-center py-8">No changes detected in workspace.</div>
-      )}
-      <div className="flex justify-end">
-        <button className="btn btn-xs btn-ghost gap-1" onClick={fetchDiff}>
-          <RotateCcw className="size-3" /> Refresh
-        </button>
       </div>
+
+      {/* File list */}
+      <div className="space-y-1">
+        {files.map((file) => (
+          <DiffFileItem
+            key={file.path}
+            file={file}
+            isOpen={expandedFile === file.path}
+            onToggle={() => setExpandedFile(expandedFile === file.path ? null : file.path)}
+          />
+        ))}
+      </div>
+
+      {/* Expanded file diff */}
+      {expandedFile && diffChunks[expandedFile] && (
+        <div>
+          <div className="text-xs font-mono opacity-50 mb-1">{expandedFile}</div>
+          <DiffViewer lines={diffChunks[expandedFile]} />
+        </div>
+      )}
+
+      {/* Full diff toggle */}
+      {!expandedFile && (
+        <details className="group">
+          <summary className="text-xs opacity-50 cursor-pointer select-none list-none flex items-center gap-1">
+            <span className="transition-transform group-open:rotate-90">&#9654;</span>
+            Show full diff
+          </summary>
+          <div className="mt-2">
+            <DiffViewer lines={diff.split("\n")} />
+          </div>
+        </details>
+      )}
     </div>
   );
 }
@@ -494,72 +559,56 @@ function HistoryTab({ issue }) {
 // ── Tab: Review ─────────────────────────────────────────────────────────
 
 function ReviewTab({ issue, issueId, onStateChange }) {
-  const [diff, setDiff] = useState(null);
+  const [diffData, setDiffData] = useState(null);
   const [diffLoading, setDiffLoading] = useState(false);
   const [note, setNote] = useState("");
-  const [verdict, setVerdict] = useState(null); // "approved" | "rework" | "rejected"
+  const [verdict, setVerdict] = useState(null);
+  const [expandedFile, setExpandedFile] = useState(null);
 
   const fetchDiff = useCallback(async () => {
     setDiffLoading(true);
     try {
       const res = await api.get(`/diff/${encodeURIComponent(issueId)}`);
-      setDiff(res.diff || res.message || "(no changes)");
-    } catch { setDiff(null); }
+      setDiffData(res);
+    } catch { setDiffData(null); }
     finally { setDiffLoading(false); }
   }, [issueId]);
 
-  useEffect(() => { setDiff(null); setVerdict(null); setNote(""); }, [issueId]);
+  useEffect(() => { setDiffData(null); setVerdict(null); setNote(""); setExpandedFile(null); }, [issueId]);
   useEffect(() => { fetchDiff(); }, [fetchDiff]);
 
   const isInReview = issue.state === "In Review";
   const isDone = issue.state === "Done";
+  const files = diffData?.files || [];
+  const diff = diffData?.diff || "";
 
-  const handleApprove = () => {
-    setVerdict("approved");
-    onStateChange?.(issue.id, "Done");
-  };
-  const handleRework = () => {
-    setVerdict("rework");
-    onStateChange?.(issue.id, "Queued");
-  };
-  const handleReject = () => {
-    setVerdict("rejected");
-    onStateChange?.(issue.id, "Blocked");
-  };
-
-  // Parse diff for inline display
-  const diffLines = (diff || "").split("\n");
-  const diffContent = [];
-  let pastSep = false;
-  for (const line of diffLines) {
-    if (line === "---") { pastSep = true; continue; }
-    if (pastSep) diffContent.push(line);
+  // Parse diff into per-file chunks
+  const diffChunks = {};
+  if (diff) {
+    for (const chunk of diff.split(/(?=^diff --git )/m)) {
+      const m = chunk.match(/^diff --git a\/(.+?) b\//);
+      if (m) diffChunks[m[1]] = chunk.split("\n");
+    }
   }
+
+  const handleApprove = () => { setVerdict("approved"); onStateChange?.(issue.id, "Done"); };
+  const handleRework = () => { setVerdict("rework"); onStateChange?.(issue.id, "Queued"); };
+  const handleReject = () => { setVerdict("rejected"); onStateChange?.(issue.id, "Blocked"); };
 
   return (
     <div className="space-y-5">
-      {/* Status banner */}
+      {/* Status banners */}
       {isDone && (
-        <div className="alert alert-success text-sm">
-          <CheckCircle2 className="size-4" />
-          This issue has been approved and is Done.
-        </div>
+        <div className="alert alert-success text-sm"><CheckCircle2 className="size-4" /> This issue has been approved.</div>
       )}
       {issue.state === "Blocked" && (
-        <div className="alert alert-error text-sm">
-          <AlertTriangle className="size-4" />
-          Review was blocked or failed. Check execution output for details.
-        </div>
+        <div className="alert alert-error text-sm"><AlertTriangle className="size-4" /> Review failed. Check execution output.</div>
       )}
       {verdict === "approved" && isInReview && (
-        <div className="alert alert-success text-sm">
-          <ThumbsUp className="size-4" /> Approved! Moving to Done.
-        </div>
+        <div className="alert alert-success text-sm"><ThumbsUp className="size-4" /> Approved! Moving to Done.</div>
       )}
       {verdict === "rework" && (
-        <div className="alert alert-warning text-sm">
-          <RotateCcw className="size-4" /> Sent back for rework.
-        </div>
+        <div className="alert alert-warning text-sm"><RotateCcw className="size-4" /> Sent back for rework.</div>
       )}
 
       {/* Checklist */}
@@ -577,35 +626,42 @@ function ReviewTab({ issue, issueId, onStateChange }) {
         </Section>
       )}
 
-      {/* Inline diff */}
+      {/* Changes — GitHub PR style */}
       <Section title="Changes" icon={Code}>
         {diffLoading ? (
           <div className="flex items-center gap-2 text-sm opacity-50 py-4">
-            <span className="loading loading-spinner loading-xs" /> Loading diff...
+            <span className="loading loading-spinner loading-xs" /> Loading changes...
           </div>
-        ) : diffContent.length > 0 ? (
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-xs opacity-50">{diffContent.filter(l => l.startsWith("diff ")).length} file(s) changed</span>
-              <CopyButton text={diffContent.join("\n")} />
+        ) : files.length > 0 ? (
+          <div className="space-y-3">
+            <div className="flex items-center gap-3 text-sm">
+              <span className="opacity-60">{files.length} file{files.length !== 1 ? "s" : ""}</span>
+              <span className="text-success font-mono text-xs">+{diffData?.totalAdditions || 0}</span>
+              <span className="text-error font-mono text-xs">-{diffData?.totalDeletions || 0}</span>
             </div>
-            <pre className="text-xs rounded-box p-3 overflow-x-auto max-h-[45vh] overflow-y-auto leading-relaxed bg-base-200">
-              {diffContent.map((line, i) => {
-                let cls = "";
-                if (line.startsWith("+") && !line.startsWith("+++")) cls = "text-success bg-success/10";
-                else if (line.startsWith("-") && !line.startsWith("---")) cls = "text-error bg-error/10";
-                else if (line.startsWith("@@")) cls = "text-info opacity-70";
-                else if (line.startsWith("diff ")) cls = "font-bold opacity-80 border-t border-base-300 pt-1 mt-1";
-                return <div key={i} className={cls}>{line}</div>;
-              })}
-            </pre>
+            <div className="space-y-1">
+              {files.map((file) => (
+                <DiffFileItem
+                  key={file.path}
+                  file={file}
+                  isOpen={expandedFile === file.path}
+                  onToggle={() => setExpandedFile(expandedFile === file.path ? null : file.path)}
+                />
+              ))}
+            </div>
+            {expandedFile && diffChunks[expandedFile] && (
+              <div>
+                <div className="text-xs font-mono opacity-50 mb-1">{expandedFile}</div>
+                <DiffViewer lines={diffChunks[expandedFile]} />
+              </div>
+            )}
           </div>
         ) : (
           <div className="text-sm opacity-40 py-4">No changes detected.</div>
         )}
       </Section>
 
-      {/* Execution context */}
+      {/* Agent output context */}
       {(issue.lastError || issue.commandOutputTail) && (
         <Section title="Agent Output" icon={Terminal}>
           {issue.lastError && (
@@ -672,11 +728,11 @@ export function IssueDetailDrawer({ issue, onClose, onStateChange, onRetry, onCa
 
   return (
     <div
-      className="fixed inset-0 z-40 transition-opacity bg-black/35"
+      className="fixed inset-0 z-40 bg-black/35 animate-fade-in"
       onClick={onClose}
     >
       <div
-        className="fixed top-0 right-0 z-50 h-full w-full md:w-[520px] lg:w-[600px] bg-base-100 shadow-2xl transform transition-transform duration-200 ease-out translate-x-0 flex flex-col"
+        className="fixed top-0 right-0 z-50 h-full w-full md:w-[520px] lg:w-[600px] bg-base-100 shadow-2xl animate-slide-in-right flex flex-col"
         onClick={(event) => event.stopPropagation()}
       >
         {/* Header */}

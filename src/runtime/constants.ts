@@ -71,16 +71,20 @@ export const S3DB_KEY_PREFIX = env.SYMPHIFONY_STORAGE_KEY_PREFIX ?? "state";
 export const S3DB_RUNTIME_RESOURCE = "runtime_state";
 export const S3DB_ISSUE_RESOURCE = "issues";
 export const S3DB_EVENT_RESOURCE = "events";
+export const S3DB_SETTINGS_RESOURCE = "settings";
 export const S3DB_AGENT_SESSION_RESOURCE = "agent_sessions";
 export const S3DB_AGENT_PIPELINE_RESOURCE = "agent_pipelines";
 export const S3DB_RUNTIME_RECORD_ID = "current";
 export const S3DB_RUNTIME_SCHEMA_VERSION = 1;
 
-export const FRONTEND_DIR = `${PACKAGE_ROOT}/src/dashboard`;
+export const FRONTEND_DIR = `${PACKAGE_ROOT}/src/dashboard/dist`;
 export const FRONTEND_INDEX = `${FRONTEND_DIR}/index.html`;
 export const FRONTEND_MANIFEST_JSON = `${FRONTEND_DIR}/manifest.webmanifest`;
 export const FRONTEND_SERVICE_WORKER_JS = `${FRONTEND_DIR}/service-worker.js`;
 export const FRONTEND_STYLES_CSS = `${FRONTEND_DIR}/styles.css`;
+export const FRONTEND_ICON_SVG = `${FRONTEND_DIR}/icon.svg`;
+export const FRONTEND_MASKABLE_ICON_SVG = `${FRONTEND_DIR}/icon-maskable.svg`;
+export const FRONTEND_OFFLINE_HTML = `${FRONTEND_DIR}/offline.html`;
 
 export const DEBUG_BOOT = env.SYMPHIFONY_DEBUG_BOOT === "1";
 

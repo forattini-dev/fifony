@@ -1,53 +1,110 @@
-import { Wifi, WifiOff, Sun, Moon, CircleDot, LayoutGrid, Activity, Settings, Cpu } from "lucide-react";
+import { useRef, useEffect, useState, useLayoutEffect, useCallback } from "react";
+import { Link, useRouterState } from "@tanstack/react-router";
+import { Kanban, ListTodo, Activity, Bot, Sliders } from "lucide-react";
 import { timeAgo } from "../utils.js";
 
-const PINNED_THEMES = ["auto", "light", "dark"];
-const OTHER_THEMES = ["black", "cupcake", "night", "sunset"].sort((a, b) => a.localeCompare(b));
-const THEME_OPTIONS = [...PINNED_THEMES, ...OTHER_THEMES];
-
 const NAV_ITEMS = [
-  { id: "issues", label: "Issues", icon: LayoutGrid },
-  { id: "providers", label: "Providers", icon: Cpu },
-  { id: "runtime", label: "Runtime", icon: Settings },
+  { to: "/kanban", label: "Kanban", icon: Kanban },
+  { to: "/issues", label: "Issues", icon: ListTodo },
+  { to: "/agents", label: "Agents", icon: Bot },
+  { to: "/settings", label: "Settings", icon: Sliders },
 ];
 
-export function Header({ status, wsStatus, theme, onThemeChange, issueCount, sourceRepo, updatedAt, view, setView, onToggleEvents, eventsOpen }) {
-  const isWsConnected = wsStatus === "connected";
-  const isOk = status === "ok";
-  const resolvedTheme = theme === "auto"
-    ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
-    : theme;
-  const isDark = ["dark", "night", "sunset", "black"].includes(resolvedTheme);
+function AnimatedBadge({ count }) {
+  const prevRef = useRef(count);
+  const [bumping, setBumping] = useState(false);
+
+  useEffect(() => {
+    if (prevRef.current !== count) {
+      prevRef.current = count;
+      setBumping(true);
+      const t = setTimeout(() => setBumping(false), 300);
+      return () => clearTimeout(t);
+    }
+  }, [count]);
+
+  return (
+    <span className={`badge badge-xs badge-primary ${bumping ? "animate-count-bump" : ""}`}>{count}</span>
+  );
+}
+
+function WsStatusDot({ status }) {
+  if (status === "connected") {
+    return (
+      <span className="relative flex size-2">
+        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-50" />
+        <span className="relative inline-flex rounded-full size-2 bg-success" />
+      </span>
+    );
+  }
+  if (status === "connecting") {
+    return (
+      <span className="flex items-center gap-0.5 dot-pulse-group">
+        <span className="size-1 rounded-full bg-info" />
+        <span className="size-1 rounded-full bg-info" />
+        <span className="size-1 rounded-full bg-info" />
+      </span>
+    );
+  }
+  return <span className="size-2 rounded-full bg-warning animate-pulse-soft" />;
+}
+
+function NavIndicator({ navRef, currentPath }) {
+  const [style, setStyle] = useState({ left: 0, width: 0, opacity: 0 });
+
+  const update = useCallback(() => {
+    if (!navRef.current) return;
+    const active = navRef.current.querySelector("a.active");
+    if (!active) { setStyle((s) => ({ ...s, opacity: 0 })); return; }
+    const navRect = navRef.current.getBoundingClientRect();
+    const activeRect = active.getBoundingClientRect();
+    setStyle({
+      left: activeRect.left - navRect.left,
+      width: activeRect.width,
+      opacity: 1,
+    });
+  }, [navRef]);
+
+  useLayoutEffect(update, [currentPath, update]);
+  useEffect(() => { window.addEventListener("resize", update); return () => window.removeEventListener("resize", update); }, [update]);
+
+  return <div className="nav-indicator" style={style} />;
+}
+
+export function Header({ issueCount, sourceRepo, updatedAt, onToggleEvents, eventsOpen, wsStatus }) {
+  const routerState = useRouterState();
+  const currentPath = routerState.location.pathname;
+  const navRef = useRef(null);
 
   return (
     <div className="navbar bg-base-100 shadow-sm px-4">
-      {/* Brand */}
       <div className="flex-1 gap-2">
-        <a className="btn btn-ghost text-xl font-bold tracking-tight">Symphifony</a>
+        <Link to="/" className="btn btn-ghost text-xl font-bold tracking-tight">Symphifony</Link>
         <span className="text-xs opacity-40 hidden lg:inline">{sourceRepo || "local workspace"}</span>
       </div>
 
-      {/* Desktop nav links */}
       <div className="flex-none hidden md:flex">
-        <ul className="menu menu-horizontal px-1 gap-1">
-          {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
-            <li key={id}>
-              <a
-                className={view === id ? "active" : ""}
-                onClick={() => setView(id)}
-              >
-                <Icon className="size-4" />
-                {label}
-                {id === "issues" && issueCount > 0 && (
-                  <span className="badge badge-xs badge-primary">{issueCount}</span>
-                )}
-              </a>
-            </li>
-          ))}
-        </ul>
+        <div className="relative" ref={navRef}>
+          <ul className="menu menu-horizontal px-1 gap-1">
+            {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
+              <li key={to}>
+                <Link
+                  to={to}
+                  className={currentPath.startsWith(to) ? "active" : ""}
+                >
+                  <Icon className="size-4" />
+                  {label}
+                  {to === "/issues" && issueCount > 0 && (
+                    <AnimatedBadge count={issueCount} />
+                  )}
+                </Link>
+              </li>
+            ))}
+          </ul>
+          <NavIndicator navRef={navRef} currentPath={currentPath} />
+        </div>
       </div>
 
-      {/* Right side: events toggle + status + theme */}
       <div className="flex-none">
         <ul className="menu menu-horizontal px-1 items-center gap-0">
           <li>
@@ -59,40 +116,11 @@ export function Header({ status, wsStatus, theme, onThemeChange, issueCount, sou
               <Activity className="size-4" />
             </button>
           </li>
-          <li>
-            <span className="tooltip tooltip-bottom py-1 px-2" data-tip={`API: ${status}`}>
-              <CircleDot className={`size-3.5 ${isOk ? "text-success" : "text-warning"}`} />
-            </span>
-          </li>
-          <li>
-            <span className="tooltip tooltip-bottom py-1 px-2" data-tip={`WS: ${wsStatus}`}>
-              {isWsConnected
-                ? <Wifi className="size-3.5 text-success" />
-                : <WifiOff className="size-3.5 text-warning" />
-              }
-            </span>
-          </li>
           <li className="hidden md:flex">
-            <span className="text-xs opacity-40 py-1 px-2">{timeAgo(updatedAt)}</span>
-          </li>
-          <li>
-            <details>
-              <summary className="py-1 px-2">
-                {isDark ? <Moon className="size-4" /> : <Sun className="size-4" />}
-              </summary>
-              <ul className="bg-base-100 rounded-t-none p-2 right-0 z-50 shadow-lg w-36">
-                {THEME_OPTIONS.map((t) => (
-                  <li key={t}>
-                    <a
-                      className={theme === t ? "active" : ""}
-                      onClick={() => { onThemeChange(t); document.activeElement?.blur(); }}
-                    >
-                      {t.charAt(0).toUpperCase() + t.slice(1)}
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            </details>
+            <span className="text-xs opacity-40 py-1 px-2 flex items-center gap-1.5">
+              <WsStatusDot status={wsStatus} />
+              {timeAgo(updatedAt)}
+            </span>
           </li>
         </ul>
       </div>

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">Symphifony</title>
+  <rect width="512" height="512" fill="#0f172a"/>
+  <rect x="88" y="88" width="336" height="336" rx="72" fill="#13223d"/>
+  <path fill="#4ade80" d="M154 160h204c11 0 20 9 20 20v26H134v-26c0-11 9-20 20-20z"/>
+  <path fill="#22d3ee" d="M130 212h252l-24 138c-3 15-16 26-31 26H185c-15 0-28-11-31-26L130 212z"/>
+  <circle cx="256" cy="326" r="24" fill="#0f172a"/>
+</svg>

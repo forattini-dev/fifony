@@ -22,6 +22,7 @@ import type {
   AgentSessionResult,
   AgentSessionState,
   AgentSessionTurn,
+  AgentTokenUsage,
   IssueEntry,
   JsonRecord,
   RuntimeConfig,
@@ -76,9 +77,59 @@ function normalizeAgentDirectiveStatus(value: unknown, fallback: AgentDirectiveS
   return fallback;
 }
 
+function addTokenUsage(issue: IssueEntry, usage?: AgentTokenUsage): void {
+  if (!usage || usage.totalTokens === 0) return;
+
+  // Aggregate tokenUsage summary
+  const prev = issue.tokenUsage ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+  issue.tokenUsage = {
+    inputTokens: prev.inputTokens + usage.inputTokens,
+    outputTokens: prev.outputTokens + usage.outputTokens,
+    totalTokens: prev.totalTokens + usage.totalTokens,
+    costUsd: (prev.costUsd ?? 0) + (usage.costUsd ?? 0) || undefined,
+    model: usage.model || prev.model,
+  };
+
+  // Update usage.tokens keyed by model (for eventual-consistency analytics)
+  const model = usage.model || "unknown";
+  if (!issue.usage) issue.usage = { tokens: {} };
+  issue.usage.tokens[model] = (issue.usage.tokens[model] || 0) + usage.totalTokens;
+}
+
 function extractOutputMarker(output: string, name: string): string {
   const match = output.match(new RegExp(`^${name}=(.+)$`, "im"));
   return match?.[1]?.trim() ?? "";
+}
+
+function extractTokenUsage(output: string, jsonObj?: JsonRecord | null): AgentTokenUsage | undefined {
+  // 1. Claude --output-format json: { usage: { input_tokens, output_tokens }, cost_usd, model }
+  if (jsonObj) {
+    const usage = jsonObj.usage as Record<string, unknown> | undefined;
+    if (usage && typeof usage === "object") {
+      const input = Number(usage.input_tokens) || 0;
+      const output = Number(usage.output_tokens) || 0;
+      if (input > 0 || output > 0) {
+        return {
+          inputTokens: input,
+          outputTokens: output,
+          totalTokens: input + output,
+          costUsd: typeof jsonObj.cost_usd === "number" ? jsonObj.cost_usd : undefined,
+          model: typeof jsonObj.model === "string" ? jsonObj.model : undefined,
+        };
+      }
+    }
+  }
+
+  // 2. Codex: "tokens used\n1,681\n" in stdout
+  const codexMatch = output.match(/tokens?\s+used\s*\n\s*([\d,]+)/i);
+  if (codexMatch) {
+    const total = parseInt(codexMatch[1].replace(/,/g, ""), 10);
+    if (total > 0) {
+      return { inputTokens: 0, outputTokens: 0, totalTokens: total };
+    }
+  }
+
+  return undefined;
 }
 
 function tryParseJsonOutput(output: string): JsonRecord | null {
@@ -114,12 +165,18 @@ function readAgentDirective(workspacePath: string, output: string, success: bool
   let resultPayload: JsonRecord = {};
 
   // 1. Try structured JSON from stdout (claude --output-format json --json-schema)
+  const fullJson = (() => {
+    try { return JSON.parse(output.trim()) as JsonRecord; } catch { return null; }
+  })();
   const jsonOutput = tryParseJsonOutput(output);
+  const tokenUsage = extractTokenUsage(output, fullJson);
+
   if (jsonOutput?.status) {
     return {
       status: normalizeAgentDirectiveStatus(jsonOutput.status, fallbackStatus),
       summary: toStringValue(jsonOutput.summary) || toStringValue(jsonOutput.message) || "",
       nextPrompt: toStringValue(jsonOutput.nextPrompt) || toStringValue(jsonOutput.next_prompt) || "",
+      tokenUsage,
     };
   }
 
@@ -149,13 +206,67 @@ function readAgentDirective(workspacePath: string, output: string, success: bool
     || toStringValue(resultPayload.next_prompt)
     || "";
 
-  return { status, summary, nextPrompt };
+  return { status, summary, nextPrompt, tokenUsage };
+}
+
+// ── Agent PID management ────────────────────────────────────────────────────
+
+type AgentPidInfo = {
+  pid: number;
+  issueId: string;
+  startedAt: string;
+  command: string;
+};
+
+/** Read PID file from workspace, returns null if missing/invalid. */
+export function readAgentPid(workspacePath: string): AgentPidInfo | null {
+  const pidFile = join(workspacePath, "symphifony-agent.pid");
+  if (!existsSync(pidFile)) return null;
+  try {
+    const data = JSON.parse(readFileSync(pidFile, "utf8")) as AgentPidInfo;
+    if (!data?.pid || typeof data.pid !== "number") return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+/** Check if a process is still running by PID. */
+export function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0); // signal 0 = check existence
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Check if an issue's agent is still running from a previous session. */
+export function isAgentStillRunning(issue: IssueEntry): { alive: boolean; pid: AgentPidInfo | null } {
+  const wp = issue.workspacePath;
+  if (!wp || !existsSync(wp)) return { alive: false, pid: null };
+  const pidInfo = readAgentPid(wp);
+  if (!pidInfo) return { alive: false, pid: null };
+  return { alive: isProcessAlive(pidInfo.pid), pid: pidInfo };
+}
+
+/** Clean stale PID file if the process is dead. */
+export function cleanStalePidFile(workspacePath: string): void {
+  const pidInfo = readAgentPid(workspacePath);
+  if (!pidInfo) return;
+  if (!isProcessAlive(pidInfo.pid)) {
+    try { rmSync(join(workspacePath, "symphifony-agent.pid"), { force: true }); } catch {}
+  }
 }
 
 export function canRunIssue(issue: IssueEntry, running: Set<string>, state: RuntimeState): boolean {
   if (!issue.assignedToWorker) return false;
   if (running.has(issue.id)) return false;
   if (TERMINAL_STATES.has(issue.state)) return false;
+
+  // Don't spawn a new agent if one is still alive from a previous session
+  const { alive } = isAgentStillRunning(issue);
+  if (alive) return false;
 
   if (issue.state === "Blocked") {
     if (!issue.nextRetryAt) return false;
@@ -711,41 +822,66 @@ async function runCommandWithTimeout(
     const child = spawn(wrappedCommand, {
       shell: true,
       cwd: workspacePath,
+      detached: true,  // Survive parent death
+      stdio: ["pipe", "pipe", "pipe"],
     });
+
+    // Detach from parent so child survives SIGINT/restart
+    child.unref();
 
     if (child.stdin) {
       child.stdin.end();
+    }
+
+    // Write PID file for recovery
+    const pidFile = join(workspacePath, "symphifony-agent.pid");
+    const pid = child.pid;
+    if (pid) {
+      writeFileSync(pidFile, JSON.stringify({
+        pid,
+        issueId: issue.id,
+        startedAt: new Date(started).toISOString(),
+        command: command.slice(0, 200),
+      }), "utf8");
     }
 
     let output = "";
     let timedOut = false;
     let outputBytes = 0;
     const liveLogFile = join(workspacePath, "symphifony-live-output.log");
-    // Truncate live log at start
     writeFileSync(liveLogFile, "", "utf8");
 
     const onChunk = (chunk: Buffer | string) => {
       const text = String(chunk);
       output = appendFileTail(output, text, config.logLinesTail);
       outputBytes += text.length;
-      // Append to live log file for monitoring
       try { appendFileSync(liveLogFile, text); } catch {}
-      // Update issue output tail in-place for real-time visibility
       issue.commandOutputTail = output;
     };
 
     child.stdout?.on("data", onChunk);
     child.stderr?.on("data", onChunk);
 
-    const timer = setTimeout(() => { timedOut = true; child.kill("SIGTERM"); }, config.commandTimeoutMs);
+    const timer = setTimeout(() => {
+      timedOut = true;
+      // Kill the whole process group (detached child + its children)
+      if (pid) { try { process.kill(-pid, "SIGTERM"); } catch {} }
+      else { child.kill("SIGTERM"); }
+    }, config.commandTimeoutMs);
+
+    const cleanup = () => {
+      try { rmSync(pidFile, { force: true }); } catch {}
+    };
 
     child.on("error", () => {
       clearTimeout(timer);
+      cleanup();
       resolve({ success: false, code: null, output: `Command execution failed for issue ${issue.id}.` });
     });
 
     child.on("close", (code) => {
       clearTimeout(timer);
+      cleanup();
       if (timedOut) {
         resolve({ success: false, code: null, output: appendFileTail(output, `\nExecution timeout after ${config.commandTimeoutMs}ms.`, config.logLinesTail) });
         return;
@@ -898,6 +1034,7 @@ async function runAgentSession(
   const turnEnv = {
     SYMPHIFONY_AGENT_PROVIDER: provider.provider,
     SYMPHIFONY_AGENT_ROLE: provider.role,
+    SYMPHIFONY_REASONING_EFFORT: provider.reasoningEffort || "",
     SYMPHIFONY_SESSION_KEY: sessionKey,
     SYMPHIFONY_SESSION_ID: `${issue.id}-attempt-${attempt}`,
     SYMPHIFONY_TURN_INDEX: String(turnIndex),
@@ -935,6 +1072,11 @@ async function runAgentSession(
   lastOutput = turnResult.output;
   previousOutput = turnResult.output;
   nextPrompt = directive.nextPrompt;
+  addTokenUsage(issue, directive.tokenUsage);
+
+  if (directive.tokenUsage) {
+    addEvent(state, issue.id, "info", `Turn ${turnIndex} used ${directive.tokenUsage.totalTokens.toLocaleString()} tokens${directive.tokenUsage.costUsd ? ` ($${directive.tokenUsage.costUsd.toFixed(4)})` : ""}${directive.tokenUsage.model ? ` [${directive.tokenUsage.model}]` : ""}.`);
+  }
 
   session.turns.push({
     turn: turnIndex,
@@ -948,6 +1090,7 @@ async function runAgentSession(
     directiveStatus: directive.status,
     directiveSummary: directive.summary,
     nextPrompt: directive.nextPrompt,
+    tokenUsage: directive.tokenUsage,
   });
 
   session.lastCode = lastCode;
@@ -1170,7 +1313,7 @@ export async function runIssueOnce(
 
     // ── Normal execution (Todo / In Progress / Blocked) ───────────────
     addEvent(state, issue.id, "info",
-      `Capability routing selected ${routedProviders.map((p) => `${p.role}:${p.provider}${p.profile ? `:${p.profile}` : ""}`).join(", ")}.`);
+      `Capability routing selected ${routedProviders.map((p) => `${p.role}:${p.provider}${p.profile ? `:${p.profile}` : ""}${p.reasoningEffort ? ` [${p.reasoningEffort}]` : ""}`).join(", ")}.`);
 
     const routingSignals = describeRoutingSignals(issue, workspaceDerivedPaths);
     if (routingSignals) {

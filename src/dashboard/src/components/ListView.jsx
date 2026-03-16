@@ -15,7 +15,7 @@ export function ListView({ issues, onStateChange, onRetry, onCancel, onSelect })
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2 stagger-children">
       {issues.map((issue) => (
                 <IssueCard
                   key={issue.id}

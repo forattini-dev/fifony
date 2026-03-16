@@ -87,8 +87,6 @@ export const ISSUE_STATE_MACHINE_DEFINITION = {
       },
     },
   },
-  resource: "issues",
-  stateField: "state",
 } as const;
 
 type TransitionPayload = {

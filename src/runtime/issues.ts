@@ -1,8 +1,10 @@
 import { env } from "node:process";
 import type {
+  EffortConfig,
   IssueEntry,
   IssueState,
   JsonRecord,
+  ReasoningEffort,
   RuntimeConfig,
   RuntimeEvent,
   RuntimeEventType,
@@ -28,6 +30,7 @@ import {
 } from "./constants.ts";
 import {
   now,
+  isoWeek,
   toStringValue,
   toNumberValue,
   toBooleanValue,
@@ -104,6 +107,32 @@ export function normalizeIssue(
   return issue;
 }
 
+const VALID_EFFORTS = new Set(["low", "medium", "high", "extra-high"]);
+
+function parseEffortValue(value: unknown): ReasoningEffort | undefined {
+  const str = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return VALID_EFFORTS.has(str) ? (str as ReasoningEffort) : undefined;
+}
+
+function parseEffortConfig(value: unknown): EffortConfig | undefined {
+  if (!value || typeof value !== "object") {
+    // Simple string → default effort for all roles
+    const simple = parseEffortValue(value);
+    return simple ? { default: simple } : undefined;
+  }
+  const obj = value as Record<string, unknown>;
+  const config: EffortConfig = {};
+  const d = parseEffortValue(obj.default);
+  const p = parseEffortValue(obj.planner);
+  const e = parseEffortValue(obj.executor);
+  const r = parseEffortValue(obj.reviewer);
+  if (d) config.default = d;
+  if (p) config.planner = p;
+  if (e) config.executor = e;
+  if (r) config.reviewer = r;
+  return Object.keys(config).length > 0 ? config : undefined;
+}
+
 export function nextLocalIssueId(issues: IssueEntry[]): string {
   const maxId = issues.reduce((current, issue) => {
     // Support both old LOCAL-N and new #N formats
@@ -152,6 +181,8 @@ export function createIssueFromPayload(
     history: [`[${createdAt}] Issue created via API.`],
     attempts: 0,
     maxAttempts: clamp(toNumberValue(payload.maxAttempts ?? payload.max_attempts, 3), 1, 10),
+    terminalWeek: "",
+    effort: parseEffortConfig(payload.effort),
   };
 
   applyCapabilityMetadata(issue, resolveTaskCapabilities({
@@ -208,6 +239,12 @@ export function deriveConfig(args: string[]): RuntimeConfig {
     logLinesTail: parseEnvNumber("SYMPHIFONY_LOG_TAIL_CHARS", 12_000),
     agentProvider: normalizeAgentProvider(env.SYMPHIFONY_AGENT_PROVIDER ?? "codex"),
     agentCommand: toStringValue(env.SYMPHIFONY_AGENT_COMMAND, ""),
+    defaultEffort: {
+      default: (env.SYMPHIFONY_REASONING_EFFORT as any) || undefined,
+      planner: (env.SYMPHIFONY_PLANNER_EFFORT as any) || undefined,
+      executor: (env.SYMPHIFONY_EXECUTOR_EFFORT as any) || undefined,
+      reviewer: (env.SYMPHIFONY_REVIEWER_EFFORT as any) || undefined,
+    },
     maxConcurrentByState: {},
     runMode: "filesystem",
   };
@@ -327,6 +364,15 @@ export function buildRuntimeState(
     .filter((issue): issue is IssueEntry => issue !== null)
     .filter((issue) => issue.id);
 
+  // Backfill terminalWeek for existing terminal issues that don't have it
+  for (const issue of mergedIssues) {
+    if (TERMINAL_STATES.has(issue.state) && !issue.terminalWeek) {
+      issue.terminalWeek = isoWeek(issue.completedAt || issue.updatedAt);
+    } else if (!TERMINAL_STATES.has(issue.state)) {
+      issue.terminalWeek = "";
+    }
+  }
+
   dedupHistoryEntries(mergedIssues);
 
   const metrics = computeMetrics(mergedIssues);
@@ -377,12 +423,16 @@ export function computeMetrics(issues: IssueEntry[]): RuntimeMetrics {
 
     switch (issue.state) {
       case "Todo":
-      case "Blocked":
         queued += 1;
         break;
-      case "In Progress":
+      case "Queued":
+      case "Running":
+      case "Interrupted":
       case "In Review":
         inProgress += 1;
+        break;
+      case "Blocked":
+        blocked += 1;
         break;
       case "Done":
         done += 1;
@@ -468,6 +518,12 @@ export function transition(issue: IssueEntry, target: IssueState, note: string):
   if (TERMINAL_STATES.has(target)) {
     issue.completedAt = now();
     issue.nextRetryAt = undefined;
+    issue.terminalWeek = isoWeek();
+  }
+
+  // Clear terminalWeek when leaving terminal state
+  if (TERMINAL_STATES.has(previous) && !TERMINAL_STATES.has(target)) {
+    issue.terminalWeek = "";
   }
 
   if (target === "Todo") {

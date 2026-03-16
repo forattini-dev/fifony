@@ -3,7 +3,7 @@ import { safeJson } from "./utils.js";
 export const api = {
   /** GET request that parses JSON. Throws on non-2xx with server error message. */
   async get(path) {
-    const res = await fetch(path, {
+    const res = await fetch(`/api${path}`, {
       headers: { Accept: "application/json" },
     });
     const text = await res.text();
@@ -14,7 +14,7 @@ export const api = {
 
   /** POST request with JSON body. Throws on non-2xx with server error message. */
   async post(path, payload) {
-    const res = await fetch(path, {
+    const res = await fetch(`/api${path}`, {
       method: "POST",
       headers: {
         Accept: "application/json",

@@ -173,6 +173,8 @@ export default {
     durationMs: "number|optional",
     commandExitCode: "number|optional",
     commandOutputTail: "string|optional",
+    terminalWeek: "string|optional",
+    usage: "json|optional",
   },
   partitions: {
     byState: { fields: { state: "string" } },
@@ -180,6 +182,7 @@ export default {
     byStateAndCapability: {
       fields: { state: "string", capabilityCategory: "string" },
     },
+    byTerminalWeek: { fields: { terminalWeek: "string" } },
   },
   asyncPartitions: true,
   behavior: "body-overflow",

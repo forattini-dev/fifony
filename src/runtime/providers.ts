@@ -6,8 +6,10 @@ import type {
   AgentProviderDefinition,
   AgentProviderRole,
   DetectedProvider,
+  EffortConfig,
   IssueEntry,
   JsonRecord,
+  ReasoningEffort,
   RuntimeState,
   WorkflowDefinition,
 } from "./types.ts";
@@ -72,11 +74,29 @@ export function resolveAgentCommand(
   explicitCommand: string,
   codexCommand: string,
   claudeCommand: string,
+  reasoningEffort?: string,
 ): string {
   if (explicitCommand.trim()) return explicitCommand.trim();
   if (provider === "claude" && claudeCommand.trim()) return claudeCommand.trim();
   if (provider === "codex" && codexCommand.trim()) return codexCommand.trim();
-  return getProviderDefaultCommand(provider);
+  return getProviderDefaultCommand(provider, reasoningEffort);
+}
+
+/** Resolve the effective reasoning effort for a given role, considering issue override and global defaults. */
+export function resolveEffort(
+  role: string,
+  issueEffort?: EffortConfig,
+  globalEffort?: EffortConfig,
+): ReasoningEffort | undefined {
+  // Issue-level per-role override takes highest priority
+  const roleKey = role as keyof EffortConfig;
+  if (issueEffort?.[roleKey]) return issueEffort[roleKey];
+  // Issue-level default
+  if (issueEffort?.default) return issueEffort.default;
+  // Global per-role
+  if (globalEffort?.[roleKey]) return globalEffort[roleKey];
+  // Global default
+  return globalEffort?.default;
 }
 
 const CLAUDE_RESULT_SCHEMA = JSON.stringify({
@@ -89,20 +109,29 @@ const CLAUDE_RESULT_SCHEMA = JSON.stringify({
   required: ["status"],
 });
 
-export function getProviderDefaultCommand(provider: string): string {
+export function getProviderDefaultCommand(provider: string, reasoningEffort?: string): string {
   // Prompt is piped via stdin and also written to SYMPHIFONY_PROMPT_FILE.
   // Use stdin redirection as primary for large prompts (avoids E2BIG).
-  if (provider === "codex") return "codex exec --skip-git-repo-check < \"$SYMPHIFONY_PROMPT_FILE\"";
+  const effortFlag = reasoningEffort ? `--reasoning-effort ${reasoningEffort}` : "";
+
+  if (provider === "codex") {
+    // Codex supports: low, medium, high, extra-high
+    return `codex exec --skip-git-repo-check ${effortFlag} < "$SYMPHIFONY_PROMPT_FILE"`.replace(/  +/g, " ").trim();
+  }
   if (provider === "claude") {
-    return [
+    // Claude supports: low, medium, high (extra-high maps to high)
+    const claudeEffort = reasoningEffort === "extra-high" ? "high" : reasoningEffort;
+    const parts = [
       "claude",
       "--print",
       "--dangerously-skip-permissions",
       "--no-session-persistence",
       "--output-format json",
       `--json-schema '${CLAUDE_RESULT_SCHEMA}'`,
-      "< \"$SYMPHIFONY_PROMPT_FILE\"",
-    ].join(" ");
+    ];
+    if (claudeEffort) parts.splice(2, 0, `--reasoning-effort ${claudeEffort}`);
+    parts.push("< \"$SYMPHIFONY_PROMPT_FILE\"");
+    return parts.join(" ");
   }
   return "";
 }
@@ -320,13 +349,23 @@ export function getEffectiveAgentProviders(
       (entry) => entry.provider === provider.provider && entry.role === provider.role,
     );
 
+    const effort = resolveEffort(provider.role, issue.effort, state.config.defaultEffort);
+
+    // Rebuild command with reasoning effort if using default command
+    let command = provider.command;
+    if (!command.includes("--reasoning-effort") && effort) {
+      command = getProviderDefaultCommand(provider.provider, effort);
+    }
+
     return {
       ...provider,
+      command,
       profilePath: resolvedProfile.profilePath,
       profileInstructions: resolvedProfile.instructions,
       selectionReason: suggestion?.reason ?? resolution.rationale.join(" "),
       overlays: resolution.overlays,
       capabilityCategory: resolution.category,
+      reasoningEffort: effort,
     };
   });
 }

@@ -15,9 +15,26 @@ const packageJson = JSON.parse(readFileSync(resolve(packageRoot, "package.json")
   version?: string;
   description?: string;
 };
-const runtimeScript = resolve(packageRoot, "src", "runtime", "run-local.ts");
-const mcpScript = resolve(packageRoot, "src", "mcp", "server.ts");
-const tsxCli = require.resolve("tsx/cli");
+// Prefer compiled dist/ if available, fallback to tsx + source
+const distRuntime = resolve(packageRoot, "dist", "runtime", "run-local.js");
+const distMcp = resolve(packageRoot, "dist", "mcp", "server.js");
+const srcRuntime = resolve(packageRoot, "src", "runtime", "run-local.ts");
+const srcMcp = resolve(packageRoot, "src", "mcp", "server.ts");
+
+import { existsSync } from "node:fs";
+const forceSource = process.argv.includes("--dev") || env.NODE_ENV === "development";
+const useCompiled = !forceSource && existsSync(distRuntime);
+
+let tsxCli: string | null = null;
+if (!useCompiled) {
+  try { tsxCli = require.resolve("tsx/cli"); } catch {
+    console.error("No compiled dist/ found and tsx is not installed. Run 'pnpm build' first.");
+    exit(1);
+  }
+}
+
+const runtimeScript = useCompiled ? distRuntime : srcRuntime;
+const mcpScript = useCompiled ? distMcp : srcMcp;
 
 const commonOptions = {
   workspace: {
@@ -95,6 +112,9 @@ function buildRuntimeArgs(result: CommandParseResult): string[] {
   if (getBooleanOption(result, "once")) {
     runtimeArgs.push("--once");
   }
+  if (forceSource) {
+    runtimeArgs.push("--dev");
+  }
 
   return runtimeArgs;
 }
@@ -105,7 +125,8 @@ async function runRuntime(mode: "cli" | "mcp", result: CommandParseResult): Prom
   const runtimeArgs = buildRuntimeArgs(result);
 
   const outcome = await new Promise<{ code?: number | null; signal?: NodeJS.Signals | null }>((resolvePromise, rejectPromise) => {
-    const child = spawn(execPath, [tsxCli, runtimeScript, ...runtimeArgs], {
+    const args = useCompiled ? [runtimeScript, ...runtimeArgs] : [tsxCli!, runtimeScript, ...runtimeArgs];
+    const child = spawn(execPath, args, {
       cwd: workspaceRoot,
       stdio: "inherit",
       env: {
@@ -141,7 +162,8 @@ async function runMcpServer(result: CommandParseResult): Promise<void> {
   const persistenceRoot = resolve(persistence ?? env.SYMPHIFONY_PERSISTENCE ?? workspaceRoot);
 
   const outcome = await new Promise<{ code?: number | null; signal?: NodeJS.Signals | null }>((resolvePromise, rejectPromise) => {
-    const child = spawn(execPath, [tsxCli, mcpScript], {
+    const mcpArgs = useCompiled ? [mcpScript] : [tsxCli!, mcpScript];
+    const child = spawn(execPath, mcpArgs, {
       cwd: workspaceRoot,
       stdio: "inherit",
       env: {

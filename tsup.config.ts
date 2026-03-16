@@ -1,0 +1,29 @@
+import { defineConfig } from "tsup";
+
+export default defineConfig({
+  entry: {
+    cli: "src/cli.ts",
+    "runtime/run-local": "src/runtime/run-local.ts",
+    "mcp/server": "src/mcp/server.ts",
+  },
+  format: "esm",
+  target: "node23",
+  outDir: "dist",
+  clean: true,
+  splitting: true,
+  sourcemap: true,
+  // Don't bundle node_modules — they're installed as dependencies
+  noExternal: [],
+  external: [
+    "s3db.js",
+    "s3db.js/lite",
+    "s3db.js/plugins/index",
+    "pino",
+    "pino-pretty",
+    "yaml",
+    "node-cron",
+    "cli-args-parser",
+    "raffel",
+    "vite",
+  ],
+});

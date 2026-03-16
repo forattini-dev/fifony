@@ -3,17 +3,33 @@ import type {
   RuntimeEvent,
   RuntimeState,
   IssueEntry,
+  RuntimeSettingScope,
+  RuntimeSettingSource,
   WorkflowDefinition,
 } from "./types.ts";
 import { execSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  openSync,
+  readFileSync,
+  readSync,
+  statSync,
+} from "node:fs";
 import {
   FRONTEND_DIR,
+  FRONTEND_ICON_SVG,
   FRONTEND_INDEX,
+  FRONTEND_MANIFEST_JSON,
+  FRONTEND_MASKABLE_ICON_SVG,
+  FRONTEND_OFFLINE_HTML,
+  FRONTEND_SERVICE_WORKER_JS,
   SOURCE_ROOT,
 } from "./constants.ts";
 import { NATIVE_RESOURCE_CONFIGS } from "./resources/index.ts";
-import { now, readTextOrNull, clamp, toStringValue } from "./helpers.ts";
+import { now, isoWeek, clamp, toStringValue } from "./helpers.ts";
+import { isAgentStillRunning } from "./agent.ts";
+import { getActiveEcPlugin } from "./store.ts";
 import { logger } from "./logger.ts";
 import {
   loadS3dbModule,
@@ -36,6 +52,12 @@ import { analyzeParallelizability } from "./scheduler.ts";
 import { setApiRuntimeContext } from "./api-runtime-context.ts";
 import { TERMINAL_STATES } from "./constants.ts";
 import { enhanceIssueField } from "./issue-enhancer.ts";
+import {
+  inferSettingScope,
+  loadRuntimeSettings,
+  persistSetting,
+  persistWorkerConcurrencySetting,
+} from "./settings.ts";
 
 // ── WebSocket broadcast (same port via listeners) ────────────────────────────
 // s3db.js 21.2.7 WebSocket contract: handlers receive (socketId, send, req)
@@ -45,6 +67,8 @@ type WsSendFn = (data: string) => void;
 const wsClients = new Map<string, WsSendFn>(); // socketId → send
 let broadcastSeq = 0;
 let lastBroadcastIssueSnapshot: Map<string, string> = new Map(); // id → JSON
+const VALID_SETTING_SCOPES = new Set<RuntimeSettingScope>(["runtime", "providers", "ui", "system"]);
+const VALID_SETTING_SOURCES = new Set<RuntimeSettingSource>(["user", "detected", "workflow", "system"]);
 
 function sendToAllClients(data: string): void {
   for (const [socketId, send] of [...wsClients]) {
@@ -189,7 +213,10 @@ export async function startApiServer(
   const resourceConfigs: Record<string, Record<string, unknown>> = Object.fromEntries(
     NATIVE_RESOURCE_CONFIGS.map((resourceConfig) => [
       resourceConfig.name,
-      resourceConfig.api ?? {},
+      {
+        ...(resourceConfig.api ?? {}),
+        versionPrefix: "api",
+      },
     ]),
   );
   const nativeResourceNames = new Set(Object.keys(resourceConfigs));
@@ -206,6 +233,33 @@ export async function startApiServer(
   }
 
   setApiRuntimeContext(state, workflowDefinition);
+
+  const serveTextFile = (filePath: string, contentType: string, cacheControl = "no-cache") => {
+    if (!existsSync(filePath)) {
+      return new Response("Not found", { status: 404 });
+    }
+    return new Response(readFileSync(filePath), {
+      headers: {
+        "content-type": contentType,
+        "cache-control": cacheControl,
+      },
+    });
+  };
+
+  const serveAppShell = () => {
+    if (!existsSync(FRONTEND_INDEX)) {
+      return new Response("Not found", { status: 404 });
+    }
+    const html = readFileSync(FRONTEND_INDEX, "utf8")
+      .replace('href="/assets/manifest.webmanifest"', 'href="/manifest.webmanifest"')
+      .replaceAll('href="/assets/icon.svg"', 'href="/icon.svg"');
+    return new Response(html, {
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-cache",
+      },
+    });
+  };
 
   const apiPlugin = new ApiPlugin({
     port,
@@ -252,16 +306,15 @@ export async function startApiServer(
         },
       },
     }],
-    rootRoute: (c: any) => {
-      const html = readTextOrNull(FRONTEND_INDEX);
-      if (!html) return c.text("Dashboard not found", 404);
-      return c.html(html);
-    },
+    rootRoute: () => new Response(null, {
+      status: 302,
+      headers: { location: "/kanban" },
+    }),
     static: [{
       driver: "filesystem",
-      path: "/",
+      path: "/assets",
       root: FRONTEND_DIR,
-      pwa: true,
+      pwa: false,
       config: { etag: true },
     }],
     docs: { enabled: true, title: "Symphifony API", version: "1.0.0", description: "Local orchestration API for Symphifony" },
@@ -274,26 +327,62 @@ export async function startApiServer(
       ...resourceConfigs,
     },
     routes: {
-      "GET /state": async (c: any) =>
-        c.json({
+      "GET /manifest.webmanifest": () =>
+        serveTextFile(FRONTEND_MANIFEST_JSON, "application/manifest+json; charset=utf-8"),
+      "GET /service-worker.js": () =>
+        serveTextFile(FRONTEND_SERVICE_WORKER_JS, "application/javascript; charset=utf-8", "no-cache"),
+      "GET /offline.html": () =>
+        serveTextFile(FRONTEND_OFFLINE_HTML, "text/html; charset=utf-8"),
+      "GET /icon.svg": () =>
+        serveTextFile(FRONTEND_ICON_SVG, "image/svg+xml", "public, max-age=604800, immutable"),
+      "GET /icon-maskable.svg": () =>
+        serveTextFile(FRONTEND_MASKABLE_ICON_SVG, "image/svg+xml", "public, max-age=604800, immutable"),
+      "GET /kanban": () => serveAppShell(),
+      "GET /issues": () => serveAppShell(),
+      "GET /agents": () => serveAppShell(),
+      "GET /settings": () => serveAppShell(),
+      "GET /api/state": async (c: any) => {
+        const showAll = c.req.query("all") === "1";
+        let issues = state.issues;
+
+        if (!showAll) {
+          // Default: active issues + terminal from this week and last week
+          const thisWeek = isoWeek();
+          const lastWeekDate = new Date();
+          lastWeekDate.setUTCDate(lastWeekDate.getUTCDate() - 7);
+          const lastWeek = isoWeek(lastWeekDate);
+          const recentWeeks = new Set([thisWeek, lastWeek]);
+
+          issues = state.issues.filter((i) => {
+            if (!i.terminalWeek) return true; // active issue
+            return recentWeeks.has(i.terminalWeek);
+          });
+        }
+
+        return c.json({
           ...state,
-          capabilities: computeCapabilityCounts(state.issues),
-        }),
-      "GET /status": async (c: any) =>
+          issues,
+          capabilities: computeCapabilityCounts(issues),
+          metrics: computeMetrics(issues),
+          _filter: showAll ? "all" : "recent",
+          _totalIssues: state.issues.length,
+        });
+      },
+      "GET /api/status": async (c: any) =>
         c.json({
           status: "ok",
           updatedAt: state.updatedAt,
           config: state.config,
           trackerKind: state.trackerKind,
         }),
-      "GET /providers": async (c: any) => {
+      "GET /api/providers": async (c: any) => {
         const providers = detectAvailableProviders();
         return c.json({ providers });
       },
-      "GET /parallelism": async (c: any) => {
+      "GET /api/parallelism": async (c: any) => {
         return c.json(analyzeParallelizability(state.issues));
       },
-      "GET /providers/usage": async (c: any) => {
+      "GET /api/providers/usage": async (c: any) => {
         try {
           const usage = collectProvidersUsage();
           return c.json(usage);
@@ -302,7 +391,44 @@ export async function startApiServer(
           return c.json({ providers: [] }, 500);
         }
       },
-      "POST /config/concurrency": async (c: any) => {
+      "GET /api/settings": async (c: any) => {
+        const settings = await loadRuntimeSettings();
+        return c.json({ settings });
+      },
+      "GET /api/settings/:id": async (c: any) => {
+        const settingId = c.req?.param ? c.req.param("id") : "";
+        const settings = await loadRuntimeSettings();
+        const setting = settings.find((entry) => entry.id === settingId);
+        if (!setting) {
+          return c.json({ ok: false, error: "Setting not found" }, 404);
+        }
+        return c.json({ ok: true, setting });
+      },
+      "POST /api/settings/:id": async (c: any) => {
+        const settingId = c.req?.param ? c.req.param("id") : "";
+        if (!settingId) {
+          return c.json({ ok: false, error: "Setting id is required" }, 400);
+        }
+
+        const payload = await c.req.json() as JsonRecord;
+        const scopeValue = typeof payload.scope === "string" ? payload.scope : inferSettingScope(settingId);
+        const sourceValue = typeof payload.source === "string" ? payload.source : "user";
+
+        if (!VALID_SETTING_SCOPES.has(scopeValue as RuntimeSettingScope)) {
+          return c.json({ ok: false, error: "Invalid setting scope" }, 400);
+        }
+
+        if (!VALID_SETTING_SOURCES.has(sourceValue as RuntimeSettingSource)) {
+          return c.json({ ok: false, error: "Invalid setting source" }, 400);
+        }
+
+        const setting = await persistSetting(settingId, payload.value, {
+          scope: scopeValue as RuntimeSettingScope,
+          source: sourceValue as RuntimeSettingSource,
+        });
+        return c.json({ ok: true, setting });
+      },
+      "POST /api/config/concurrency": async (c: any) => {
         const payload = await c.req.json() as JsonRecord;
         const value = typeof payload.concurrency === "number" ? payload.concurrency : undefined;
         if (!value || value < 1 || value > 16) {
@@ -311,10 +437,11 @@ export async function startApiServer(
         state.config.workerConcurrency = clamp(Math.round(value), 1, 16);
         state.updatedAt = now();
         addEvent(state, undefined, "manual", `Worker concurrency updated to ${state.config.workerConcurrency}.`);
+        await persistWorkerConcurrencySetting(state.config.workerConcurrency);
         await persistState(state);
         return c.json({ ok: true, workerConcurrency: state.config.workerConcurrency });
       },
-      "POST /issues/create": async (c: any) => {
+      "POST /api/issues/create": async (c: any) => {
         try {
           const payload = await c.req.json() as JsonRecord;
           const issue = createIssueFromPayload(payload, state.issues, workflowDefinition);
@@ -326,7 +453,7 @@ export async function startApiServer(
           return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 400);
         }
       },
-      "POST /issues/enhance": async (c: any) => {
+      "POST /api/issues/enhance": async (c: any) => {
         try {
           const payload = await c.req.json() as JsonRecord;
           const field = payload.field === "description" ? "description" : payload.field === "title" ? "title" : null;
@@ -353,7 +480,7 @@ export async function startApiServer(
           );
         }
       },
-      "POST /issues/:id/state": async (c: any) => {
+      "POST /api/issues/:id/state": async (c: any) => {
         const issueId = parseIssue(c);
         if (!issueId) {
           return c.json({ ok: false, error: "Issue id is required." }, 400);
@@ -373,7 +500,7 @@ export async function startApiServer(
           return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 400);
         }
       },
-      "POST /issues/:id/retry": async (c: any) => {
+      "POST /api/issues/:id/retry": async (c: any) => {
         return mutateIssueState(c, async (issue) => {
           if (TERMINAL_STATES.has(issue.state)) {
             await transitionIssueState(issue, "Todo", "Manual retry requested.");
@@ -386,94 +513,167 @@ export async function startApiServer(
           addEvent(state, issue.id, "manual", `Manual retry requested for ${issue.id}.`);
         });
       },
-      "POST /issues/:id/cancel": async (c: any) => {
+      "POST /api/issues/:id/cancel": async (c: any) => {
         return mutateIssueState(c, async (issue) => {
           await transitionIssueState(issue, "Cancelled", "Manual cancel requested.");
           addEvent(state, issue.id, "manual", `Manual cancel requested for ${issue.id}.`);
         });
       },
-      "POST /refresh": async (c: any) => {
+      "POST /api/refresh": async (c: any) => {
         addEvent(state, undefined, "manual", "Manual refresh requested via API.");
         await persistState(state);
         return c.json({ queued: true, requestedAt: now() }, 202);
       },
-      "GET /live/:id": async (c: any) => {
-        const issueId = parseIssue(c);
-        if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
-        const issue = findIssue(issueId);
-        if (!issue) return c.json({ ok: false, error: "Issue not found." }, 404);
-
-        const parseStartedAt = (value: unknown): number | null => {
-          const valueText = typeof value === "string" ? value.trim() : "";
-          if (!valueText) return null;
-          const ts = Date.parse(valueText);
-          return Number.isFinite(ts) ? ts : null;
-        };
-
-        const startedAtText = toStringValue(issue.startedAt, "");
-        const updatedAtText = toStringValue(issue.updatedAt, "");
-        const startedAtTs = parseStartedAt(startedAtText) ?? parseStartedAt(updatedAtText);
-        const elapsed = startedAtTs ? Date.now() - startedAtTs : 0;
-
-        const wp = issue.workspacePath;
-        const liveLog = wp ? `${wp}/symphifony-live-output.log` : null;
-        let logTail = "";
-        let logSize = 0;
-        if (liveLog && existsSync(liveLog)) {
-          try {
-            const stat = require("node:fs").statSync(liveLog);
-            logSize = stat.size;
-            // Read last 8KB
-            const fd = require("node:fs").openSync(liveLog, "r");
-            const readSize = Math.min(logSize, 8192);
-            const buf = Buffer.alloc(readSize);
-            require("node:fs").readSync(fd, buf, 0, readSize, Math.max(0, logSize - readSize));
-            require("node:fs").closeSync(fd);
-            logTail = buf.toString("utf8");
-          } catch {}
-        }
-        return c.json({
-          ok: true,
-          issueId: issue.id,
-          state: issue.state,
-          running: issue.state === "In Progress" || issue.state === "In Review",
-          startedAt: startedAtText || updatedAtText || now(),
-          elapsed: Number.isFinite(elapsed) ? elapsed : 0,
-          logSize,
-          logTail,
-          outputTail: issue.commandOutputTail || "",
-        });
-      },
-      "GET /diff/:id": async (c: any) => {
-        const issueId = parseIssue(c);
-        if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
-        const issue = findIssue(issueId);
-        if (!issue) return c.json({ ok: false, error: "Issue not found." }, 404);
-        const wp = issue.workspacePath;
-        if (!wp || !existsSync(wp)) {
-          return c.json({ ok: true, diff: "", message: "No workspace found." });
-        }
-        if (!existsSync(SOURCE_ROOT)) {
-          return c.json({ ok: true, diff: "", message: "Source root not found." });
-        }
+      "GET /api/live/:id": async (c: any) => {
         try {
-          const excludes = [
-            "symphifony-*", ".symphifony-*", "symphifony_*",
-            "WORKFLOW.local.md",
-          ].map((p) => `":(exclude)${p}"`).join(" ");
-          // git diff --no-index exits 1 when there are differences, which is expected
-          const cmd = `git diff --no-index --stat -- "${SOURCE_ROOT}" "${wp}" ${excludes} 2>/dev/null; echo "---"; git diff --no-index --no-color -- "${SOURCE_ROOT}" "${wp}" ${excludes} 2>/dev/null`;
-          const diff = execSync(cmd, { encoding: "utf8", maxBuffer: 2 * 1024 * 1024, timeout: 10_000 }).trim();
-          return c.json({ ok: true, diff: diff || "(no changes)" });
-        } catch (error: any) {
-          // git diff --no-index exits 1 when diffs exist — that's the normal case
-          if (error.stdout) {
-            return c.json({ ok: true, diff: error.stdout.trim() || "(no changes)" });
+          const issueId = parseIssue(c);
+          if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
+          const issue = findIssue(issueId);
+          if (!issue) return c.json({ ok: false, error: "Issue not found." }, 404);
+
+          const parseStartedAt = (value: unknown): number | null => {
+            const valueText = typeof value === "string" ? value.trim() : "";
+            if (!valueText) return null;
+            const ts = Date.parse(valueText);
+            return Number.isFinite(ts) ? ts : null;
+          };
+
+          const startedAtText = toStringValue(issue.startedAt, "");
+          const updatedAtText = toStringValue(issue.updatedAt, "");
+          const startedAtTs = parseStartedAt(startedAtText) ?? parseStartedAt(updatedAtText);
+          const elapsed = startedAtTs ? Date.now() - startedAtTs : 0;
+
+          const wp = issue.workspacePath;
+          const liveLog = wp ? `${wp}/symphifony-live-output.log` : null;
+          let logTail = "";
+          let logSize = 0;
+          if (liveLog && existsSync(liveLog)) {
+            try {
+              const stat = statSync(liveLog);
+              logSize = stat.size;
+              // Read last 8KB
+              const fd = openSync(liveLog, "r");
+              const readSize = Math.min(logSize, 8192);
+              const buf = Buffer.alloc(readSize);
+              readSync(fd, buf, 0, readSize, Math.max(0, logSize - readSize));
+              closeSync(fd);
+              logTail = buf.toString("utf8");
+            } catch {}
           }
-          return c.json({ ok: true, diff: "", message: `Diff failed: ${String(error.message || error)}` });
+          const agentStatus = isAgentStillRunning(issue);
+          return c.json({
+            ok: true,
+            issueId: issue.id,
+            state: issue.state,
+            running: issue.state === "Running" || issue.state === "In Review",
+            agentAlive: agentStatus.alive,
+            agentPid: agentStatus.pid?.pid ?? null,
+            startedAt: startedAtText || updatedAtText || now(),
+            elapsed: Number.isFinite(elapsed) ? elapsed : 0,
+            logSize,
+            logTail,
+            outputTail: issue.commandOutputTail || "",
+          });
+        } catch (error) {
+          const issueId = parseIssue(c);
+          logger.error(`Failed to load live issue state for ${issueId || "<unknown>"}: ${String(error)}`);
+          return c.json({ ok: false, error: "Failed to load live issue state." }, 500);
         }
       },
-      "GET /events/feed": async (c: any) => {
+      "GET /api/diff/:id": async (c: any) => {
+        try {
+          const issueId = parseIssue(c);
+          if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
+          const issue = findIssue(issueId);
+          if (!issue) return c.json({ ok: false, error: "Issue not found." }, 404);
+          const wp = issue.workspacePath;
+          if (!wp || !existsSync(wp)) {
+            return c.json({ ok: true, files: [], diff: "", message: "No workspace found." });
+          }
+          if (!existsSync(SOURCE_ROOT)) {
+            return c.json({ ok: true, files: [], diff: "", message: "Source root not found." });
+          }
+          let raw = "";
+          try {
+            raw = execSync(
+              `git diff --no-index --no-color -- "${SOURCE_ROOT}" "${wp}"`,
+              { encoding: "utf8", maxBuffer: 4 * 1024 * 1024, timeout: 15_000 },
+            );
+          } catch (err: any) {
+            // git diff --no-index exits 1 when diffs exist — normal
+            raw = err.stdout || "";
+          }
+
+          if (!raw.trim()) {
+            return c.json({ ok: true, files: [], diff: "", message: "No changes" });
+          }
+
+          // Clean paths: replace absolute paths with relative a/ b/ style
+          const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const sourcePrefix = SOURCE_ROOT.endsWith("/") ? SOURCE_ROOT : `${SOURCE_ROOT}/`;
+          const wpPrefix = wp.endsWith("/") ? wp : `${wp}/`;
+          const cleaned = raw
+            .replace(new RegExp(esc(wpPrefix), "g"), "b/")
+            .replace(new RegExp(esc(sourcePrefix), "g"), "a/");
+
+          // Split into per-file chunks and filter internals
+          const internalRe = /^(symphifony[-_]|\.symphifony-|WORKFLOW\.local)/;
+          const chunks = cleaned.split(/(?=^diff --git )/m);
+          const filtered = chunks.filter((chunk) => {
+            const m = chunk.match(/^diff --git a\/(.+?) b\//);
+            if (!m) return false;
+            const basename = m[1].split("/").pop() || "";
+            return !internalRe.test(basename);
+          });
+
+          const diff = filtered.join("").trim();
+
+          // Per-file summary (like GitHub PR file list)
+          const files = filtered.map((chunk) => {
+            const pathMatch = chunk.match(/^diff --git a\/(.+?) b\//);
+            const path = pathMatch?.[1] || "unknown";
+            const additions = (chunk.match(/^\+[^+]/gm) || []).length;
+            const deletions = (chunk.match(/^-[^-]/gm) || []).length;
+            const isNew = chunk.includes("new file mode");
+            const isDeleted = chunk.includes("deleted file mode");
+            const status = isNew ? "added" : isDeleted ? "removed" : "modified";
+            return { path, status, additions, deletions };
+          });
+
+          const totalAdditions = files.reduce((s, f) => s + f.additions, 0);
+          const totalDeletions = files.reduce((s, f) => s + f.deletions, 0);
+
+          return c.json({ ok: true, files, diff, totalAdditions, totalDeletions });
+        } catch (error) {
+          const issueId = parseIssue(c);
+          logger.error(`Failed to load issue diff for ${issueId || "<unknown>"}: ${String(error)}`);
+          return c.json({ ok: false, error: "Failed to load issue diff." }, 500);
+        }
+      },
+      "GET /api/analytics/tokens": async (c: any) => {
+        const ec = getActiveEcPlugin();
+        if (!ec) return c.json({ ok: false, error: "Analytics not available." }, 503);
+        try {
+          const days = parseInt(c.req.query("days") || "30", 10);
+          const data = await ec.getLastNDays?.("issues", "usage.tokens", days) ?? [];
+          const topIssues = await ec.getTopRecords?.("issues", "usage.tokens", { limit: 10 }) ?? [];
+          return c.json({ ok: true, data, topIssues });
+        } catch (error) {
+          return c.json({ ok: false, error: String(error) }, 500);
+        }
+      },
+      "GET /api/analytics/tokens/weekly": async (c: any) => {
+        const ec = getActiveEcPlugin();
+        if (!ec) return c.json({ ok: false, error: "Analytics not available." }, 503);
+        try {
+          const weeks = parseInt(c.req.query("weeks") || "12", 10);
+          const data = await ec.getLastNWeeks?.("issues", "usage.tokens", weeks) ?? [];
+          return c.json({ ok: true, data });
+        } catch (error) {
+          return c.json({ ok: false, error: String(error) }, 500);
+        }
+      },
+      "GET /api/events/feed": async (c: any) => {
         const since = c.req.query("since");
         const issueId = c.req.query("issueId");
         const kind = c.req.query("kind");
@@ -491,6 +691,6 @@ export async function startApiServer(
   setActiveApiPlugin(plugin);
   logger.info(`Local dashboard available at http://localhost:${port}`);
   logger.info(`WebSocket available at ws://localhost:${port}/ws`);
-  logger.info(`State API: http://localhost:${port}/state`);
+  logger.info(`State API: http://localhost:${port}/api/state`);
   logger.info(`OpenAPI docs available at http://localhost:${port}/docs`);
 }

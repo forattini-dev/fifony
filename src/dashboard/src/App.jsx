@@ -14,7 +14,9 @@ import IssueDetailDrawer from "./components/IssueDetailDrawer";
 import Filters from "./components/Filters";
 import Fab from "./components/Fab";
 import MobileDock from "./components/MobileDock";
-import { LayoutGrid, Settings, Cpu } from "lucide-react";
+import SettingsView from "./components/SettingsView";
+import Confetti from "./components/Confetti";
+import { LayoutGrid, Settings, Cpu, Sliders, CheckCircle, AlertTriangle, Info } from "lucide-react";
 
 const ISSUE_VIEWS = [
   { id: "kanban", label: "Kanban" },
@@ -25,6 +27,7 @@ const VIEWS = [
   { id: "issues", label: "Issues", icon: LayoutGrid },
   { id: "providers", label: "Providers", icon: Cpu },
   { id: "runtime", label: "Runtime Monitor", icon: Settings },
+  { id: "settings", label: "Settings", icon: Sliders },
 ];
 
 const VIEW_IDS = new Set(VIEWS.map((v) => v.id));
@@ -78,11 +81,14 @@ export default function App() {
   const [issueView, setIssueViewState] = useState(() => readIssueViewFromLocation());
   const [stateFilter, setStateFilter] = useState("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
+  const [completionFilter, setCompletionFilter] = useState("recent");
   const [query, setQuery] = useState("");
   const [eventKind, setEventKind] = useState("all");
   const [eventIssueId, setEventIssueId] = useState("all");
   const [concurrency, setConcurrency] = useState("2");
-  const [toast, setToast] = useState(null);
+  const [toast, setToast] = useState(null); // { message, type: "info"|"success"|"error" }
+  const [toastExiting, setToastExiting] = useState(false);
+  const [confetti, setConfetti] = useState(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [selectedIssue, setSelectedIssue] = useState(null);
   const [isEventsOpen, setIsEventsOpen] = useState(false);
@@ -98,7 +104,7 @@ export default function App() {
   const wsStatus = useRuntimeWebSocket(handleRuntimeSocketMessage);
   const liveMode = wsStatus === "connected";
 
-  const runtime = useRuntimeState({ pollInterval: liveMode ? 10000 : 3000 });
+  const runtime = useRuntimeState({ pollInterval: liveMode ? 10000 : 3000, showAll: completionFilter === "all" });
   const events = useRuntimeEvents(eventKind, eventIssueId, liveMode ? 10000 : 2500);
   const providers = useProviders();
   const parallelism = useParallelism();
@@ -126,33 +132,41 @@ export default function App() {
 
   const issueOptions = useMemo(() => [...new Set(issues.map((i) => i.id))].sort(), [issues]);
 
-  const showToast = useCallback((msg) => {
-    setToast(msg);
-    setTimeout(() => setToast(null), 3000);
+  const showToast = useCallback((msg, type = "info") => {
+    setToastExiting(false);
+    setToast({ message: typeof msg === "string" ? msg : String(msg), type });
+    setTimeout(() => {
+      setToastExiting(true);
+      setTimeout(() => { setToast(null); setToastExiting(false); }, 250);
+    }, 3000);
+  }, []);
+
+  const showConfetti = useCallback(() => {
+    setConfetti({ x: window.innerWidth / 2, y: window.innerHeight / 3 });
   }, []);
 
   const createIssue = useMutation({
     mutationFn: (p) => api.post("/issues/create", p),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["runtime-state"] }); setIsCreateOpen(false); showToast("Issue created"); },
-    onError: (e) => showToast(e.message),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["runtime-state"] }); setIsCreateOpen(false); showToast("Issue created", "success"); showConfetti(); },
+    onError: (e) => showToast(e.message, "error"),
   });
 
   const updateState = useMutation({
     mutationFn: ({ id, state }) => api.post(`/issues/${encodeURIComponent(id)}/state`, { state }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["runtime-state"] }),
-    onError: (e) => showToast(e.message),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["runtime-state"] }); showToast("State updated", "success"); },
+    onError: (e) => showToast(e.message, "error"),
   });
 
   const retryMut = useMutation({
     mutationFn: (id) => api.post(`/issues/${encodeURIComponent(id)}/retry`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["runtime-state"] }),
-    onError: (e) => showToast(e.message),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["runtime-state"] }); showToast("Retrying issue", "info"); },
+    onError: (e) => showToast(e.message, "error"),
   });
 
   const cancelMut = useMutation({
     mutationFn: (id) => api.post(`/issues/${encodeURIComponent(id)}/cancel`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["runtime-state"] }),
-    onError: (e) => showToast(e.message),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["runtime-state"] }); showToast("Issue cancelled", "info"); },
+    onError: (e) => showToast(e.message, "error"),
   });
 
   const refreshMut = useMutation({
@@ -165,9 +179,9 @@ export default function App() {
     mutationFn: () => api.post("/config/concurrency", { concurrency: parseInt(concurrency, 10) }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["runtime-state"] });
-      showToast("Concurrency updated");
+      showToast("Concurrency updated", "success");
     },
-    onError: (e) => showToast(e.message),
+    onError: (e) => showToast(e.message, "error"),
   });
 
   useEffect(() => {
@@ -203,8 +217,23 @@ export default function App() {
 
   if (runtime.isLoading && !runtime.data) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <span className="loading loading-spinner loading-lg"></span>
+      <div className="min-h-screen flex flex-col">
+        <div className="navbar bg-base-100 shadow-sm px-4">
+          <div className="flex-1"><div className="skeleton-line h-6 w-32" /></div>
+          <div className="flex gap-2">
+            <div className="skeleton-line h-8 w-20 rounded-btn" />
+            <div className="skeleton-line h-8 w-20 rounded-btn" />
+            <div className="skeleton-line h-8 w-20 rounded-btn" />
+          </div>
+        </div>
+        <div className="container mx-auto px-4 py-6 space-y-4">
+          <div className="skeleton-card h-24 w-full" />
+          <div className="grid grid-cols-6 gap-3">
+            {[...Array(6)].map((_, i) => (
+              <div key={i} className="skeleton-card h-64 w-full" style={{ animationDelay: `${i * 100}ms` }} />
+            ))}
+          </div>
+        </div>
       </div>
     );
   }
@@ -213,15 +242,18 @@ export default function App() {
     <div className="min-h-screen flex flex-col">
       {toast && (
         <div className="toast toast-end toast-top z-50">
-          <div className="alert alert-info text-sm">{toast}</div>
+          <div className={`alert text-sm shadow-lg ${toast.type === "success" ? "alert-success" : toast.type === "error" ? "alert-error" : "alert-info"} ${toastExiting ? "animate-toast-out" : "animate-toast-in"}`}>
+            {toast.type === "success" ? <CheckCircle className="size-4" /> : toast.type === "error" ? <AlertTriangle className="size-4" /> : <Info className="size-4" />}
+            <span>{toast.message}</span>
+            <div className="toast-progress" />
+          </div>
         </div>
+      )}
+      {confetti && (
+        <Confetti x={confetti.x} y={confetti.y} active onDone={() => setConfetti(null)} />
       )}
 
       <Header
-        status={status}
-        wsStatus={wsStatus}
-        theme={theme}
-        onThemeChange={setTheme}
         issueCount={issues.length}
         sourceRepo={data.sourceRepoUrl}
         updatedAt={data.updatedAt}
@@ -229,6 +261,7 @@ export default function App() {
         setView={setView}
         onToggleEvents={toggleEvents}
         eventsOpen={isEventsOpen}
+        wsStatus={wsStatus}
       />
 
       <div className="container mx-auto px-4 pb-8 flex-1 flex flex-col gap-4">
@@ -246,6 +279,10 @@ export default function App() {
               categoryFilter={categoryFilter}
               setCategoryFilter={setCategoryFilter}
               categoryOptions={categoryOptions}
+              completionFilter={completionFilter}
+              setCompletionFilter={setCompletionFilter}
+              totalIssues={data._totalIssues}
+              visibleIssues={issues.length}
             />
           </div>
         )}
@@ -271,15 +308,23 @@ export default function App() {
             )
           ) : view === "providers" ? (
             <ProvidersView providersUsage={providersUsage} />
+          ) : view === "settings" ? (
+            <SettingsView
+              theme={theme}
+              onThemeChange={setTheme}
+              concurrency={concurrency}
+              setConcurrency={setConcurrency}
+              saveConcurrency={() => saveConcMut.mutate()}
+              savePending={saveConcMut.isPending}
+              status={status}
+              wsStatus={wsStatus}
+            />
           ) : (
             <RuntimeView
               state={data}
               providers={providers.data || {}}
               parallelism={parallelism.data || {}}
               onRefresh={() => refreshMut.mutate()}
-              concurrency={concurrency}
-              setConcurrency={setConcurrency}
-              saveConcurrency={() => saveConcMut.mutate()}
             />
           )}
         </div>

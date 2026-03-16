@@ -12,10 +12,23 @@ const STATE_BADGE = {
   Cancelled: "badge-neutral",
 };
 
-export function IssueCard({ issue, onSelect }) {
+const STATE_BORDER_LEFT = {
+  Todo: "border-l-warning",
+  Queued: "border-l-info",
+  Running: "border-l-primary",
+  Interrupted: "border-l-accent",
+  "In Review": "border-l-secondary",
+  Blocked: "border-l-error",
+  Done: "border-l-success",
+  Cancelled: "border-l-neutral",
+};
+
+export function IssueCard({ issue, onSelect, dragHandlers, isDragging }) {
+  const isRunning = issue.state === "Running";
+
   return (
     <div
-      className="card card-compact bg-base-100 border border-base-300 transition-shadow hover:shadow-md cursor-pointer"
+      className={`card card-compact bg-base-100 border border-base-300 border-l-[3px] ${STATE_BORDER_LEFT[issue.state] || ""} card-interactive cursor-pointer ${isRunning ? "animate-pulse-border" : ""} ${isDragging ? "kanban-card-source-opacity" : ""}`}
       role="button"
       tabIndex={0}
       onClick={() => onSelect?.(issue)}
@@ -26,6 +39,7 @@ export function IssueCard({ issue, onSelect }) {
         }
       }}
       aria-label={`Open issue ${issue.identifier}`}
+      {...(dragHandlers || {})}
     >
       <div className="card-body gap-1 p-3">
         <div className="flex items-start justify-between gap-2">
