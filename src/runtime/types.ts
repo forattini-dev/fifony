@@ -130,6 +130,9 @@ export type IssuePlan = {
   suggestedLabels: string[];
   suggestedEffort: EffortConfig;
 
+  // Refinement history
+  refinements?: Array<{ feedback: string; at: string; version: number }>;
+
   // Meta
   provider: string;
   createdAt: string;

@@ -4,7 +4,7 @@ import {
   Folder, Layers, Gauge, History, Terminal, ArrowRight, Circle, CheckCircle2,
   PlayCircle, Eye, Ban, XCircle, Diff, Wrench, Copy, Check,
   Info, Code, Route, ClipboardCheck, ThumbsUp, ThumbsDown, MessageSquare,
-  Loader, Pause, ListOrdered, Lightbulb,
+  Loader, Pause, ListOrdered, Lightbulb, Zap,
 } from "lucide-react";
 import { STATES, ISSUE_STATE_MACHINE, getIssueTransitions, timeAgo, formatDate, formatDuration } from "../utils.js";
 import { api } from "../api.js";
@@ -539,20 +539,25 @@ const COMPLEXITY_COLOR = { trivial: "badge-ghost", low: "badge-success", medium:
 
 function PlanningTab({ issue, onStateChange }) {
   const [generating, setGenerating] = useState(false);
+  const [fastMode, setFastMode] = useState(false);
+  const [refining, setRefining] = useState(false);
+  const [feedback, setFeedback] = useState("");
   const [error, setError] = useState(null);
   const plan = issue.plan;
   const isPlanning = issue.state === "Planning";
 
-  const handleGenerate = async () => {
+  const handleGenerate = async (fast = false) => {
     setGenerating(true);
+    setFastMode(fast);
     setError(null);
     try {
-      const res = await api.post(`/issues/${encodeURIComponent(issue.id)}/plan`);
+      const res = await api.post(`/issues/${encodeURIComponent(issue.id)}/plan`, { fast });
       if (!res.ok) throw new Error(res.error || "Plan generation failed.");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setGenerating(false);
+      setFastMode(false);
     }
   };
 
@@ -561,6 +566,21 @@ function PlanningTab({ issue, onStateChange }) {
       await api.post(`/issues/${encodeURIComponent(issue.id)}/approve`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleRefine = async () => {
+    if (!feedback.trim()) return;
+    setRefining(true);
+    setError(null);
+    try {
+      const res = await api.post(`/issues/${encodeURIComponent(issue.id)}/plan/refine`, { feedback: feedback.trim() });
+      if (!res.ok) throw new Error(res.error || "Refinement failed.");
+      setFeedback("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRefining(false);
     }
   };
 
@@ -575,9 +595,18 @@ function PlanningTab({ issue, onStateChange }) {
             Generate an AI plan to break this issue into actionable steps with suggested paths, labels, and effort.
           </p>
           {isPlanning && (
-            <button className="btn btn-primary gap-1.5" onClick={handleGenerate}>
-              <Lightbulb className="size-4" /> Generate Plan
-            </button>
+            <div className="flex items-center gap-2 justify-center">
+              <button className="btn btn-primary gap-1.5" onClick={() => handleGenerate(false)}>
+                <Lightbulb className="size-4" /> Generate Plan
+              </button>
+              <button
+                className="btn btn-ghost btn-sm gap-1 tooltip tooltip-bottom"
+                data-tip="Same model, minimal reasoning — 2-4 steps, no extras"
+                onClick={() => handleGenerate(true)}
+              >
+                <Zap className="size-3.5" /> Fast
+              </button>
+            </div>
           )}
         </div>
         {error && <div className="alert alert-error text-sm">{error}</div>}
@@ -589,9 +618,13 @@ function PlanningTab({ issue, onStateChange }) {
   if (generating) {
     return (
       <div className="flex flex-col items-center justify-center gap-4 py-12">
-        <Loader className="size-8 animate-spin text-primary" />
-        <div className="text-sm opacity-60">Generating execution plan...</div>
-        <div className="text-xs opacity-30">This may take a few minutes</div>
+        <Loader className={`size-8 animate-spin ${fastMode ? "text-warning" : "text-primary"}`} />
+        <div className="text-sm opacity-60">
+          {fastMode ? "Fast planning..." : "Generating execution plan..."}
+        </div>
+        <div className="text-xs opacity-30">
+          {fastMode ? "Brief plan, same model, minimal reasoning" : "This may take a few minutes"}
+        </div>
       </div>
     );
   }
@@ -655,6 +688,63 @@ function PlanningTab({ issue, onStateChange }) {
         </Section>
       )}
 
+      {/* Refinement history */}
+      {plan.refinements?.length > 0 && (
+        <Section title={`Refinements (${plan.refinements.length})`} icon={MessageSquare}>
+          <div className="space-y-2">
+            {plan.refinements.map((r, i) => (
+              <div key={i} className="flex gap-3 p-2.5 bg-base-200 rounded-box text-sm">
+                <div className="flex items-center justify-center size-6 rounded-full bg-secondary/10 text-secondary text-xs font-bold shrink-0">
+                  {r.version || i + 1}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm leading-relaxed">{r.feedback}</p>
+                  <span className="text-[10px] opacity-40 mt-1 block">{timeAgo(r.at)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* Refine plan — chat input */}
+      {isPlanning && plan && (
+        <div className="border-t border-base-300 pt-4 space-y-2">
+          <div className="text-xs font-semibold flex items-center gap-1.5 opacity-70">
+            <MessageSquare className="size-3.5" />
+            Refine Plan
+          </div>
+          <textarea
+            className="textarea textarea-bordered w-full text-sm"
+            rows={2}
+            placeholder="Give feedback to refine the plan... e.g. 'Use React instead of Vue for step 3'"
+            value={feedback}
+            onChange={(e) => setFeedback(e.target.value)}
+            disabled={refining}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && feedback.trim()) {
+                e.preventDefault();
+                handleRefine();
+              }
+            }}
+          />
+          <div className="flex items-center gap-2">
+            <button
+              className="btn btn-secondary btn-sm gap-1.5"
+              onClick={handleRefine}
+              disabled={refining || !feedback.trim()}
+            >
+              {refining ? (
+                <><Loader className="size-3.5 animate-spin" /> Refining...</>
+              ) : (
+                <><RotateCcw className="size-3.5" /> Refine Plan</>
+              )}
+            </button>
+            <span className="text-[10px] opacity-30">Ctrl+Enter to send</span>
+          </div>
+        </div>
+      )}
+
       {error && <div className="alert alert-error text-sm">{error}</div>}
 
       {/* Actions */}
@@ -663,8 +753,8 @@ function PlanningTab({ issue, onStateChange }) {
           <button className="btn btn-primary gap-1.5" onClick={handleApprove}>
             <CheckCircle2 className="size-4" /> Approve & Start
           </button>
-          <button className="btn btn-ghost btn-sm gap-1" onClick={handleGenerate}>
-            <RotateCcw className="size-3" /> Re-plan
+          <button className="btn btn-ghost btn-sm gap-1" onClick={() => handleGenerate(false)}>
+            <RotateCcw className="size-3" /> Re-plan from scratch
           </button>
         </div>
       )}

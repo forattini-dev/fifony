@@ -55,7 +55,7 @@
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "recker": "^1.0.86",
-    "s3db.js": "21.2.10",
+    "s3db.js": "21.2.11",
     "yaml": "^2.8.2"
   },
   "devDependencies": {

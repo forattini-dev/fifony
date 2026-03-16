@@ -143,10 +143,11 @@ const PLAN_JSON_SCHEMA = JSON.stringify({
 
 // ── Prompt ───────────────────────────────────────────────────────────────────
 
-async function buildPlanPrompt(title: string, description: string): Promise<string> {
+async function buildPlanPrompt(title: string, description: string, fast = false): Promise<string> {
   return renderPrompt("issue-planner", {
     title,
     description: description || "(none provided)",
+    fast,
   });
 }
 
@@ -282,12 +283,19 @@ function extractPlanTokenUsage(raw: string): { inputTokens: number; outputTokens
   return null;
 }
 
+export type GeneratePlanResult = {
+  plan: IssuePlan;
+  usage: PlanningSessionUsage;
+};
+
 export async function generatePlan(
   title: string,
   description: string,
   config: RuntimeConfig,
   workflowDefinition: WorkflowDefinition | null,
-): Promise<IssuePlan> {
+  options?: { fast?: boolean },
+): Promise<GeneratePlanResult> {
+  const fast = options?.fast ?? false;
   const providers = detectAvailableProviders();
   const available = providers.filter((p) => p.available).map((p) => p.name);
 
@@ -313,6 +321,9 @@ export async function generatePlan(
     : available.includes("claude") ? "claude" : available[0];
   if (!preferred) throw new Error("No AI provider available for planning.");
 
+  // Fast mode: same model, effort low (embedded in prompt since CLIs don't support effort flags)
+  const effectiveEffort = fast ? "low" : (planStageEffort || "medium");
+
   const command = getPlanCommand(preferred, planStageModel);
   if (!command) throw new Error(`No command configured for provider ${preferred}.`);
 
@@ -326,7 +337,7 @@ export async function generatePlan(
   };
   await persistSession(session);
 
-  const prompt = await buildPlanPrompt(title, description);
+  const prompt = await buildPlanPrompt(title, description, fast);
   const tempDir = mkdtempSync(join(tmpdir(), "fifony-plan-"));
   const promptFile = join(tempDir, "fifony-plan-prompt.md");
   const envFile = join(tempDir, "fifony-plan-env.sh");
@@ -447,5 +458,158 @@ export async function generatePlan(
     ? `, ${planUsage.totalTokens.toLocaleString()} tokens (in: ${planUsage.inputTokens.toLocaleString()}, out: ${planUsage.outputTokens.toLocaleString()})`
     : `, ${planUsage.outputChars.toLocaleString()} output chars`;
   logger.info(`Plan generated for "${title}" via ${planUsage.model}: ${plan.steps.length} steps, complexity: ${plan.estimatedComplexity}${tokenSummary}, ${durationMs}ms`);
-  return plan;
+  return { plan, usage: planUsage };
+}
+
+// ── Refine plan ──────────────────────────────────────────────────────────────
+
+async function buildRefinePrompt(
+  title: string,
+  description: string,
+  currentPlan: IssuePlan,
+  feedback: string,
+): Promise<string> {
+  return renderPrompt("issue-planner-refine", {
+    title,
+    description: description || "(none provided)",
+    currentPlan: JSON.stringify(currentPlan, null, 2),
+    feedback,
+  });
+}
+
+export type RefinePlanResult = {
+  plan: IssuePlan;
+  usage: PlanningSessionUsage;
+};
+
+export async function refinePlan(
+  issue: IssueEntry,
+  feedback: string,
+  config: RuntimeConfig,
+  workflowDefinition: WorkflowDefinition | null,
+): Promise<RefinePlanResult> {
+  if (!issue.plan) throw new Error("Issue has no plan to refine.");
+
+  const providers = detectAvailableProviders();
+  const available = providers.filter((p) => p.available).map((p) => p.name);
+
+  // Use the same provider/model/effort logic as generatePlan
+  let planStageProvider: string | undefined;
+  let planStageModel: string | undefined;
+  try {
+    const settings = await loadRuntimeSettings();
+    const workflowConfig = getWorkflowConfig(settings);
+    if (workflowConfig?.plan) {
+      planStageProvider = workflowConfig.plan.provider;
+      planStageModel = workflowConfig.plan.model;
+    }
+  } catch {
+    // Fall through to default provider selection
+  }
+
+  const preferred = planStageProvider && available.includes(planStageProvider)
+    ? planStageProvider
+    : available.includes("claude") ? "claude" : available[0];
+  if (!preferred) throw new Error("No AI provider available for plan refinement.");
+
+  const command = getPlanCommand(preferred, planStageModel);
+  if (!command) throw new Error(`No command configured for provider ${preferred}.`);
+
+  const refineStartMs = Date.now();
+  const prompt = await buildRefinePrompt(issue.title, issue.description, issue.plan, feedback);
+  const tempDir = mkdtempSync(join(tmpdir(), "fifony-refine-"));
+  const promptFile = join(tempDir, "fifony-refine-prompt.md");
+  const envFile = join(tempDir, "fifony-refine-env.sh");
+
+  writeFileSync(promptFile, `${prompt}\n`, "utf8");
+  writeFileSync(envFile, [
+    `export FIFONY_PROMPT_FILE=${JSON.stringify(promptFile)}`,
+    `export FIFONY_PROMPT=${JSON.stringify(prompt)}`,
+    `export FIFONY_AGENT_PROVIDER=${JSON.stringify(preferred)}`,
+  ].join("\n"), "utf8");
+
+  const wrappedCommand = `. "${envFile}" && ${command}`;
+
+  const output = await new Promise<string>((resolve, reject) => {
+    let stdout = "";
+    const child = spawn(wrappedCommand, {
+      shell: true,
+      cwd: tempDir,
+      detached: true,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    child.unref();
+    child.stdin?.end();
+
+    child.stdout?.on("data", (chunk) => {
+      stdout = appendFileTail(stdout, String(chunk), 32_000);
+    });
+    child.stderr?.on("data", (chunk) => {
+      stdout = appendFileTail(stdout, String(chunk), 32_000);
+    });
+
+    const timer = setTimeout(() => {
+      if (child.pid) { try { process.kill(-child.pid, "SIGTERM"); } catch {} }
+      else { child.kill("SIGTERM"); }
+      reject(new Error("Plan refinement timed out."));
+    }, 600_000);
+
+    child.on("error", () => { clearTimeout(timer); reject(new Error("Failed to execute refinement command.")); });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      rmSync(tempDir, { recursive: true, force: true });
+      if (code !== 0) {
+        reject(new Error(`Plan refinement failed (exit ${code}): ${stdout.slice(0, 500)}`));
+        return;
+      }
+      resolve(stdout);
+    });
+  });
+
+  logger.info({ rawOutput: output.slice(0, 2000) }, `Refine raw output from ${preferred}`);
+
+  const plan = parsePlanOutput(output);
+  if (!plan) {
+    logger.error({ rawOutput: output.slice(0, 2000) }, "Could not parse refined plan from AI output");
+    throw new Error(`Could not parse refined plan. Output: ${output.slice(0, 500)}`);
+  }
+
+  plan.provider = planStageModel ? `${preferred}/${planStageModel}` : preferred;
+
+  // Carry over refinement history from the original plan and append the new refinement
+  const existingRefinements = issue.plan.refinements ?? [];
+  const nextVersion = existingRefinements.length + 1;
+  plan.refinements = [
+    ...existingRefinements,
+    { feedback, at: now(), version: nextVersion },
+  ];
+
+  const durationMs = Date.now() - refineStartMs;
+  const tokenInfo = extractPlanTokenUsage(output);
+  const refineUsage: PlanningSessionUsage = {
+    inputTokens: tokenInfo?.inputTokens ?? 0,
+    outputTokens: tokenInfo?.outputTokens ?? 0,
+    totalTokens: tokenInfo?.totalTokens ?? 0,
+    model: tokenInfo?.model || planStageModel || preferred,
+    promptChars: prompt.length,
+    outputChars: output.length,
+    durationMs,
+  };
+
+  // Record refinement tokens in the ledger
+  if (refineUsage.totalTokens > 0) {
+    const tokenUsage: AgentTokenUsage = {
+      inputTokens: refineUsage.inputTokens,
+      outputTokens: refineUsage.outputTokens,
+      totalTokens: refineUsage.totalTokens,
+      model: refineUsage.model,
+    };
+    recordTokens({ id: issue.id, identifier: issue.identifier, title: issue.title } as IssueEntry, tokenUsage, "planner");
+  }
+
+  const tokenSummary = refineUsage.totalTokens > 0
+    ? `, ${refineUsage.totalTokens.toLocaleString()} tokens (in: ${refineUsage.inputTokens.toLocaleString()}, out: ${refineUsage.outputTokens.toLocaleString()})`
+    : `, ${refineUsage.outputChars.toLocaleString()} output chars`;
+  logger.info(`Plan refined for "${issue.title}" via ${refineUsage.model}: ${plan.steps.length} steps, complexity: ${plan.estimatedComplexity}${tokenSummary}, ${durationMs}ms`);
+  return { plan, usage: refineUsage };
 }

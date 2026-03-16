@@ -52,7 +52,7 @@ import { setApiRuntimeContext } from "./api-runtime-context.ts";
 import { TERMINAL_STATES } from "./constants.ts";
 import { getAnalytics as getTokenAnalytics, getHourlySnapshot } from "./token-ledger.ts";
 import { enhanceIssueField } from "./issue-enhancer.ts";
-import { generatePlan, loadPlanningSession, savePlanningInput, clearPlanningSession } from "./issue-planner.ts";
+import { generatePlan, refinePlan, loadPlanningSession, savePlanningInput, clearPlanningSession } from "./issue-planner.ts";
 import {
   applyPersistedSettings,
   buildDefaultWorkflowConfig,
@@ -518,8 +518,8 @@ export async function startApiServer(
           const title = toStringValue(payload.title);
           const description = toStringValue(payload.description);
           if (!title) return c.json({ ok: false, error: "Title is required." }, 400);
-          const plan = await generatePlan(title, description, state.config, workflowDefinition);
-          return c.json({ ok: true, plan });
+          const result = await generatePlan(title, description, state.config, workflowDefinition);
+          return c.json({ ok: true, plan: result.plan, usage: result.usage });
         } catch (error) {
           logger.error({ err: error }, `Plan generation failed: ${String(error)}`);
           return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 500);
@@ -536,8 +536,8 @@ export async function startApiServer(
           const title = toStringValue(payload.title);
           const description = toStringValue(payload.description);
           if (!title) return c.json({ ok: false, error: "Title is required." }, 400);
-          const plan = await generatePlan(title, description, state.config, workflowDefinition);
-          return c.json({ ok: true, plan });
+          const result = await generatePlan(title, description, state.config, workflowDefinition);
+          return c.json({ ok: true, plan: result.plan, usage: result.usage });
         } catch (error) {
           logger.error({ err: error }, `Plan generation failed: ${String(error)}`);
           return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 500);
@@ -629,9 +629,45 @@ export async function startApiServer(
           if (issue.state !== "Planning") {
             throw new Error(`Cannot plan issue in state ${issue.state}. Must be in Planning.`);
           }
-          const plan = await generatePlan(issue.title, issue.description, state.config, workflowDefinition);
+          const body = await c.req.json().catch(() => ({})) as Record<string, unknown>;
+          const fast = body.fast === true;
+          const { plan, usage } = await generatePlan(issue.title, issue.description, state.config, workflowDefinition, { fast });
           issue.plan = plan;
-          addEvent(state, issue.id, "info", `Plan generated: ${plan.steps.length} steps, complexity: ${plan.estimatedComplexity}.`);
+
+          // Save planning tokens on the issue
+          if (usage.totalTokens > 0) {
+            const prev = issue.tokenUsage ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+            issue.tokenUsage = {
+              inputTokens: prev.inputTokens + usage.inputTokens,
+              outputTokens: prev.outputTokens + usage.outputTokens,
+              totalTokens: prev.totalTokens + usage.totalTokens,
+              model: usage.model,
+            };
+            if (!issue.tokensByPhase) issue.tokensByPhase = {} as any;
+            issue.tokensByPhase.planner = {
+              inputTokens: usage.inputTokens,
+              outputTokens: usage.outputTokens,
+              totalTokens: usage.totalTokens,
+              model: usage.model,
+            };
+            if (!issue.tokensByModel) issue.tokensByModel = {};
+            const model = usage.model || "unknown";
+            const prevModel = issue.tokensByModel[model] ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+            issue.tokensByModel[model] = {
+              inputTokens: prevModel.inputTokens + usage.inputTokens,
+              outputTokens: prevModel.outputTokens + usage.outputTokens,
+              totalTokens: prevModel.totalTokens + usage.totalTokens,
+              model,
+            };
+            if (!issue.usage) issue.usage = { tokens: {} };
+            issue.usage.tokens[model] = (issue.usage.tokens[model] || 0) + usage.totalTokens;
+          }
+
+          const tokenInfo = usage.totalTokens > 0
+            ? ` ${usage.totalTokens.toLocaleString()} tokens (in: ${usage.inputTokens.toLocaleString()}, out: ${usage.outputTokens.toLocaleString()}) [${usage.model}]`
+            : "";
+          addEvent(state, issue.id, "info", `${fast ? "Fast plan" : "Plan"} generated: ${plan.steps.length} steps, complexity: ${plan.estimatedComplexity}.${tokenInfo}`);
+
           // Apply plan suggestions
           if (plan.suggestedPaths?.length && !(issue.paths?.length)) issue.paths = plan.suggestedPaths;
           if (plan.suggestedLabels?.length && !issue.labels?.length) issue.labels = plan.suggestedLabels;
@@ -645,6 +681,62 @@ export async function startApiServer(
           }
           await transitionIssueState(issue, "Todo", `Plan approved for ${issue.identifier}. Ready for execution.`);
           addEvent(state, issue.id, "manual", `Plan approved — issue ${issue.identifier} moved to Todo.`);
+        });
+      },
+      "POST /api/issues/:id/plan/refine": async (c: any) => {
+        return mutateIssueState(c, async (issue) => {
+          if (!issue.plan) {
+            throw new Error("Issue has no plan to refine. Generate a plan first.");
+          }
+          const body = await c.req.json().catch(() => ({})) as Record<string, unknown>;
+          const feedback = typeof body.feedback === "string" ? body.feedback.trim() : "";
+          if (!feedback) {
+            throw new Error("Feedback message is required.");
+          }
+
+          const { plan, usage } = await refinePlan(issue, feedback, state.config, workflowDefinition);
+          issue.plan = plan;
+
+          // Save refinement tokens on the issue
+          if (usage.totalTokens > 0) {
+            const prev = issue.tokenUsage ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+            issue.tokenUsage = {
+              inputTokens: prev.inputTokens + usage.inputTokens,
+              outputTokens: prev.outputTokens + usage.outputTokens,
+              totalTokens: prev.totalTokens + usage.totalTokens,
+              model: usage.model,
+            };
+            if (!issue.tokensByPhase) issue.tokensByPhase = {} as any;
+            const prevPlanner = issue.tokensByPhase.planner ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+            issue.tokensByPhase.planner = {
+              inputTokens: prevPlanner.inputTokens + usage.inputTokens,
+              outputTokens: prevPlanner.outputTokens + usage.outputTokens,
+              totalTokens: prevPlanner.totalTokens + usage.totalTokens,
+              model: usage.model,
+            };
+            if (!issue.tokensByModel) issue.tokensByModel = {};
+            const model = usage.model || "unknown";
+            const prevModel = issue.tokensByModel[model] ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+            issue.tokensByModel[model] = {
+              inputTokens: prevModel.inputTokens + usage.inputTokens,
+              outputTokens: prevModel.outputTokens + usage.outputTokens,
+              totalTokens: prevModel.totalTokens + usage.totalTokens,
+              model,
+            };
+            if (!issue.usage) issue.usage = { tokens: {} };
+            issue.usage.tokens[model] = (issue.usage.tokens[model] || 0) + usage.totalTokens;
+          }
+
+          const feedbackPreview = feedback.length > 80 ? `${feedback.slice(0, 77)}...` : feedback;
+          const tokenInfo = usage.totalTokens > 0
+            ? ` ${usage.totalTokens.toLocaleString()} tokens [${usage.model}]`
+            : "";
+          addEvent(state, issue.id, "info", `Plan refined: ${feedbackPreview}.${tokenInfo}`);
+
+          // Re-apply plan suggestions if they changed
+          if (plan.suggestedPaths?.length) issue.paths = plan.suggestedPaths;
+          if (plan.suggestedLabels?.length) issue.labels = plan.suggestedLabels;
+          if (plan.suggestedEffort) issue.effort = plan.suggestedEffort;
         });
       },
       "POST /api/refresh": async (c: any) => {
