@@ -513,6 +513,22 @@ h1, h2, h3, .stat-value {
   animation: done-flash 0.8s ease-out both !important;
 }
 
+/* Planning state — subtle left border glow/pulse */
+@keyframes pulse-soft-border {
+  0%, 100% { border-left-color: oklch(var(--in) / 0.4); box-shadow: -2px 0 8px -2px oklch(var(--in) / 0); }
+  50%      { border-left-color: oklch(var(--in) / 0.8); box-shadow: -2px 0 8px -2px oklch(var(--in) / 0.15); }
+}
+
+.animate-pulse-soft-border {
+  animation: pulse-soft-border 2.5s ease-in-out infinite;
+}
+
+/* Blocked state — red left border + subtle error tint */
+.issue-card-blocked {
+  border-left-color: oklch(var(--er)) !important;
+  background-color: oklch(var(--er) / 0.04) !important;
+}
+
 /* ── Responsive kanban — see consolidated mobile rules below ─────────── */
 
 /* ── Safe area insets ──────────────────────────────────────────────────── */

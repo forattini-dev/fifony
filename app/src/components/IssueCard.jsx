@@ -44,6 +44,10 @@ function derivePhase(tokensByPhase) {
 export function IssueCard({ issue, onSelect, dragHandlers, isDragging }) {
   const isRunning = issue.state === "Running";
   const isInReview = issue.state === "In Review";
+  const isPlanning = issue.state === "Planning";
+  const isDone = issue.state === "Done";
+  const isCancelled = issue.state === "Cancelled";
+  const isBlocked = issue.state === "Blocked";
   const isPlanBusy = issue.planningStatus === "planning" || issue.planningStatus === "refining";
   const showTokens = isRunning || isInReview;
 
@@ -84,7 +88,21 @@ export function IssueCard({ issue, onSelect, dragHandlers, isDragging }) {
   return (
     <div
       data-issue-id={issue.id}
-      className={`card card-compact bg-base-100 border border-base-300 border-l-[3px] ${STATE_BORDER_LEFT[issue.state] || ""} card-interactive cursor-pointer ${isRunning ? "animate-pulse-border" : ""} ${isDragging ? "kanban-card-source-opacity" : ""} ${completionFlash ? "issue-card-done-flash" : ""}`}
+      className={[
+        "card card-compact bg-base-100 border border-base-300 border-l-[3px]",
+        STATE_BORDER_LEFT[issue.state] || "",
+        // State-differentiated visual weight
+        isPlanning ? "animate-pulse-soft-border" : "",
+        isRunning ? "animate-pulse-border" : "",
+        isDone ? "opacity-80" : "",
+        isCancelled ? "opacity-60" : "",
+        isBlocked ? "issue-card-blocked" : "",
+        // Only allow hover-lift for non-terminal states
+        (!isDone && !isCancelled) ? "card-interactive" : "",
+        "cursor-pointer",
+        isDragging ? "kanban-card-source-opacity" : "",
+        completionFlash ? "issue-card-done-flash" : "",
+      ].filter(Boolean).join(" ")}
       style={{ overflow: "hidden" }}
       role="button"
       tabIndex={0}
@@ -102,7 +120,7 @@ export function IssueCard({ issue, onSelect, dragHandlers, isDragging }) {
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <span className="font-mono text-xs opacity-50">{issue.identifier}</span>
-            <h3 className="font-semibold text-sm truncate">{issue.title}</h3>
+            <h3 className={`font-semibold text-sm truncate ${isCancelled ? "line-through opacity-60" : ""}`}>{issue.title}</h3>
           </div>
           <span className={`badge badge-xs ${STATE_BADGE[issue.state] || "badge-ghost"} shrink-0`}>
             {issue.state}

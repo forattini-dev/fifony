@@ -1,7 +1,7 @@
 import { useMemo, useCallback, useRef, useEffect, useState } from "react";
 import { IssueCard } from "./IssueCard.jsx";
 import { EmptyState } from "./EmptyState.jsx";
-import { Lightbulb, Plus, Play, Eye, AlertTriangle, CheckCircle, XCircle, RotateCcw, ArrowRight } from "lucide-react";
+import { Lightbulb, Plus, Play, Eye, AlertTriangle, CheckCircle, XCircle, RotateCcw, ArrowRight, ChevronDown } from "lucide-react";
 import { useDragAndDrop } from "../hooks/useDragAndDrop.js";
 import { getIssueTransitions } from "../utils.js";
 
@@ -189,8 +189,15 @@ function ColumnDots({ columns, activeIndex }) {
   );
 }
 
+// Default visible card limits for collapsible columns
+const COLLAPSE_LIMITS = {
+  Done: 5,
+  Cancelled: 3,
+};
+
 function KanbanColumn({ col, issues, empty, badgeClass, dragState, registerColumn, getCardHandlers, onSelect, onCreateIssue, lastDroppedId, hasRunningAgents, totalIssues, onLongPress }) {
   const colRef = useRef(null);
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     registerColumn(col, colRef.current);
@@ -204,6 +211,12 @@ function KanbanColumn({ col, issues, empty, badgeClass, dragState, registerColum
   const isDimmed = isDragging && !isValid && !isSource;
   const isEmpty = issues.length === 0;
   const isCollapsedEmpty = isEmpty && col !== "Planning" && totalIssues === 0;
+
+  // Collapsible columns: Done shows 5, Cancelled shows 3 by default
+  const collapseLimit = COLLAPSE_LIMITS[col];
+  const isCollapsible = collapseLimit != null && issues.length > collapseLimit;
+  const visibleIssues = (isCollapsible && !expanded) ? issues.slice(0, collapseLimit) : issues;
+  const hiddenCount = issues.length - visibleIssues.length;
 
   let columnClass = `kanban-column bg-base-200 rounded-box p-3 flex flex-col min-h-0 overflow-hidden`;
   if (isCollapsedEmpty) {
@@ -252,7 +265,7 @@ function KanbanColumn({ col, issues, empty, badgeClass, dragState, registerColum
             )
           ) : (
             <div className="stagger-children space-y-2">
-              {issues.map((issue) => {
+              {visibleIssues.map((issue) => {
                 const beingDragged = dragState?.issueId === issue.id;
                 const justDropped = lastDroppedId === issue.id;
                 return (
@@ -276,6 +289,18 @@ function KanbanColumn({ col, issues, empty, badgeClass, dragState, registerColum
                   </div>
                 );
               })}
+
+              {/* Collapse/expand toggle for Done and Cancelled columns */}
+              {isCollapsible && (
+                <button
+                  className="btn btn-ghost btn-xs w-full gap-1 opacity-50 hover:opacity-80"
+                  onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
+                >
+                  <ChevronDown className={`size-3 transition-transform ${expanded ? "rotate-180" : ""}`} />
+                  {expanded ? "Show less" : `+${hiddenCount} more`}
+                </button>
+              )}
+
               {isOver && isValid && (
                 <div className="kanban-drop-placeholder" />
               )}

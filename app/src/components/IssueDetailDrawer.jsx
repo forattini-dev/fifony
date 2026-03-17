@@ -1163,6 +1163,91 @@ function ReviewTab({ issue, issueId, onStateChange }) {
   );
 }
 
+// ── Drawer Footer ───────────────────────────────────────────────────────────
+
+function DrawerFooter({ issue, onStateChange }) {
+  const [approving, setApproving] = useState(false);
+
+  const footerStyle = { paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 0.75rem)" };
+
+  const handleQuickApprove = async () => {
+    setApproving(true);
+    try {
+      await api.post(`/issues/${encodeURIComponent(issue.id)}/approve`);
+    } catch {
+      // error handled elsewhere
+    } finally {
+      setApproving(false);
+    }
+  };
+
+  const isPlanning = issue.state === "Planning";
+  const isRunning = issue.state === "Running" || issue.state === "Queued";
+  const isInReview = issue.state === "In Review";
+  const hasPlan = !!issue.plan;
+  const isPlanBusy = issue.planningStatus === "planning" || issue.planningStatus === "refining";
+
+  // Planning with a plan ready: quick approve
+  if (isPlanning && hasPlan && !isPlanBusy) {
+    return (
+      <div className="px-6 py-3 border-t border-base-300 shrink-0 flex items-center gap-2" style={footerStyle}>
+        <button
+          className="btn btn-primary btn-sm gap-1.5 flex-1"
+          onClick={handleQuickApprove}
+          disabled={approving}
+        >
+          {approving ? (
+            <><Loader className="size-3.5 animate-spin" /> Approving...</>
+          ) : (
+            <><CheckCircle2 className="size-4" /> Approve & Start</>
+          )}
+        </button>
+      </div>
+    );
+  }
+
+  // Running: show watching status
+  if (isRunning) {
+    return (
+      <div className="px-6 py-3 border-t border-base-300 shrink-0 flex items-center justify-center gap-2" style={footerStyle}>
+        <span className="issue-phase-dot" />
+        <span className="text-sm opacity-50">Watching...</span>
+      </div>
+    );
+  }
+
+  // In Review: quick approve/rework actions
+  if (isInReview) {
+    return (
+      <div className="px-6 py-3 border-t border-base-300 shrink-0 flex items-center gap-2" style={footerStyle}>
+        <button
+          className="btn btn-success btn-sm gap-1.5 flex-1"
+          onClick={() => onStateChange?.(issue.id, "Done")}
+        >
+          <ThumbsUp className="size-4" /> Approve
+        </button>
+        <button
+          className="btn btn-warning btn-sm gap-1.5 flex-1"
+          onClick={() => onStateChange?.(issue.id, "Queued")}
+        >
+          <RotateCcw className="size-4" /> Rework
+        </button>
+      </div>
+    );
+  }
+
+  // Default: just the state badge
+  const StateIcon = STATE_ICON[issue.state] || Circle;
+  return (
+    <div className="px-6 py-3 border-t border-base-300 shrink-0 flex items-center justify-center" style={footerStyle}>
+      <span className={`badge ${STATE_BADGE[issue.state] || "badge-ghost"} gap-1.5`}>
+        <StateIcon className="size-3.5" />
+        {issue.state}
+      </span>
+    </div>
+  );
+}
+
 // ── Main Drawer ─────────────────────────────────────────────────────────────
 
 export function IssueDetailDrawer({ issue, onClose, onStateChange, onRetry, onCancel }) {
@@ -1282,10 +1367,8 @@ export function IssueDetailDrawer({ issue, onClose, onStateChange, onRetry, onCa
           </div>
         </div>
 
-        {/* Footer */}
-        <div className="px-6 py-3 border-t border-base-300 shrink-0 flex items-center justify-end" style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 0.75rem)" }}>
-          <button type="button" className="btn btn-sm btn-ghost" onClick={handleClose}>Close</button>
-        </div>
+        {/* Footer — contextual actions based on issue state */}
+        <DrawerFooter issue={issue} onStateChange={onStateChange} />
       </div>
     </div>
   );

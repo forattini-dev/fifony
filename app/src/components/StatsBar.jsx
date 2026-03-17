@@ -280,6 +280,22 @@ export function StatsBar({ metrics, total, issues = [], compact = false }) {
     .map(([model, data]) => [model, data?.totalTokens || 0])
     .sort((a, b) => b[1] - a[1]);
 
+  // Track whether we've ever had data — once true, stays true for fade-in
+  const hadDataRef = useRef(totalTokens > 0);
+  const [showFadeIn, setShowFadeIn] = useState(false);
+
+  useEffect(() => {
+    if (!hadDataRef.current && totalTokens > 0) {
+      hadDataRef.current = true;
+      setShowFadeIn(true);
+    }
+  }, [totalTokens]);
+
+  // Hide entire StatsBar when total tokens is 0
+  if (totalTokens === 0 && !hasHourlyData) {
+    return null;
+  }
+
   // Mobile: single metric + expandable
   if (isMobile) {
     return (
@@ -297,7 +313,7 @@ export function StatsBar({ metrics, total, issues = [], compact = false }) {
 
   if (compact) {
     return (
-      <div className="flex items-stretch gap-3 bg-base-200 rounded-box animate-fade-in overflow-hidden">
+      <div className={`flex items-stretch gap-3 bg-base-200 rounded-box overflow-hidden ${showFadeIn ? "animate-fade-in-up" : "animate-fade-in"}`}>
         {/* Tokens */}
         <div className="flex items-center gap-5 px-4 py-2.5">
           <div className="flex flex-col">
@@ -317,29 +333,25 @@ export function StatsBar({ metrics, total, issues = [], compact = false }) {
           </div>
         )}
 
-        {/* Hourly tokens sparkline */}
-        <div className="flex flex-col justify-center py-2 px-3 border-l border-base-300 min-w-[140px]">
-          <span className="text-[10px] uppercase tracking-wide opacity-40 mb-1 flex items-center gap-1">
-            <Zap className="size-2.5" /> Tokens/h
-          </span>
-          {hasHourlyData && tokensPerHour.length > 0 ? (
+        {/* Hourly tokens sparkline — hide when all zero */}
+        {hasHourlyData && tokensPerHour.some((h) => h.totalTokens > 0) && (
+          <div className="flex flex-col justify-center py-2 px-3 border-l border-base-300 min-w-[140px]">
+            <span className="text-[10px] uppercase tracking-wide opacity-40 mb-1 flex items-center gap-1">
+              <Zap className="size-2.5" /> Tokens/h
+            </span>
             <HourlySparkline data={tokensPerHour} valueKey="totalTokens" height={28} color="stroke-primary" />
-          ) : (
-            <div className="text-xs opacity-20 h-7 flex items-center">--</div>
-          )}
-        </div>
+          </div>
+        )}
 
-        {/* Hourly events sparkline */}
-        <div className="flex flex-col justify-center py-2 px-3 border-l border-base-300 min-w-[140px]">
-          <span className="text-[10px] uppercase tracking-wide opacity-40 mb-1 flex items-center gap-1">
-            <Activity className="size-2.5" /> Events/h
-          </span>
-          {hasHourlyData && eventsPerHour.length > 0 ? (
+        {/* Hourly events sparkline — hide when all zero */}
+        {hasHourlyData && eventsPerHour.some((h) => h.count > 0) && (
+          <div className="flex flex-col justify-center py-2 px-3 border-l border-base-300 min-w-[140px]">
+            <span className="text-[10px] uppercase tracking-wide opacity-40 mb-1 flex items-center gap-1">
+              <Activity className="size-2.5" /> Events/h
+            </span>
             <HourlySparkline data={eventsPerHour} valueKey="count" height={28} color="stroke-secondary" />
-          ) : (
-            <div className="text-xs opacity-20 h-7 flex items-center">--</div>
-          )}
-        </div>
+          </div>
+        )}
 
         {/* Models breakdown */}
         {modelEntries.length > 0 && (
