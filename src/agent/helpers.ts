@@ -179,3 +179,56 @@ export function extractJsonObjects(text: string): string[] {
   }
   return results;
 }
+
+/**
+ * Attempt to repair truncated JSON by closing open strings, arrays, and objects.
+ * Returns the repaired string or null if no valid JSON start was found.
+ */
+export function repairTruncatedJson(text: string): string | null {
+  // Find the first top-level '{' to start from
+  const firstBrace = text.indexOf("{");
+  if (firstBrace < 0) return null;
+
+  let json = text.slice(firstBrace);
+
+  // Track nesting to figure out what needs closing
+  let inStr = false;
+  let esc = false;
+  const stack: string[] = []; // tracks '{' and '['
+
+  for (let i = 0; i < json.length; i++) {
+    const ch = json[i];
+    if (inStr) {
+      if (esc) { esc = false; continue; }
+      if (ch === "\\") { esc = true; continue; }
+      if (ch === "\"") { inStr = false; }
+      continue;
+    }
+    if (ch === "\"") { inStr = true; continue; }
+    if (ch === "{") stack.push("{");
+    else if (ch === "[") stack.push("[");
+    else if (ch === "}") { if (stack.length > 0 && stack[stack.length - 1] === "{") stack.pop(); }
+    else if (ch === "]") { if (stack.length > 0 && stack[stack.length - 1] === "[") stack.pop(); }
+  }
+
+  // Nothing to repair — JSON is already complete
+  if (!inStr && stack.length === 0) return json;
+
+  // Close open string
+  if (inStr) {
+    // Remove trailing incomplete escape sequence
+    if (json.endsWith("\\")) json = json.slice(0, -1);
+    json += "\"";
+  }
+
+  // Remove trailing comma or colon (invalid before closing bracket)
+  json = json.replace(/[,:\s]+$/, "");
+
+  // Close open brackets in reverse order
+  while (stack.length > 0) {
+    const open = stack.pop();
+    json += open === "{" ? "}" : "]";
+  }
+
+  return json;
+}

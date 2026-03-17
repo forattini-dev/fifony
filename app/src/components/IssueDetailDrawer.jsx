@@ -757,6 +757,7 @@ function PlanningTab({ issue, onStateChange }) {
   const [feedback, setFeedback] = useState("");
   const [error, setError] = useState(null);
   const [localGenerating, setLocalGenerating] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
   const [showAllRefinements, setShowAllRefinements] = useState(false);
   const refineRef = useRef(null);
   const plan = issue.plan;
@@ -793,6 +794,14 @@ function PlanningTab({ issue, onStateChange }) {
     }, 5 * 60 * 1000);
     return () => clearTimeout(timer);
   }, [localGenerating]);
+
+  // Track elapsed time while planning/refining
+  useEffect(() => {
+    if (!isBusy) { setElapsed(0); return; }
+    setElapsed(0);
+    const t = setInterval(() => setElapsed((e) => e + 1), 1000);
+    return () => clearInterval(t);
+  }, [isBusy]);
 
   // Auto-focus refine textarea when plan loads
   useEffect(() => {
@@ -870,11 +879,13 @@ function PlanningTab({ issue, onStateChange }) {
 
   // Generating (server-driven via WS)
   if (isGenerating && !plan) {
+    const elapsedStr = elapsed > 0 ? formatDuration(elapsed * 1000) : "";
     return (
       <div className="flex flex-col items-center justify-center gap-4 py-12">
         <Loader className="size-8 animate-spin text-primary" />
         <div className="text-sm opacity-60">Generating execution plan...</div>
         <div className="text-xs opacity-30">This may take a few minutes</div>
+        {elapsedStr && <div className="text-xs font-mono opacity-40">{elapsedStr} elapsed</div>}
       </div>
     );
   }
@@ -886,9 +897,14 @@ function PlanningTab({ issue, onStateChange }) {
       {isBusy && (
         <div className="rounded-box border border-primary/30 bg-primary/5 p-3 flex items-center gap-3">
           <Loader className="size-4 animate-spin text-primary shrink-0" />
-          <span className="text-sm text-primary font-medium">
-            {isGenerating ? "Re-generating plan..." : `Generating v${refinementCount + 2}...`}
-          </span>
+          <div className="flex-1 min-w-0">
+            <span className="text-sm text-primary font-medium">
+              {isGenerating ? "Re-generating plan..." : `Refining to v${refinementCount + 2}...`}
+            </span>
+            {elapsed > 0 && (
+              <span className="text-xs text-primary/60 ml-2 font-mono">{formatDuration(elapsed * 1000)}</span>
+            )}
+          </div>
         </div>
       )}
 

@@ -120,6 +120,18 @@ function normalizeRoleEfforts(value) {
   };
 }
 
+/**
+ * Build a WorkflowConfig object from wizard pipeline + efforts state.
+ * This is the format expected by `runtime.workflowConfig` (plan/execute/review stages).
+ */
+function buildWorkflowConfig(pipeline, efforts) {
+  return {
+    plan: { provider: pipeline.planner || "claude", model: pipeline.planner || "claude", effort: efforts.planner || "medium" },
+    execute: { provider: pipeline.executor || "codex", model: pipeline.executor || "codex", effort: efforts.executor || "medium" },
+    review: { provider: pipeline.reviewer || "claude", model: pipeline.reviewer || "claude", effort: efforts.reviewer || "medium" },
+  };
+}
+
 // ── Step indicator ──────────────────────────────────────────────────────────
 
 const BASE_STEPPER_LABELS = [
@@ -242,7 +254,6 @@ function WelcomeStep({ workspacePath }) {
           {workspacePath}
         </div>
       )}
-      <GitignoreBanner />
     </div>
   );
 }
@@ -1170,8 +1181,12 @@ export default function OnboardingWizard({ onComplete }) {
       ];
       saveSetting("runtime.agentProvider", pipeline.executor, "runtime").catch(() => {});
       saveSetting("runtime.pipeline", pipelineProviders, "runtime").catch(() => {});
+      // Also save as WorkflowConfig so planner/executor/reviewer use correct providers
+      saveSetting("runtime.workflowConfig", buildWorkflowConfig(pipeline, efforts), "runtime").catch(() => {});
     } else if (currentStepName === "Effort") {
       saveSetting("runtime.defaultEffort", efforts, "runtime").catch(() => {});
+      // Update WorkflowConfig with latest efforts
+      saveSetting("runtime.workflowConfig", buildWorkflowConfig(pipeline, efforts), "runtime").catch(() => {});
     } else if (currentStepName === "Workers & Theme") {
       saveSetting("ui.theme", selectedTheme, "ui").catch(() => {});
       api.post("/config/concurrency", { concurrency }).catch(() => {});
@@ -1211,6 +1226,9 @@ export default function OnboardingWizard({ onComplete }) {
       saves.push(saveSetting("runtime.agentProvider", pipeline.executor, "runtime"));
       saves.push(saveSetting("runtime.pipeline", pipelineProviders, "runtime"));
 
+      // Save as WorkflowConfig (the format read by planner, executor, reviewer stages)
+      saves.push(saveSetting("runtime.workflowConfig", buildWorkflowConfig(pipeline, efforts), "runtime"));
+
       saves.push(saveSetting("runtime.defaultEffort", efforts, "runtime"));
       saves.push(api.post("/config/concurrency", { concurrency }));
 
@@ -1238,7 +1256,7 @@ export default function OnboardingWizard({ onComplete }) {
       qc.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
       onComplete?.();
     }
-  }, [selectedProvider, efforts, concurrency, selectedTheme, selectedAgents, selectedSkills, qc, onComplete]);
+  }, [pipeline, selectedProvider, efforts, concurrency, selectedTheme, selectedAgents, selectedSkills, qc, onComplete]);
 
   // Can proceed from step
   const canProceed =
@@ -1275,8 +1293,9 @@ export default function OnboardingWizard({ onComplete }) {
 
       {/* Header with step indicator — hidden on welcome screen */}
       {step > 0 && (
-        <div className="relative z-10 pt-6 pb-2 px-4 flex justify-center">
+        <div className="relative z-10 pt-6 pb-2 px-4 flex flex-col items-center gap-3">
           <StepIndicator current={step} wantsDiscovery={wantsDiscovery} />
+          <GitignoreBanner />
         </div>
       )}
 

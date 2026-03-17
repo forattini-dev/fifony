@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { IssuePlan, RuntimeConfig, WorkflowConfig, WorkflowDefinition, RuntimeState, IssueEntry } from "./types.ts";
-import { appendFileTail, now, toStringArray, extractJsonObjects } from "./helpers.ts";
+import { appendFileTail, now, toStringArray, extractJsonObjects, repairTruncatedJson } from "./helpers.ts";
 import { detectAvailableProviders } from "./providers.ts";
 import { replacePersistedSetting, getSettingStateResource } from "./store.ts";
 import { getWorkflowConfig, loadRuntimeSettings } from "./settings.ts";
@@ -261,6 +261,29 @@ function parsePlanOutput(raw: string): IssuePlan | null {
     } catch {}
   }
 
+  // Last resort: try to repair truncated JSON output
+  const repaired = repairTruncatedJson(text);
+  if (repaired) {
+    try {
+      const parsed = JSON.parse(repaired);
+      const plan = tryBuildPlan(parsed);
+      if (plan) {
+        logger.warn("[Planner] Plan parsed from repaired truncated JSON output");
+        return plan;
+      }
+      // Check for envelope
+      if (parsed?.structured_output && typeof parsed.structured_output === "object") {
+        const innerPlan = tryBuildPlan(parsed.structured_output);
+        if (innerPlan) {
+          logger.warn("[Planner] Plan parsed from repaired truncated JSON envelope");
+          return innerPlan;
+        }
+      }
+    } catch {
+      logger.debug("[Planner] JSON repair attempted but result still not parseable");
+    }
+  }
+
   return null;
 }
 
@@ -462,12 +485,19 @@ export async function generatePlan(
   logger.debug({ outputLength: output.length }, "[Planner] Plan command completed, parsing output");
   const plan = parsePlanOutput(output);
   if (!plan) {
+    const firstBrace = output.indexOf("{");
+    const lastBrace = output.lastIndexOf("}");
+    const truncationHint = firstBrace >= 0 && lastBrace < firstBrace
+      ? " (JSON appears truncated — opening brace found but no matching close)"
+      : firstBrace < 0
+        ? " (no JSON object found in output)"
+        : "";
     // Persist: error
     session.status = "error";
-    session.error = `Could not parse plan. Output: ${output.slice(0, 500)}`;
+    session.error = `Could not parse plan${truncationHint}. Output length: ${output.length} chars. Tail: ${output.slice(-200)}`;
     session.pid = null;
     await persistSession(session);
-    logger.error({ rawOutput: output.slice(0, 2000) }, "[Planner] Could not parse plan from AI output");
+    logger.error({ rawOutput: output.slice(0, 2000), outputLength: output.length, firstBrace, lastBrace }, "[Planner] Could not parse plan from AI output");
     throw new Error(session.error);
   }
 
@@ -622,8 +652,15 @@ export async function refinePlan(
 
   const plan = parsePlanOutput(output);
   if (!plan) {
-    logger.error({ rawOutput: output.slice(0, 2000) }, "Could not parse refined plan from AI output");
-    throw new Error(`Could not parse refined plan. Output: ${output.slice(0, 500)}`);
+    const firstBrace = output.indexOf("{");
+    const lastBrace = output.lastIndexOf("}");
+    const truncationHint = firstBrace >= 0 && lastBrace < firstBrace
+      ? " (JSON appears truncated — opening brace found but no matching close)"
+      : firstBrace < 0
+        ? " (no JSON object found in output)"
+        : "";
+    logger.error({ rawOutput: output.slice(0, 2000), outputLength: output.length, firstBrace, lastBrace }, "Could not parse refined plan from AI output");
+    throw new Error(`Could not parse refined plan${truncationHint}. Output length: ${output.length} chars. Tail: ${output.slice(-200)}`);
   }
 
   plan.provider = planStageModel ? `${preferred}/${planStageModel}` : preferred;
@@ -693,6 +730,8 @@ export function generatePlanInBackground(
   issue.planningError = undefined;
   issue.updatedAt = now();
 
+  addEvent(issue.id, "info", `${fast ? "Fast plan" : "Plan"} generation starting for ${issue.identifier} (provider detection in progress).`);
+
   // Fire-and-forget — errors are caught and stored on the issue
   generatePlan(issue.title, issue.description, config, workflowDefinition, { fast })
     .then(async ({ plan, usage }) => {
@@ -736,6 +775,9 @@ export function refinePlanInBackground(
   issue.planningStatus = "refining";
   issue.planningError = undefined;
   issue.updatedAt = now();
+
+  const feedbackSnippet = feedback.length > 60 ? `${feedback.slice(0, 57)}...` : feedback;
+  addEvent(issue.id, "info", `Plan refinement starting for ${issue.identifier}: "${feedbackSnippet}".`);
 
   refinePlan(issue, feedback, config, workflowDefinition)
     .then(async ({ plan, usage }) => {
