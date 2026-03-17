@@ -229,7 +229,13 @@ function normalizeArgs(rawArgs: string[]): string[] {
 
 const args = normalizeArgs(process.argv.slice(2));
 
-cli.run(args).catch((error) => {
-  console.error(`Failed to start fifony CLI: ${String(error)}`);
-  exit(1);
-});
+// Handle help explicitly since cli-args-parser doesn't auto-detect it
+const firstArg = args[0];
+if (firstArg === "help" || firstArg === "--help" || firstArg === "-h") {
+  console.log(cli.help());
+} else {
+  cli.run(args).catch((error) => {
+    console.error(`Failed to start fifony CLI: ${String(error)}`);
+    exit(1);
+  });
+}
