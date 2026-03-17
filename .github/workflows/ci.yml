@@ -171,16 +171,19 @@ jobs:
           test -n "$TARBALL"
           TMPDIR=$(mktemp -d)
           cd "$TMPDIR"
-          npm init -y >/dev/null 2>&1
+          echo '{"type":"module"}' > package.json
           npm install "$GITHUB_WORKSPACE/$TARBALL" >/dev/null 2>&1
-          node <<'JS'
+          node --input-type=commonjs <<'JS'
           const { spawn } = require('node:child_process');
           const child = spawn('./node_modules/.bin/fifony', ['--once'], { stdio: ['ignore', 'pipe', 'pipe'] });
+          let stdout = '';
           let stderr = '';
+          child.stdout.on('data', (chunk) => stdout += chunk.toString());
           child.stderr.on('data', (chunk) => stderr += chunk.toString());
           child.on('exit', (code) => {
-            if (code !== 1 || !stderr.includes('No agent command configured')) {
-              console.error({ code, stderr });
+            const combined = stdout + stderr;
+            if (code !== 1 || !combined.includes('No agent command configured')) {
+              console.error({ code, stdout: stdout.slice(-500), stderr: stderr.slice(-500) });
               process.exit(1);
             }
             console.log('packed tarball smoke OK');
