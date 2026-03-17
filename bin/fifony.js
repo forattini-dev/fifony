@@ -12,16 +12,18 @@ const workspaceRoot = env.FIFONY_WORKSPACE_ROOT ?? cwd();
 const distCli = resolve(packageRoot, "dist", "cli.js");
 const srcCli = resolve(packageRoot, "src", "cli.ts");
 const forceSource = argv.includes("--dev") || env.NODE_ENV === "development";
-const useCompiled = !forceSource && existsSync(distCli);
+const hasCompiled = existsSync(distCli);
+const hasSrc = existsSync(srcCli);
 
-if (useCompiled) {
-  // Production: run compiled JS directly
+// Always prefer compiled dist — it's what ships in the npm package
+if (hasCompiled && !forceSource) {
   process.env.FIFONY_WORKSPACE_ROOT = workspaceRoot;
-  import(distCli).catch((error) => {
+  const cliUrl = new URL(`file://${distCli}`).href;
+  import(cliUrl).catch((error) => {
     console.error(`Failed to start fifony: ${String(error)}`);
     exit(1);
   });
-} else {
+} else if (hasSrc) {
   // Development: use tsx to run TypeScript source
   const { spawn } = await import("node:child_process");
   const { createRequire } = await import("node:module");
@@ -32,7 +34,7 @@ if (useCompiled) {
   try {
     tsxCli = require.resolve("tsx/cli");
   } catch {
-    console.error("No compiled dist/ found and tsx is not installed. Run 'pnpm build' first.");
+    console.error("Source found but tsx is not installed. Run 'pnpm install' or 'pnpm build' first.");
     exit(1);
   }
 
@@ -51,4 +53,7 @@ if (useCompiled) {
     console.error(`Failed to start fifony CLI: ${String(error)}`);
     exit(1);
   });
+} else {
+  console.error("Neither dist/cli.js nor src/cli.ts found. The package may be corrupted — try reinstalling.");
+  exit(1);
 }
