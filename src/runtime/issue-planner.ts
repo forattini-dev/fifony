@@ -250,8 +250,14 @@ function parsePlanOutput(raw: string): IssuePlan | null {
   for (const candidate of candidates) {
     try {
       const parsed = JSON.parse(candidate.trim());
+      // Direct plan
       const plan = tryBuildPlan(parsed);
       if (plan) return plan;
+      // Envelope with structured_output
+      if (parsed?.structured_output && typeof parsed.structured_output === "object") {
+        const innerPlan = tryBuildPlan(parsed.structured_output);
+        if (innerPlan) return innerPlan;
+      }
     } catch {}
   }
 
@@ -389,7 +395,6 @@ export async function generatePlan(
   writeFileSync(promptFile, `${prompt}\n`, "utf8");
   writeFileSync(envFile, [
     `export FIFONY_PROMPT_FILE=${JSON.stringify(promptFile)}`,
-    `export FIFONY_PROMPT=${JSON.stringify(prompt)}`,
     `export FIFONY_AGENT_PROVIDER=${JSON.stringify(preferred)}`,
   ].join("\n"), "utf8");
 
@@ -568,7 +573,6 @@ export async function refinePlan(
   writeFileSync(promptFile, `${prompt}\n`, "utf8");
   writeFileSync(envFile, [
     `export FIFONY_PROMPT_FILE=${JSON.stringify(promptFile)}`,
-    `export FIFONY_PROMPT=${JSON.stringify(prompt)}`,
     `export FIFONY_AGENT_PROVIDER=${JSON.stringify(preferred)}`,
   ].join("\n"), "utf8");
 
