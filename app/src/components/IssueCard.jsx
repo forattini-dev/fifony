@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Zap, Circle, Activity, Lightbulb, Loader } from "lucide-react";
+import { Zap, Circle, Activity, Lightbulb, Loader, CheckSquare } from "lucide-react";
 import { timeAgo } from "../utils.js";
 
 const STATE_BADGE = {
@@ -41,7 +41,7 @@ function derivePhase(tokensByPhase) {
   return null;
 }
 
-export function IssueCard({ issue, onSelect, dragHandlers, isDragging }) {
+export function IssueCard({ issue, onSelect, dragHandlers, isDragging, isSelected, onToggleSelect, hasSelection }) {
   const isRunning = issue.state === "Running";
   const isInReview = issue.state === "In Review";
   const isPlanning = issue.state === "Planning";
@@ -85,11 +85,38 @@ export function IssueCard({ issue, onSelect, dragHandlers, isDragging }) {
     ? issue.commandOutputTail.trim().split("\n").pop()?.slice(-60) || null
     : null;
 
+  const handleClick = (e) => {
+    if (e.shiftKey) {
+      e.preventDefault();
+      onToggleSelect?.(issue.id);
+      return;
+    }
+    // If there's an active selection, clicks toggle instead of opening
+    if (hasSelection) {
+      e.preventDefault();
+      onToggleSelect?.(issue.id);
+      return;
+    }
+    onSelect?.(issue);
+  };
+
+  const handleKeyDown = (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      if (event.shiftKey || hasSelection) {
+        onToggleSelect?.(issue.id);
+      } else {
+        onSelect?.(issue);
+      }
+    }
+  };
+
   return (
     <div
       data-issue-id={issue.id}
       className={[
-        "card card-compact bg-base-100 border border-base-300 border-l-[3px]",
+        "card card-compact bg-base-100 border border-l-[3px] relative",
+        isSelected ? "border-primary ring-2 ring-primary/30 border-base-300" : "border-base-300",
         STATE_BORDER_LEFT[issue.state] || "",
         // State-differentiated visual weight
         isPlanning ? "animate-pulse-soft-border" : "",
@@ -106,19 +133,28 @@ export function IssueCard({ issue, onSelect, dragHandlers, isDragging }) {
       style={{ overflow: "hidden" }}
       role="button"
       tabIndex={0}
-      onClick={() => onSelect?.(issue)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onSelect?.(issue);
-        }
-      }}
-      aria-label={`Open issue ${issue.identifier}`}
+      onClick={handleClick}
+      onKeyDown={handleKeyDown}
+      aria-label={`${isSelected ? "Deselect" : "Open"} issue ${issue.identifier}`}
+      aria-selected={isSelected}
       {...(dragHandlers || {})}
     >
+      {/* Selection checkbox overlay */}
+      {(isSelected || hasSelection) && (
+        <div className="absolute top-1.5 left-1.5 z-10">
+          <div className={`size-5 rounded flex items-center justify-center transition-all ${
+            isSelected
+              ? "bg-primary text-primary-content"
+              : "bg-base-300/60 border border-base-content/20"
+          }`}>
+            {isSelected && <CheckSquare size={14} />}
+          </div>
+        </div>
+      )}
+
       <div className="card-body gap-1 p-3">
         <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
+          <div className={`min-w-0 ${hasSelection ? "pl-5" : ""}`}>
             <span className="font-mono text-xs opacity-50">{issue.identifier}</span>
             <h3 className={`font-semibold text-sm truncate ${isCancelled ? "line-through opacity-60" : ""}`}>{issue.title}</h3>
           </div>

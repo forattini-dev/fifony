@@ -1,9 +1,9 @@
 import { useMemo, useCallback, useRef, useEffect, useState } from "react";
 import { IssueCard } from "./IssueCard.jsx";
 import { EmptyState } from "./EmptyState.jsx";
-import { Lightbulb, Plus, Play, Eye, AlertTriangle, CheckCircle, XCircle, RotateCcw, ArrowRight, ChevronDown } from "lucide-react";
+import { Lightbulb, Plus, Play, Eye, AlertTriangle, CheckCircle, XCircle, RotateCcw, ArrowRight, ChevronDown, X } from "lucide-react";
 import { useDragAndDrop } from "../hooks/useDragAndDrop.js";
-import { getIssueTransitions } from "../utils.js";
+import { getIssueTransitions, ISSUE_STATE_MACHINE } from "../utils.js";
 
 function ColumnBadge({ count, className }) {
   const prevRef = useRef(count);
@@ -195,7 +195,7 @@ const COLLAPSE_LIMITS = {
   Cancelled: 3,
 };
 
-function KanbanColumn({ col, issues, empty, badgeClass, dragState, registerColumn, getCardHandlers, onSelect, onCreateIssue, lastDroppedId, hasRunningAgents, totalIssues, onLongPress }) {
+function KanbanColumn({ col, issues, empty, badgeClass, dragState, registerColumn, getCardHandlers, onSelect, onCreateIssue, lastDroppedId, hasRunningAgents, totalIssues, onLongPress, selectedIds, onToggleSelect, hasSelection }) {
   const colRef = useRef(null);
   const [expanded, setExpanded] = useState(false);
 
@@ -285,6 +285,9 @@ function KanbanColumn({ col, issues, empty, badgeClass, dragState, registerColum
                       onSelect={onSelect}
                       dragHandlers={getCardHandlers(issue, col)}
                       isDragging={beingDragged}
+                      isSelected={selectedIds?.has(issue.id)}
+                      onToggleSelect={onToggleSelect}
+                      hasSelection={hasSelection}
                     />
                   </div>
                 );
@@ -312,11 +315,120 @@ function KanbanColumn({ col, issues, empty, badgeClass, dragState, registerColum
   );
 }
 
+/** Compute valid bulk transitions: intersection of transitions for all selected issues */
+function computeBulkTransitions(selectedIds, issues) {
+  const selectedIssues = issues.filter((i) => selectedIds.has(i.id));
+  if (selectedIssues.length === 0) return [];
+
+  // Get valid transitions for each selected issue (excluding current state)
+  const transitionSets = selectedIssues.map((issue) => {
+    const transitions = ISSUE_STATE_MACHINE[issue.state] || [];
+    return new Set(transitions.filter((s) => s !== issue.state));
+  });
+
+  // Intersection of all sets
+  const first = transitionSets[0];
+  const common = [...first].filter((t) =>
+    transitionSets.every((set) => set.has(t))
+  );
+
+  return common;
+}
+
+/** Floating action bar for bulk operations */
+function BulkActionBar({ count, transitions, onBulkAction, onClear }) {
+  return (
+    <div
+      className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 bg-base-100 border border-base-300 rounded-box shadow-2xl px-4 py-2.5 flex items-center gap-3 animate-slide-up-sheet"
+      role="toolbar"
+      aria-label="Bulk actions"
+    >
+      <div className="flex items-center gap-2 flex-wrap">
+        {transitions.map((state) => (
+          <button
+            key={state}
+            className="btn btn-sm btn-outline gap-1"
+            onClick={() => onBulkAction(state)}
+          >
+            <ArrowRight className="size-3" />
+            {state}
+          </button>
+        ))}
+      </div>
+
+      <div className="divider divider-horizontal mx-0" />
+
+      <span className="text-sm font-medium whitespace-nowrap opacity-70">
+        {count} selected
+      </span>
+
+      <button
+        className="btn btn-sm btn-ghost btn-square"
+        onClick={onClear}
+        aria-label="Clear selection"
+      >
+        <X className="size-4" />
+      </button>
+    </div>
+  );
+}
+
 export function BoardView({ issues, onStateChange, onRetry, onCancel, onSelect, onCreateIssue, isLoading }) {
   const [lastDroppedId, setLastDroppedId] = useState(null);
   const [activeColumn, setActiveColumn] = useState(0);
   const [actionSheetIssue, setActionSheetIssue] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
   const scrollContainerRef = useRef(null);
+
+  const hasSelection = selectedIds.size > 0;
+
+  const toggleSelect = useCallback((id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => {
+    setSelectedIds(new Set());
+  }, []);
+
+  // Escape key clears selection
+  useEffect(() => {
+    if (!hasSelection) return;
+    const handler = (e) => {
+      if (e.key === "Escape") clearSelection();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [hasSelection, clearSelection]);
+
+  // Clean up selectedIds when issues change (remove stale IDs)
+  useEffect(() => {
+    if (!hasSelection) return;
+    const issueIdSet = new Set(issues.map((i) => i.id));
+    setSelectedIds((prev) => {
+      const next = new Set([...prev].filter((id) => issueIdSet.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [issues, hasSelection]);
+
+  const bulkTransitions = useMemo(
+    () => computeBulkTransitions(selectedIds, issues),
+    [selectedIds, issues]
+  );
+
+  const handleBulkAction = useCallback(
+    (newState) => {
+      for (const id of selectedIds) {
+        onStateChange(id, newState);
+      }
+      clearSelection();
+    },
+    [selectedIds, onStateChange, clearSelection]
+  );
 
   const grouped = useMemo(() => {
     const buckets = Object.fromEntries(COLUMNS.map((c) => [c, []]));
@@ -455,6 +567,9 @@ export function BoardView({ issues, onStateChange, onRetry, onCancel, onSelect, 
               hasRunningAgents={hasRunningAgents}
               totalIssues={issues.length}
               onLongPress={handleLongPress}
+              selectedIds={selectedIds}
+              onToggleSelect={toggleSelect}
+              hasSelection={hasSelection}
             />
           ))}
         </div>
@@ -472,6 +587,16 @@ export function BoardView({ issues, onStateChange, onRetry, onCancel, onSelect, 
           onClose={() => setActionSheetIssue(null)}
           onStateChange={handleStateChange}
           onSelect={guardedOnSelect}
+        />
+      )}
+
+      {/* Bulk selection floating action bar */}
+      {hasSelection && (
+        <BulkActionBar
+          count={selectedIds.size}
+          transitions={bulkTransitions}
+          onBulkAction={handleBulkAction}
+          onClear={clearSelection}
         />
       )}
     </>
