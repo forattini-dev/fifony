@@ -1,42 +1,9 @@
 import { createLazyFileRoute } from "@tanstack/react-router";
 import { useTokenAnalytics, useHourlyAnalytics } from "../hooks.js";
-import { Zap, TrendingUp, Layers, Activity, Cpu, Clock, DollarSign } from "lucide-react";
+import { Zap, TrendingUp, Layers, Activity, Cpu, Clock } from "lucide-react";
 import { useRef, useEffect, useState } from "react";
 
-// ── Cost estimation ──────────────────────────────────────────────────────────
-
-const MODEL_PRICING = {
-  "claude-opus-4-6": { input: 15 / 1_000_000, output: 75 / 1_000_000 },
-  "claude-sonnet-4-6": { input: 3 / 1_000_000, output: 15 / 1_000_000 },
-  "claude-haiku-4-5": { input: 0.8 / 1_000_000, output: 4 / 1_000_000 },
-  "codex": { input: 2.5 / 1_000_000, output: 10 / 1_000_000 },
-};
-
-function estimateCost(inputTokens, outputTokens, model) {
-  // Try exact match first, then partial match
-  let pricing = MODEL_PRICING[model];
-  if (!pricing) {
-    const key = Object.keys(MODEL_PRICING).find((k) => model?.includes(k) || k.includes(model));
-    pricing = key ? MODEL_PRICING[key] : { input: 3 / 1_000_000, output: 15 / 1_000_000 };
-  }
-  return (inputTokens || 0) * pricing.input + (outputTokens || 0) * pricing.output;
-}
-
-function estimateTotalCost(byModel) {
-  if (!byModel) return 0;
-  return Object.entries(byModel).reduce((sum, [model, data]) => {
-    return sum + estimateCost(data?.inputTokens || 0, data?.outputTokens || 0, model);
-  }, 0);
-}
-
-function formatCost(usd) {
-  if (!usd || usd === 0) return "$0.00";
-  if (usd < 0.01) return `$${usd.toFixed(4)}`;
-  if (usd < 1) return `$${usd.toFixed(3)}`;
-  return `$${usd.toFixed(2)}`;
-}
-
-// ── Format helpers ───────────────────────────────────────────────────────────
+// ── Format helpers ───────────────────────────────────────────────────────
 
 function formatTokens(n) {
   if (!n || n === 0) return "0";
@@ -50,7 +17,7 @@ function formatTokensFull(n) {
   return n.toLocaleString();
 }
 
-// ── Animated counter ─────────────────────────────────────────────────────────
+// ── Animated counter ─────────────────────────────────────────────────────
 
 function AnimatedCount({ value, format = formatTokens, className = "" }) {
   const [display, setDisplay] = useState(() => format(value));
@@ -94,7 +61,7 @@ function AnimatedCount({ value, format = formatTokens, className = "" }) {
   );
 }
 
-// ── Phase breakdown bar ──────────────────────────────────────────────────────
+// ── Phase breakdown bar ──────────────────────────────────────────────────
 
 const PHASES = [
   { key: "planner", label: "Plan", color: "bg-info", textColor: "text-info" },
@@ -144,9 +111,9 @@ function PhaseBreakdownLarge({ byPhase }) {
   );
 }
 
-// ── Daily bar chart (large) ──────────────────────────────────────────────────
+// ── Daily bar chart (large) ──────────────────────────────────────────────
 
-function DailyBarChart({ data, height = 160, byModel }) {
+function DailyBarChart({ data, height = 160 }) {
   if (!data || data.length === 0) return null;
   const max = Math.max(...data.map((d) => d.totalTokens || 0), 1);
 
@@ -180,7 +147,7 @@ function DailyBarChart({ data, height = 160, byModel }) {
   );
 }
 
-// ── Hourly sparkline (large) ─────────────────────────────────────────────────
+// ── Hourly sparkline (large) ─────────────────────────────────────────────
 
 function LargeSparkline({ data, valueKey = "totalTokens", height = 60, color = "stroke-primary", label }) {
   if (!data || data.length === 0) return null;
@@ -227,7 +194,7 @@ function LargeSparkline({ data, valueKey = "totalTokens", height = 60, color = "
   );
 }
 
-// ── Model breakdown ──────────────────────────────────────────────────────────
+// ── Model breakdown ──────────────────────────────────────────────────────
 
 function ModelBreakdown({ byModel }) {
   if (!byModel) return null;
@@ -238,7 +205,6 @@ function ModelBreakdown({ byModel }) {
       inputTokens: data?.inputTokens || 0,
       outputTokens: data?.outputTokens || 0,
       totalTokens: data?.totalTokens || 0,
-      cost: estimateCost(data?.inputTokens || 0, data?.outputTokens || 0, model),
     }))
     .sort((a, b) => b.totalTokens - a.totalTokens);
 
@@ -256,7 +222,6 @@ function ModelBreakdown({ byModel }) {
             <th className="text-right">Output</th>
             <th className="text-right">Total</th>
             <th className="text-right">Share</th>
-            <th className="text-right">Est. Cost</th>
           </tr>
         </thead>
         <tbody>
@@ -280,7 +245,6 @@ function ModelBreakdown({ byModel }) {
                     <span className="text-xs opacity-60 w-8 text-right">{pct}%</span>
                   </div>
                 </td>
-                <td className="text-right font-mono text-xs">{formatCost(e.cost)}</td>
               </tr>
             );
           })}
@@ -290,13 +254,10 @@ function ModelBreakdown({ byModel }) {
   );
 }
 
-// ── Top issues table ─────────────────────────────────────────────────────────
+// ── Top issues table ─────────────────────────────────────────────────────
 
-function TopIssuesTable({ topIssues, byModel }) {
+function TopIssuesTable({ topIssues }) {
   if (!topIssues || topIssues.length === 0) return null;
-
-  // Use a default pricing estimate if we don't have per-issue model info
-  const defaultPricing = { input: 3 / 1_000_000, output: 15 / 1_000_000 };
 
   return (
     <div className="overflow-x-auto">
@@ -306,15 +267,11 @@ function TopIssuesTable({ topIssues, byModel }) {
             <th className="w-20">Issue</th>
             <th>Title</th>
             <th className="text-right">Tokens</th>
-            <th className="text-right">Est. Cost</th>
             <th className="hidden sm:table-cell">Phase Split</th>
           </tr>
         </thead>
         <tbody>
           {topIssues.slice(0, 10).map((issue) => {
-            const inputTokens = issue.inputTokens || Math.round((issue.totalTokens || 0) * 0.6);
-            const outputTokens = issue.outputTokens || (issue.totalTokens || 0) - inputTokens;
-            const cost = inputTokens * defaultPricing.input + outputTokens * defaultPricing.output;
             const byPhase = issue.byPhase;
             const total = issue.totalTokens || 0;
 
@@ -323,7 +280,6 @@ function TopIssuesTable({ topIssues, byModel }) {
                 <td className="font-mono text-xs font-semibold text-primary">{issue.identifier}</td>
                 <td className="max-w-[200px] truncate text-sm" title={issue.title}>{issue.title || "-"}</td>
                 <td className="text-right font-mono text-xs font-semibold">{formatTokens(total)}</td>
-                <td className="text-right font-mono text-xs opacity-70">{formatCost(cost)}</td>
                 <td className="hidden sm:table-cell">
                   {byPhase ? (
                     <div className="flex h-1.5 rounded-full overflow-hidden bg-base-300 w-24">
@@ -354,15 +310,15 @@ function TopIssuesTable({ topIssues, byModel }) {
   );
 }
 
-// ── Skeleton ─────────────────────────────────────────────────────────────────
+// ── Skeleton ─────────────────────────────────────────────────────────────
 
 function AnalyticsSkeleton() {
   return (
     <div className="flex-1 flex flex-col min-h-0 px-4 pb-4 pt-3">
       <div className="max-w-6xl w-full mx-auto space-y-6">
         <div className="skeleton-line h-8 w-48" />
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {[...Array(4)].map((_, i) => (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[...Array(3)].map((_, i) => (
             <div key={i} className="skeleton-card h-28" style={{ animationDelay: `${i * 80}ms` }} />
           ))}
         </div>
@@ -377,7 +333,7 @@ function AnalyticsSkeleton() {
   );
 }
 
-// ── Empty state ──────────────────────────────────────────────────────────────
+// ── Empty state ──────────────────────────────────────────────────────────
 
 function EmptyAnalytics() {
   return (
@@ -391,7 +347,7 @@ function EmptyAnalytics() {
   );
 }
 
-// ── Page component ───────────────────────────────────────────────────────────
+// ── Page component ───────────────────────────────────────────────────────
 
 export const Route = createLazyFileRoute("/analytics")({
   component: AnalyticsPage,
@@ -413,8 +369,6 @@ function AnalyticsPage() {
   const tokensPerHour = hourlyData?.tokensPerHour || [];
   const eventsPerHour = hourlyData?.eventsPerHour || [];
 
-  const totalCost = estimateTotalCost(byModel);
-
   // Today vs this week
   const today = new Date().toISOString().slice(0, 10);
   const todayEntry = daily.find((d) => d.date === today);
@@ -431,7 +385,7 @@ function AnalyticsPage() {
 
         {/* Section 1: Token Overview */}
         <section>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {/* Total tokens */}
             <div className="stat bg-base-200 rounded-box">
               <div className="stat-figure text-primary">
@@ -442,18 +396,6 @@ function AnalyticsPage() {
                 <AnimatedCount value={totalTokens} />
               </div>
               <div className="stat-desc font-mono">{formatTokensFull(totalTokens)}</div>
-            </div>
-
-            {/* Estimated cost */}
-            <div className="stat bg-base-200 rounded-box">
-              <div className="stat-figure text-secondary">
-                <DollarSign className="size-6" />
-              </div>
-              <div className="stat-title">Estimated Cost</div>
-              <div className="stat-value text-2xl">
-                <AnimatedCount value={Math.round(totalCost * 100)} format={(v) => formatCost(v / 100)} />
-              </div>
-              <div className="stat-desc">Based on model pricing</div>
             </div>
 
             {/* Today */}
@@ -497,7 +439,7 @@ function AnalyticsPage() {
               </h2>
               <span className="text-xs opacity-40">Last {daily.length} days</span>
             </div>
-            <DailyBarChart data={daily} height={160} byModel={byModel} />
+            <DailyBarChart data={daily} height={160} />
           </section>
         )}
 
@@ -538,7 +480,7 @@ function AnalyticsPage() {
               <Zap className="size-4 text-accent" />
               Top Issues by Token Usage
             </h2>
-            <TopIssuesTable topIssues={topIssues} byModel={byModel} />
+            <TopIssuesTable topIssues={topIssues} />
           </section>
         )}
 
