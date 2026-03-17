@@ -170,6 +170,7 @@ export async function ensureNotStale(state: RuntimeState, staleTimeoutMs: number
       && !TERMINAL_STATES.has(issue.state)
       && !issueHasResumableSession(issue)
     ) {
+      logger.info({ issueId: issue.id, identifier: issue.identifier, state: issue.state, updatedAt: issue.updatedAt }, "[Scheduler] Recovering stale issue");
       issue.attempts += 1;
       issue.nextRetryAt = getNextRetryAt(issue, state.config.retryDelayMs);
       issue.startedAt = undefined;
@@ -194,8 +195,12 @@ export function pickNextIssues(
   running: Set<string>,
   workflowDefinition: WorkflowDefinition | null,
 ): IssueEntry[] {
-  return state.issues
-    .filter((issue) => canRunIssue(issue, running, state) && !isPerStateFull(issue, state, running))
+  const candidates = state.issues
+    .filter((issue) => canRunIssue(issue, running, state) && !isPerStateFull(issue, state, running));
+  if (candidates.length > 0) {
+    logger.debug({ candidates: candidates.map((i) => ({ id: i.identifier, state: i.state, priority: i.priority })) }, "[Scheduler] Eligible candidates for dispatch");
+  }
+  return candidates
     .sort((a, b) => {
       const stateWeight = (c: IssueEntry) => c.state === "Running" ? 0 : c.state === "Blocked" ? 2 : 1;
       const weightDiff = stateWeight(a) - stateWeight(b);
@@ -261,9 +266,12 @@ export async function scheduler(
       } else {
         const ready = pickNextIssues(state, running, workflowDefinition);
         const slots = state.config.workerConcurrency - running.size;
-        if (slots > 0) {
+        if (slots > 0 && ready.length > 0) {
           const next = ready.slice(0, Math.max(0, slots));
+          logger.debug({ slots, readyCount: ready.length, dispatching: next.map((i) => i.identifier) }, "[Scheduler] Dispatching issues");
           await Promise.all(next.map((issue) => runIssueOnce(state, issue, running, workflowDefinition)));
+        } else if (ready.length > 0 && slots <= 0) {
+          logger.debug({ runningCount: running.size, readyCount: ready.length, concurrency: state.config.workerConcurrency }, "[Scheduler] No slots available, waiting");
         }
       }
       state.updatedAt = now();
@@ -272,7 +280,7 @@ export async function scheduler(
         await persistState(state);
         lastPersistAt = Date.now();
       }
-      logger.debug("Scheduler tick completed.");
+      logger.debug({ runningCount: running.size, issueCount: state.issues.length, dirty: hasDirtyState() }, "[Scheduler] Tick completed");
       const effectivePoll = running.size > 0 ? ACTIVE_POLL_MS : IDLE_POLL_MS;
       await Promise.race([
         sleep(effectivePoll),
@@ -299,12 +307,17 @@ export async function scheduler(
 
     if (next.length === 0 && running.size === 0) {
       if (state.issues.some((issue) => issue.state === "Blocked" && issue.nextRetryAt && issue.attempts < issue.maxAttempts)) {
+        logger.debug("[Scheduler] Batch mode: waiting for blocked issues to become eligible for retry");
         await sleep(state.config.pollIntervalMs);
         continue;
       }
+      logger.debug("[Scheduler] Batch mode: no more work to do, exiting loop");
       break;
     }
 
+    if (next.length > 0) {
+      logger.debug({ slots, dispatching: next.map((i) => i.identifier) }, "[Scheduler] Batch mode: dispatching issues");
+    }
     await Promise.all(next.map((issue) => runIssueOnce(state, issue, running, workflowDefinition)));
     state.updatedAt = now();
     await persistState(state);

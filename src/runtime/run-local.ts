@@ -59,6 +59,8 @@ async function main() {
 
   mkdirSync(STATE_ROOT, { recursive: true });
   initLogger(STATE_ROOT);
+  logger.info("[Boot] Fifony runtime starting");
+  logger.info({ stateRoot: STATE_ROOT, cwd: process.cwd() }, "[Boot] State root initialized");
 
   // Detect available providers
   const detectedProviders = detectAvailableProviders();
@@ -74,7 +76,9 @@ async function main() {
   if (skipSource) setSkipSource(true);
 
   debugBoot("main:state-root-ready");
+  logger.debug("[Boot] Loading workflow definition");
   const workflowDefinition = loadWorkflowDefinition();
+  logger.info({ workflowPath: workflowDefinition.workflowPath }, "[Boot] Workflow definition loaded");
   debugBoot("main:workflow-loaded");
 
   const port = parsePort(args);
@@ -97,7 +101,9 @@ async function main() {
 
   // ── Phase B: Parallel initialization ────────────────────────────────────────
   debugBoot("main:phase-b-start");
+  logger.debug("[Boot] Initializing state store (s3db)");
   await initStateStore();
+  logger.info("[Boot] State store initialized");
   debugBoot("main:store-initialized");
 
   // ── Early API start: dashboard available while boot continues ─────────────
@@ -130,12 +136,14 @@ async function main() {
 
   // ── Phase C: Parallel state loading ─────────────────────────────────────────
   debugBoot("main:phase-c-start");
+  logger.debug("[Boot] Loading persisted state, settings, and recovering sessions");
   const [previous, persistedSettings] = await Promise.all([
     loadPersistedState(),
     loadRuntimeSettings(),
     persistDetectedProvidersSetting(detectedProviders),
     recoverPlanningSession(),
   ]);
+  logger.info({ hadPreviousState: previous !== null, issueCount: previous?.issues?.length ?? 0, settingsCount: persistedSettings.length }, "[Boot] State loaded from persistence");
   debugBoot("main:state-loaded");
 
   config = applyPersistedSettings(config, persistedSettings);
@@ -184,6 +192,7 @@ async function main() {
 
   // Recover orphaned agent processes from previous session
   if (!skipRecovery) {
+    logger.debug({ issueCount: state.issues.filter((i) => i.state === "Running" || i.state === "Interrupted" || i.state === "Queued").length }, "[Boot] Checking for orphaned agent processes");
     for (const issue of state.issues) {
       if (issue.state === "Running" || issue.state === "Interrupted" || issue.state === "Queued") {
         const { alive, pid } = isAgentStillRunning(issue);
@@ -229,6 +238,7 @@ async function main() {
   try {
     addEvent(state, undefined, "info", `Runtime started in local-only mode (filesystem tracker).`);
     const runForever = !runOnce && (Boolean(dashboardPort) || interfaceMode === "mcp");
+    logger.info({ runForever, runOnce, dashboardPort, interfaceMode }, "[Boot] Entering scheduler loop");
     await scheduler(state, running, runForever, workflowDefinition);
   } catch (error) {
     console.error("FATAL STACK TRACE:", error);

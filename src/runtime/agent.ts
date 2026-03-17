@@ -308,15 +308,24 @@ export function canRunIssue(issue: IssueEntry, running: Set<string>, state: Runt
 
   // Don't spawn a new agent if one is still alive from a previous session
   const { alive } = isAgentStillRunning(issue);
-  if (alive) return false;
+  if (alive) {
+    logger.debug({ issueId: issue.id, identifier: issue.identifier }, "[Agent] Skipping issue — agent still alive from previous session");
+    return false;
+  }
 
   if (issue.state === "Blocked") {
     if (!issue.nextRetryAt) return false;
-    if (issue.attempts >= issue.maxAttempts) return false;
+    if (issue.attempts >= issue.maxAttempts) {
+      logger.debug({ issueId: issue.id, identifier: issue.identifier, attempts: issue.attempts, maxAttempts: issue.maxAttempts }, "[Agent] Skipping blocked issue — max attempts reached");
+      return false;
+    }
     if (Date.parse(issue.nextRetryAt) > Date.now()) return false;
   }
 
-  if (!issueDepsResolved(issue, state.issues)) return false;
+  if (!issueDepsResolved(issue, state.issues)) {
+    logger.debug({ issueId: issue.id, identifier: issue.identifier, blockedBy: issue.blockedBy }, "[Agent] Skipping issue — unresolved dependencies");
+    return false;
+  }
 
   if (issue.state === "Todo") return true;
   if (issue.state === "Queued") return true;
@@ -992,6 +1001,7 @@ async function runCommandWithTimeout(
     const pidFile = join(workspacePath, "fifony-agent.pid");
     const pid = child.pid;
     if (pid) {
+      logger.debug({ issueId: issue.id, pid, command: command.slice(0, 120), cwd: workspacePath }, "[Agent] Process spawned");
       writeFileSync(pidFile, JSON.stringify({
         pid,
         issueId: issue.id,
@@ -1115,6 +1125,7 @@ async function prepareWorkspace(
   const createdNow = !existsSync(workspaceRoot);
 
   if (createdNow) {
+    logger.debug({ issueId: issue.id, identifier: issue.identifier, workspacePath: workspaceRoot }, "[Agent] Creating new workspace");
     mkdirSync(workspaceRoot, { recursive: true });
     if (workflowDefinition?.afterCreateHook) {
       await runHook(workflowDefinition.afterCreateHook, workspaceRoot, issue, "after_create");
@@ -1127,6 +1138,9 @@ async function prepareWorkspace(
         filter: (sourcePath) => !sourcePath.startsWith(WORKSPACE_ROOT),
       });
     }
+    logger.debug({ issueId: issue.id, workspacePath: workspaceRoot }, "[Agent] Workspace created");
+  } else {
+    logger.debug({ issueId: issue.id, workspacePath: workspaceRoot }, "[Agent] Reusing existing workspace");
   }
 
   const metaPath = join(workspaceRoot, "fifony-issue.json");
@@ -1163,6 +1177,7 @@ async function runAgentSession(
   const resultFile = join(workspacePath, `fifony-result-${provider.role}-${provider.provider}.json`);
 
   if (session.status === "done" && session.turns.length > 0) {
+    logger.debug({ issueId: issue.id, identifier: issue.identifier, provider: provider.provider, role: provider.role }, "[Agent] Session already completed, returning cached result");
     return { success: true, blocked: false, continueRequested: false, code: session.lastCode, output: session.lastOutput, turns: session.turns.length };
   }
 
@@ -1187,6 +1202,7 @@ async function runAgentSession(
   session.maxTurns = maxTurns;
   await persistAgentSessionState(sessionKey, issue, provider, cycle, session);
 
+  logger.info({ issueId: issue.id, identifier: issue.identifier, turn: turnIndex, maxTurns, provider: provider.provider, role: provider.role, cycle, command: provider.command.slice(0, 120) }, "[Agent] Spawning agent command");
   const turnStartedAt = now();
   const turnEnv = {
     FIFONY_AGENT_PROVIDER: provider.provider,
@@ -1224,6 +1240,7 @@ async function runAgentSession(
     });
   }
 
+  logger.info({ issueId: issue.id, identifier: issue.identifier, turn: turnIndex, exitCode: turnResult.code, success: turnResult.success, outputBytes: turnResult.output.length }, "[Agent] Agent command finished");
   const directive = readAgentDirective(workspacePath, turnResult.output, turnResult.success);
   lastCode = turnResult.code;
   lastOutput = turnResult.output;
@@ -1275,23 +1292,27 @@ async function runAgentSession(
   addEvent(state, issue.id, "runner", `Turn ${turnIndex}/${maxTurns} finished with status ${directive.status}.${directiveSummary}`.trim());
 
   if (!turnResult.success || directive.status === "failed") {
+    logger.info({ issueId: issue.id, identifier: issue.identifier, turn: turnIndex, directiveStatus: directive.status, exitCode: lastCode }, "[Agent] Session turn failed");
     session.status = "failed";
     await persistAgentSessionState(sessionKey, issue, provider, cycle, session);
     return { success: false, blocked: false, continueRequested: false, code: lastCode, output: lastOutput, turns: turnIndex };
   }
 
   if (directive.status === "blocked") {
+    logger.info({ issueId: issue.id, identifier: issue.identifier, turn: turnIndex }, "[Agent] Session turn blocked — manual intervention requested");
     session.status = "blocked";
     await persistAgentSessionState(sessionKey, issue, provider, cycle, session);
     return { success: false, blocked: true, continueRequested: false, code: lastCode, output: lastOutput, turns: turnIndex };
   }
 
   if (directive.status === "continue") {
+    logger.info({ issueId: issue.id, identifier: issue.identifier, turn: turnIndex, maxTurns }, "[Agent] Session requests continuation");
     session.status = "running";
     await persistAgentSessionState(sessionKey, issue, provider, cycle, session);
     return { success: false, blocked: false, continueRequested: true, code: lastCode, output: lastOutput, turns: turnIndex };
   }
 
+  logger.info({ issueId: issue.id, identifier: issue.identifier, turn: turnIndex }, "[Agent] Session completed successfully");
   session.status = "done";
   await persistAgentSessionState(sessionKey, issue, provider, cycle, session);
   return { success: true, blocked: false, continueRequested: false, code: lastCode, output: lastOutput, turns: turnIndex };
@@ -1308,6 +1329,7 @@ export async function runAgentPipeline(
 ): Promise<AgentSessionResult> {
   const providers = getEffectiveAgentProviders(state, issue, workflowDefinition, workflowConfig);
   const attempt = issue.attempts + 1;
+  logger.debug({ issueId: issue.id, identifier: issue.identifier, attempt, providers: providers.map((p) => `${p.role}:${p.provider}`) }, "[Agent] Starting pipeline");
   const { pipeline, key: pipelineFile } = await loadAgentPipelineState(issue, attempt, providers);
   const activeProvider = providers[clamp(pipeline.activeIndex, 0, Math.max(0, providers.length - 1))];
   const executorIndex = providers.findIndex((provider) => provider.role === "executor");
@@ -1403,6 +1425,7 @@ export async function runIssueOnce(
   const startTs = Date.now();
   const isReview = issue.state === "In Review";
   const isResuming = issue.state === "Running" || issue.state === "Interrupted";
+  logger.info({ issueId: issue.id, identifier: issue.identifier, state: issue.state, isReview, isResuming, attempt: issue.attempts + 1, maxAttempts: issue.maxAttempts }, "[Agent] Starting issue execution");
   running.add(issue.id);
   state.metrics.activeWorkers += 1;
   issue.startedAt = issue.startedAt ?? now();
@@ -1615,6 +1638,8 @@ export async function runIssueOnce(
       addEvent(state, issue.id, "error", `Issue ${issue.identifier} blocked after unexpected failure.`);
     }
   } finally {
+    const elapsedMs = Date.now() - startTs;
+    logger.info({ issueId: issue.id, identifier: issue.identifier, finalState: issue.state, elapsedMs, attempts: issue.attempts }, "[Agent] Issue execution finished");
     issue.updatedAt = now();
     markIssueDirty(issue.id);
     state.metrics.activeWorkers = Math.max(state.metrics.activeWorkers - 1, 0);

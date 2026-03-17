@@ -346,6 +346,7 @@ export async function generatePlan(
   options?: { fast?: boolean },
 ): Promise<GeneratePlanResult> {
   const fast = options?.fast ?? false;
+  logger.info({ title: title.slice(0, 80), fast }, "[Planner] Starting plan generation");
   const providers = detectAvailableProviders();
   const available = providers.filter((p) => p.available).map((p) => p.name);
 
@@ -376,6 +377,8 @@ export async function generatePlan(
 
   const command = getPlanCommand(preferred, planStageModel);
   if (!command) throw new Error(`No command configured for provider ${preferred}.`);
+
+  logger.debug({ provider: preferred, model: planStageModel, effort: effectiveEffort, command: command.slice(0, 120) }, "[Planner] Provider selected for plan generation");
 
   // Persist: planning started
   const planStartMs = Date.now();
@@ -456,6 +459,7 @@ export async function generatePlan(
 
   logger.info({ rawOutput: output.slice(0, 2000) }, `Plan raw output from ${preferred}`);
 
+  logger.debug({ outputLength: output.length }, "[Planner] Plan command completed, parsing output");
   const plan = parsePlanOutput(output);
   if (!plan) {
     // Persist: error
@@ -463,7 +467,7 @@ export async function generatePlan(
     session.error = `Could not parse plan. Output: ${output.slice(0, 500)}`;
     session.pid = null;
     await persistSession(session);
-    logger.error({ rawOutput: output.slice(0, 2000) }, "Could not parse plan from AI output");
+    logger.error({ rawOutput: output.slice(0, 2000) }, "[Planner] Could not parse plan from AI output");
     throw new Error(session.error);
   }
 

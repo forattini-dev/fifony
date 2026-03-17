@@ -105,6 +105,7 @@ export function broadcastToWebSocketClients(message: Record<string, unknown>): v
   if (wsClients.size === 0) return;
 
   broadcastSeq++;
+  logger.debug({ seq: broadcastSeq, type: message.type, clientCount: wsClients.size }, "[WebSocket] Broadcasting state update");
   const issues = message.issues as Array<Record<string, unknown>> | undefined;
 
   if (issues && lastBroadcastIssueSnapshot.size > 0) {
@@ -170,6 +171,7 @@ export async function startApiServer(
   port: number,
   workflowDefinition: WorkflowDefinition | null,
 ): Promise<void> {
+  logger.info({ port }, "[API] Starting API server");
   const stateDb = getStateDb();
   if (!stateDb) {
     throw new Error("Cannot start API plugin before the database is initialized.");
@@ -567,6 +569,7 @@ export async function startApiServer(
           const title = toStringValue(payload.title);
           const description = toStringValue(payload.description);
           if (!title) return c.json({ ok: false, error: "Title is required." }, 400);
+          logger.info({ title: title.slice(0, 80) }, "[API] POST /api/planning/generate");
           const result = await generatePlan(title, description, state.config, workflowDefinition);
           return c.json({ ok: true, plan: result.plan, usage: result.usage });
         } catch (error) {
@@ -595,6 +598,7 @@ export async function startApiServer(
       "POST /api/issues/create": async (c: any) => {
         try {
           const payload = await c.req.json() as JsonRecord;
+          logger.info({ title: toStringValue(payload.title, "").slice(0, 80) }, "[API] POST /api/issues/create");
           const issue = createIssueFromPayload(payload, state.issues, workflowDefinition);
           state.issues.push(issue);
           markIssueDirty(issue.id);
@@ -649,6 +653,7 @@ export async function startApiServer(
 
         try {
           const payload = await c.req.json() as JsonRecord;
+          logger.info({ issueId, identifier: issue.identifier, targetState: payload.state }, "[API] POST /api/issues/:id/state");
           await handleStatePatch(state, issue, payload);
           await persistState(state);
           wakeScheduler();
@@ -658,6 +663,7 @@ export async function startApiServer(
         }
       },
       "POST /api/issues/:id/retry": async (c: any) => {
+        logger.info({ issueId: parseIssue(c) }, "[API] POST /api/issues/:id/retry");
         return mutateIssueState(c, async (issue) => {
           if (TERMINAL_STATES.has(issue.state)) {
             await transitionIssueState(issue, "Todo", "Manual retry requested.");
@@ -671,6 +677,7 @@ export async function startApiServer(
         });
       },
       "POST /api/issues/:id/cancel": async (c: any) => {
+        logger.info({ issueId: parseIssue(c) }, "[API] POST /api/issues/:id/cancel");
         return mutateIssueState(c, async (issue) => {
           await transitionIssueState(issue, "Cancelled", "Manual cancel requested.");
           addEvent(state, issue.id, "manual", `Manual cancel requested for ${issue.id}.`);
@@ -699,6 +706,7 @@ export async function startApiServer(
         });
       },
       "POST /api/issues/:id/approve": async (c: any) => {
+        logger.info({ issueId: parseIssue(c) }, "[API] POST /api/issues/:id/approve");
         return mutateIssueState(c, async (issue) => {
           if (issue.state !== "Planning") {
             throw new Error(`Cannot approve issue in state ${issue.state}. Must be in Planning.`);
@@ -708,6 +716,7 @@ export async function startApiServer(
         });
       },
       "POST /api/issues/:id/merge": async (c: any) => {
+        logger.info({ issueId: parseIssue(c) }, "[API] POST /api/issues/:id/merge");
         try {
           const issueId = parseIssue(c);
           if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);

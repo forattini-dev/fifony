@@ -155,6 +155,7 @@ export function createIssueFromPayload(
 ): IssueEntry {
   const identifier = toStringValue(payload.identifier, nextLocalIssueId(issues));
   const id = toStringValue(payload.id, identifier.replace(/^#/, "issue-"));
+  logger.info({ id, identifier, title: toStringValue(payload.title, "").slice(0, 80) }, "[Issues] Creating new issue");
   const createdAt = now();
   const blockedBy = toStringArray(payload.blockedBy);
   const legacyBlockedBy = toStringArray(payload.blocked_by);
@@ -503,6 +504,7 @@ export function addEvent(
 
 export function transition(issue: IssueEntry, target: IssueState, note: string): void {
   const previous = issue.state;
+  logger.debug({ issueId: issue.id, identifier: issue.identifier, from: previous, to: target, note }, "[State] Issue transition");
   issue.state = target;
   issue.updatedAt = now();
   markIssueDirty(issue.id);

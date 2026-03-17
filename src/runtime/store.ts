@@ -231,8 +231,12 @@ export function isStateNotFoundError(error: unknown): boolean {
 }
 
 export async function loadPersistedState(): Promise<RuntimeState | null> {
-  if (!runtimeStateResource) return null;
+  if (!runtimeStateResource) {
+    logger.debug("[Store] No runtime state resource available, skipping load");
+    return null;
+  }
 
+  logger.debug("[Store] Loading persisted state from s3db");
   try {
     const record = await runtimeStateResource.get(S3DB_RUNTIME_RECORD_ID);
     if (record?.state && typeof record.state === "object") {
@@ -297,6 +301,11 @@ export async function persistState(state: RuntimeState): Promise<void> {
 
   // Only write the runtime state blob if something changed
   const dirty = hasDirtyState();
+  const dirtyIssueCount = getDirtyIssueIds().size;
+  const dirtyEventCount = getDirtyEventIds().size;
+  if (dirty || dirtyIssueCount > 0 || dirtyEventCount > 0) {
+    logger.debug({ dirty, dirtyIssues: dirtyIssueCount, dirtyEvents: dirtyEventCount }, "[Store] Persisting state");
+  }
 
   if (dirty) {
     await runtimeStateResource.replace(S3DB_RUNTIME_RECORD_ID, {
@@ -384,6 +393,7 @@ export async function replacePersistedSetting(setting: RuntimeSettingRecord): Pr
 }
 
 export async function closeStateStore(): Promise<void> {
+  logger.info("[Store] Closing state store and plugins");
   clearApiRuntimeContext();
   if (activeEcPlugin?.stop) {
     try {
