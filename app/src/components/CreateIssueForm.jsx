@@ -1,14 +1,37 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { X, Lightbulb, Loader2, Sparkles } from "lucide-react";
+import { X, Lightbulb, Loader2, Sparkles, FileText, Bug, RefreshCw, BookOpen, Wrench } from "lucide-react";
 import { useSwipeToDismiss } from "../hooks/useSwipeToDismiss.js";
 import { api } from "../api.js";
+
+const ISSUE_TEMPLATES = [
+  { id: "blank", label: "Blank", icon: FileText, title: "", description: "" },
+  { id: "bug", label: "Bug Fix", icon: Bug, title: "fix: ", description: "## Problem\n\n## Expected Behavior\n\n## Steps to Reproduce\n\n" },
+  { id: "feature", label: "Feature", icon: Sparkles, title: "feat: ", description: "## Goal\n\n## Acceptance Criteria\n\n## Notes\n\n" },
+  { id: "refactor", label: "Refactor", icon: RefreshCw, title: "refactor: ", description: "## Current State\n\n## Desired State\n\n## Scope\n\n" },
+  { id: "docs", label: "Documentation", icon: BookOpen, title: "docs: ", description: "## What to Document\n\n## Target Audience\n\n" },
+  { id: "chore", label: "Chore", icon: Wrench, title: "chore: ", description: "## Task\n\n## Why Now\n\n" },
+];
 
 export function CreateIssueDrawer({ open, onClose, onSubmit, isLoading, onToast }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [selectedTemplate, setSelectedTemplate] = useState("blank");
   const [enhancing, setEnhancing] = useState({ title: false, description: false });
   const titleRef = useRef(null);
   const scrollRef = useRef(null);
+
+  const applyTemplate = useCallback((templateId) => {
+    const tpl = ISSUE_TEMPLATES.find((t) => t.id === templateId);
+    if (!tpl) return;
+    const hasContent = title.trim() || description.trim();
+    if (hasContent && templateId !== "blank") {
+      if (!window.confirm("Replace current content with template?")) return;
+    }
+    setSelectedTemplate(templateId);
+    setTitle(tpl.title);
+    setDescription(tpl.description);
+    setTimeout(() => titleRef.current?.focus(), 50);
+  }, [title, description]);
 
   const onDismiss = useCallback(() => onClose(), [onClose]);
   const { ref: swipeRef, handlers: swipeHandlers } = useSwipeToDismiss({ onDismiss, direction: "right" });
@@ -17,6 +40,7 @@ export function CreateIssueDrawer({ open, onClose, onSubmit, isLoading, onToast 
     if (open) {
       setTitle("");
       setDescription("");
+      setSelectedTemplate("blank");
       setTimeout(() => titleRef.current?.focus(), 100);
     }
   }, [open]);
@@ -95,6 +119,24 @@ export function CreateIssueDrawer({ open, onClose, onSubmit, isLoading, onToast 
           </div>
 
           <div ref={scrollRef} className={`flex-1 overflow-y-auto px-6 py-6 space-y-4 drawer-safe-bottom ${open ? "stagger-children" : ""}`}>
+            <div className="flex flex-wrap gap-1.5">
+              {ISSUE_TEMPLATES.map((tpl) => {
+                const Icon = tpl.icon;
+                const isActive = selectedTemplate === tpl.id;
+                return (
+                  <button
+                    key={tpl.id}
+                    type="button"
+                    className={`btn btn-xs gap-1 ${isActive ? "btn-primary" : "btn-ghost"}`}
+                    onClick={() => applyTemplate(tpl.id)}
+                  >
+                    <Icon className="size-3" />
+                    {tpl.label}
+                  </button>
+                );
+              })}
+            </div>
+
             <div className="form-control">
               <label className="label justify-between gap-2">
                 <span className="label-text font-medium">What needs to be done?</span>

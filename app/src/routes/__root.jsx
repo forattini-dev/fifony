@@ -1,8 +1,8 @@
-import { createRootRoute, Outlet, useRouterState } from "@tanstack/react-router";
+import { createRootRoute, Outlet, useRouterState, useNavigate } from "@tanstack/react-router";
 import { DashboardProvider, useDashboard } from "../context/DashboardContext";
 import { useSettings, getSettingsList, getSettingValue, SETTINGS_QUERY_KEY } from "../hooks";
 import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useCallback, useMemo } from "react";
 import Header from "../components/Header";
 import Fab from "../components/Fab";
 import MobileDock from "../components/MobileDock";
@@ -12,6 +12,8 @@ import IssueDetailDrawer from "../components/IssueDetailDrawer";
 import PwaBanner from "../components/PwaBanner";
 import Confetti from "../components/Confetti";
 import OnboardingWizard from "../components/OnboardingWizard";
+import KeyboardShortcutsHelp from "../components/KeyboardShortcutsHelp";
+import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { CheckCircle, AlertTriangle, Info } from "lucide-react";
 
 function ViewTransition({ children }) {
@@ -26,6 +28,33 @@ function ViewTransition({ children }) {
 
 function RootLayout() {
   const ctx = useDashboard();
+  const navigate = useNavigate();
+  const [shortcutsHelpOpen, setShortcutsHelpOpen] = useState(false);
+
+  const closeAllDrawers = useCallback(() => {
+    ctx.setIsCreateOpen(false);
+    ctx.setIsEventsOpen(false);
+    ctx.setSelectedIssue(null);
+    setShortcutsHelpOpen(false);
+  }, [ctx]);
+
+  const shortcuts = useMemo(() => ({
+    n: () => ctx.setIsCreateOpen(true),
+    Escape: closeAllDrawers,
+    "?": () => setShortcutsHelpOpen((v) => !v),
+    k: () => navigate({ to: "/kanban" }),
+    i: () => navigate({ to: "/issues" }),
+    a: () => navigate({ to: "/agents" }),
+    s: () => navigate({ to: "/settings" }),
+    1: () => {}, // column nav – wired for future use
+    2: () => {},
+    3: () => {},
+    4: () => {},
+    5: () => {},
+    6: () => {},
+  }), [ctx, navigate, closeAllDrawers]);
+
+  useKeyboardShortcuts(shortcuts);
 
   if (ctx.runtime.isLoading && !ctx.runtime.data) {
     return (
@@ -116,6 +145,10 @@ function RootLayout() {
         onStateChange={ctx.updateState}
         onRetry={ctx.retryIssue}
         onCancel={ctx.cancelIssue}
+      />
+      <KeyboardShortcutsHelp
+        open={shortcutsHelpOpen}
+        onClose={() => setShortcutsHelpOpen(false)}
       />
     </div>
   );
