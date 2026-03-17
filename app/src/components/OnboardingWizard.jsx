@@ -260,7 +260,6 @@ function WelcomeStep({ workspacePath, onGetStarted }) {
       >
         Get Started <ChevronRight className="size-5" />
       </button>
-      <GitignoreBanner />
     </div>
   );
 }
@@ -1319,6 +1318,7 @@ export default function OnboardingWizard({ onComplete }) {
           )}
           {stepName === "Scan Project" && (
             <>
+              <GitignoreBanner />
               <ScanProjectStep
                 scanResult={scanResult}
                 setScanResult={setScanResult}
