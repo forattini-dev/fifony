@@ -16,9 +16,9 @@ const packageJson = JSON.parse(readFileSync(resolve(packageRoot, "package.json")
   description?: string;
 };
 // Prefer compiled dist/ if available, fallback to tsx + source
-const distRuntime = resolve(packageRoot, "dist", "runtime", "run-local.js");
+const distRuntime = resolve(packageRoot, "dist", "agent", "run-local.js");
 const distMcp = resolve(packageRoot, "dist", "mcp", "server.js");
-const srcRuntime = resolve(packageRoot, "src", "runtime", "run-local.ts");
+const srcRuntime = resolve(packageRoot, "src", "agent", "run-local.ts");
 const srcMcp = resolve(packageRoot, "src", "mcp", "server.ts");
 
 import { existsSync } from "node:fs";

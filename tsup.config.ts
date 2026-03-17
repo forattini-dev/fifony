@@ -3,7 +3,7 @@ import { defineConfig } from "tsup";
 export default defineConfig({
   entry: {
     cli: "src/cli.ts",
-    "runtime/run-local": "src/runtime/run-local.ts",
+    "agent/run-local": "src/agent/run-local.ts",
     "mcp/server": "src/mcp/server.ts",
   },
   format: "esm",

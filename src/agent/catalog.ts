@@ -38,7 +38,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 function resolveFixturePath(filename: string): string {
-  // In dev (ts source): src/runtime/ -> src/fixtures/
+  // In dev (ts source): src/agent/ -> src/fixtures/
   // In dist (compiled): dist/ -> src/fixtures/ (via PACKAGE_ROOT)
   const candidates = [
     join(__dirname, "..", "fixtures", filename),

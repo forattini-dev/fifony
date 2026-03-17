@@ -16,7 +16,7 @@ This repository runs Fifony as a pure TypeScript local orchestrator with no exte
 - Workflow template: [WORKFLOW.md](./WORKFLOW.md)
 - Published entrypoint: [bin/fifony.js](./bin/fifony.js)
 - CLI router: [src/cli.ts](./src/cli.ts)
-- Runtime engine: [src/runtime/run-local.ts](./src/runtime/run-local.ts)
+- Runtime engine: [src/agent/run-local.ts](./src/agent/run-local.ts)
 - Dashboard: [app/index.html](./app/index.html)
 
 ## Environment variables
