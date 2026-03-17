@@ -12,7 +12,8 @@ import IssueDetailDrawer from "../components/IssueDetailDrawer";
 import PwaBanner from "../components/PwaBanner";
 import Confetti from "../components/Confetti";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
-import { CheckCircle, AlertTriangle, Info } from "lucide-react";
+import { CheckCircle, AlertTriangle, Info, Music } from "lucide-react";
+import OnboardingParticles from "../components/OnboardingParticles";
 
 // Lazy-loaded components: only needed on first run or on-demand
 const OnboardingWizard = lazy(() => import("../components/OnboardingWizard"));
@@ -163,6 +164,27 @@ function RootLayout() {
   );
 }
 
+function LoadingHero() {
+  return (
+    <div className="fixed inset-0 z-50 bg-base-100 flex flex-col items-center justify-center overflow-hidden">
+      <OnboardingParticles />
+      <div className="relative z-10 flex flex-col items-center gap-6 animate-fade-in">
+        <div className="relative">
+          <Music className="size-16 sm:size-20 text-primary animate-bounce-in" />
+          <span className="absolute -bottom-1 -right-1 size-5 bg-primary rounded-full animate-ping opacity-50" />
+        </div>
+        <h1 className="text-3xl sm:text-4xl font-bold tracking-tight">
+          <span className="text-primary">Fifony</span>
+        </h1>
+        <div className="flex items-center gap-3 text-base-content/50">
+          <span className="loading loading-dots loading-md" />
+          <span className="text-sm">Warming up the orchestra...</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function OnboardingGate({ children }) {
   const settingsQuery = useSettings();
   const queryClient = useQueryClient();
@@ -175,13 +197,7 @@ function OnboardingGate({ children }) {
   // Show wizard if onboarding not completed and settings have loaded
   if (!done && !settingsQuery.isLoading) {
     return (
-      <Suspense
-        fallback={
-          <div className="min-h-screen flex items-center justify-center">
-            <span className="loading loading-spinner loading-lg" />
-          </div>
-        }
-      >
+      <Suspense fallback={<LoadingHero />}>
         <OnboardingWizard
           onComplete={() => {
             setDismissed(true);
@@ -194,11 +210,7 @@ function OnboardingGate({ children }) {
 
   // Show loading while settings are being fetched
   if (settingsQuery.isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <span className="loading loading-spinner loading-lg" />
-      </div>
-    );
+    return <LoadingHero />;
   }
 
   return children;
