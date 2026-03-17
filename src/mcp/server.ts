@@ -305,6 +305,10 @@ function listTools(): Array<Record<string, unknown>> {
     { name: "fifony.list_issues", description: "List issues from the Fifony durable store.", inputSchema: { type: "object", properties: { state: { type: "string" }, capabilityCategory: { type: "string" }, category: { type: "string" } }, additionalProperties: false } },
     { name: "fifony.create_issue", description: "Create a new issue directly in the Fifony durable store.", inputSchema: { type: "object", properties: { id: { type: "string" }, title: { type: "string" }, description: { type: "string" }, priority: { type: "number" }, state: { type: "string" }, labels: { type: "array", items: { type: "string" } }, paths: { type: "array", items: { type: "string" } } }, required: ["title"], additionalProperties: false } },
     { name: "fifony.update_issue_state", description: "Update an issue state in the Fifony store and append an event.", inputSchema: { type: "object", properties: { issueId: { type: "string" }, state: { type: "string" }, note: { type: "string" } }, required: ["issueId", "state"], additionalProperties: false } },
+    { name: "fifony.plan", description: "Generate an AI plan for an issue. The issue must be in Planning state. Returns the plan summary and step count.", inputSchema: { type: "object", properties: { issueId: { type: "string", description: "The issue identifier to plan." }, fast: { type: "boolean", description: "Use fast planning mode (less thorough but quicker)." } }, required: ["issueId"], additionalProperties: false } },
+    { name: "fifony.refine", description: "Refine an existing plan with feedback. The issue must already have a plan.", inputSchema: { type: "object", properties: { issueId: { type: "string", description: "The issue identifier whose plan to refine." }, feedback: { type: "string", description: "Feedback to guide the plan refinement." } }, required: ["issueId", "feedback"], additionalProperties: false } },
+    { name: "fifony.approve", description: "Approve a plan and move the issue to Todo for execution.", inputSchema: { type: "object", properties: { issueId: { type: "string", description: "The issue identifier to approve." } }, required: ["issueId"], additionalProperties: false } },
+    { name: "fifony.analytics", description: "Get token usage analytics including overall totals, cost estimates, and top issues by token consumption.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
     { name: "fifony.integration_config", description: "Generate a ready-to-paste MCP client configuration snippet for this Fifony workspace.", inputSchema: { type: "object", properties: { client: { type: "string" } }, additionalProperties: false } },
     { name: "fifony.list_integrations", description: "List discovered local integrations such as agency-agents profiles and impeccable skills.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
     { name: "fifony.integration_snippet", description: "Generate a workflow or prompt snippet for a discovered integration.", inputSchema: { type: "object", properties: { integration: { type: "string" } }, required: ["integration"], additionalProperties: false } },
@@ -314,6 +318,53 @@ function listTools(): Array<Record<string, unknown>> {
 
 function toolText(text: string): Record<string, unknown> {
   return { content: [{ type: "text", text }] };
+}
+
+async function resolveApiBaseUrl(): Promise<string> {
+  const envPort = env.FIFONY_API_PORT;
+  if (envPort) return `http://localhost:${envPort}`;
+
+  const runtime = await getRuntimeSnapshot();
+  const config = runtime.config as Record<string, unknown> | undefined;
+  const port = config?.dashboardPort;
+  if (port) return `http://localhost:${port}`;
+
+  // Fallback: try common ports
+  for (const candidate of [4000, 3000, 8080]) {
+    try {
+      const res = await fetch(`http://localhost:${candidate}/health`, { signal: AbortSignal.timeout(1000) });
+      if (res.ok) return `http://localhost:${candidate}`;
+    } catch {}
+  }
+
+  throw new Error("Fifony runtime API is not reachable. Start the runtime with --port to enable plan/refine/approve/analytics tools.");
+}
+
+async function apiPost(path: string, body: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+  const base = await resolveApiBaseUrl();
+  const res = await fetch(`${base}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(120_000),
+  });
+  const json = await res.json() as Record<string, unknown>;
+  if (!res.ok || json.ok === false) {
+    throw new Error(typeof json.error === "string" ? json.error : `API request failed: ${res.status}`);
+  }
+  return json;
+}
+
+async function apiGet(path: string): Promise<Record<string, unknown>> {
+  const base = await resolveApiBaseUrl();
+  const res = await fetch(`${base}${path}`, {
+    signal: AbortSignal.timeout(30_000),
+  });
+  const json = await res.json() as Record<string, unknown>;
+  if (!res.ok || json.ok === false) {
+    throw new Error(typeof json.error === "string" ? json.error : `API request failed: ${res.status}`);
+  }
+  return json;
 }
 
 async function callTool(name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
@@ -369,6 +420,81 @@ async function callTool(name: string, args: Record<string, unknown> = {}): Promi
     const updated = await issueResource?.update(issueId, { state, updatedAt: nowIso() });
     await appendEvent("info", note || `Issue ${issueId} moved to ${state} through MCP.`, { state }, issueId);
     return toolText(JSON.stringify(updated ?? { id: issueId, state }, null, 2));
+  }
+
+  if (name === "fifony.plan") {
+    const issueId = typeof args.issueId === "string" ? args.issueId.trim() : "";
+    if (!issueId) throw new Error("issueId is required");
+    const fast = args.fast === true;
+    const result = await apiPost(`/api/issues/${encodeURIComponent(issueId)}/plan`, { fast });
+    const issue = result.issue as Record<string, unknown> | undefined;
+    const plan = issue?.plan as Record<string, unknown> | undefined;
+    const steps = Array.isArray(plan?.steps) ? plan.steps : [];
+    return toolText(JSON.stringify({
+      issueId,
+      state: issue?.state ?? "Planning",
+      planSummary: plan?.summary ?? plan?.title ?? "Plan generation started in background.",
+      stepCount: steps.length,
+      estimatedComplexity: plan?.estimatedComplexity ?? null,
+      message: steps.length > 0
+        ? `Plan generated with ${steps.length} step(s). Use fifony.approve to start execution or fifony.refine to adjust.`
+        : "Plan generation started in background. Poll the issue status to check progress.",
+    }, null, 2));
+  }
+
+  if (name === "fifony.refine") {
+    const issueId = typeof args.issueId === "string" ? args.issueId.trim() : "";
+    const feedback = typeof args.feedback === "string" ? args.feedback.trim() : "";
+    if (!issueId) throw new Error("issueId is required");
+    if (!feedback) throw new Error("feedback is required");
+    const result = await apiPost(`/api/issues/${encodeURIComponent(issueId)}/plan/refine`, { feedback });
+    const issue = result.issue as Record<string, unknown> | undefined;
+    const plan = issue?.plan as Record<string, unknown> | undefined;
+    const steps = Array.isArray(plan?.steps) ? plan.steps : [];
+    return toolText(JSON.stringify({
+      issueId,
+      planSummary: plan?.summary ?? plan?.title ?? "Plan refinement started in background.",
+      stepCount: steps.length,
+      estimatedComplexity: plan?.estimatedComplexity ?? null,
+      message: "Plan refinement started in background. The plan will be updated via WebSocket when complete.",
+    }, null, 2));
+  }
+
+  if (name === "fifony.approve") {
+    const issueId = typeof args.issueId === "string" ? args.issueId.trim() : "";
+    if (!issueId) throw new Error("issueId is required");
+    const result = await apiPost(`/api/issues/${encodeURIComponent(issueId)}/approve`);
+    const issue = result.issue as Record<string, unknown> | undefined;
+    return toolText(JSON.stringify({
+      issueId,
+      state: issue?.state ?? "Todo",
+      message: `Plan approved for ${issueId}. Issue moved to Todo and is ready for execution.`,
+    }, null, 2));
+  }
+
+  if (name === "fifony.analytics") {
+    const result = await apiGet("/api/analytics/tokens");
+    const overall = result.overall as Record<string, unknown> | undefined;
+    const topIssues = result.topIssues as Array<Record<string, unknown>> | undefined;
+    const byModel = result.byModel as Record<string, Record<string, unknown>> | undefined;
+
+    // Compute cost estimate (rough: $3/M input, $15/M output for Claude-class models)
+    const inputTokens = typeof overall?.inputTokens === "number" ? overall.inputTokens : 0;
+    const outputTokens = typeof overall?.outputTokens === "number" ? overall.outputTokens : 0;
+    const totalTokens = typeof overall?.totalTokens === "number" ? overall.totalTokens : 0;
+    const estimatedCost = (inputTokens / 1_000_000) * 3 + (outputTokens / 1_000_000) * 15;
+
+    return toolText(JSON.stringify({
+      overall: { inputTokens, outputTokens, totalTokens },
+      estimatedCostUsd: Math.round(estimatedCost * 100) / 100,
+      modelBreakdown: byModel ?? {},
+      topIssues: (topIssues ?? []).slice(0, 10).map((issue) => ({
+        id: issue.id,
+        totalTokens: issue.totalTokens,
+        inputTokens: issue.inputTokens,
+        outputTokens: issue.outputTokens,
+      })),
+    }, null, 2));
   }
 
   if (name === "fifony.integration_config") {

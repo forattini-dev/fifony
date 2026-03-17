@@ -24,7 +24,7 @@ const ISSUE_STATE_TRANSITIONS: Record<string, readonly string[]> = {
   Running: ["In Review", "Interrupted", "Blocked", "Cancelled"],
   Interrupted: ["Queued", "Running", "Blocked", "Cancelled"],
   "In Review": ["Running", "Done", "Blocked", "Cancelled"],
-  Blocked: ["Queued", "Cancelled"],
+  Blocked: ["Planning", "Queued", "Cancelled"],
   Done: ["Planning", "Todo", "Cancelled"],
   Cancelled: ["Planning", "Todo", "Queued"],
 };
@@ -78,6 +78,7 @@ export const ISSUE_STATE_MACHINE_DEFINITION = {
     },
     Blocked: {
       on: {
+        Planning: "Planning",
         Queued: "Queued",
         Cancelled: "Cancelled",
       },

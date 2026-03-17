@@ -57,7 +57,7 @@ export const ISSUE_STATE_MACHINE = {
   Running: ["In Review", "Interrupted", "Blocked", "Cancelled"],
   Interrupted: ["Queued", "Running", "Blocked", "Cancelled"],
   "In Review": ["Running", "Done", "Blocked", "Cancelled"],
-  Blocked: ["Queued", "Cancelled"],
+  Blocked: ["Planning", "Queued", "Cancelled"],
   Done: ["Planning", "Todo", "Cancelled"],
   Cancelled: ["Planning", "Todo", "Queued"],
 };

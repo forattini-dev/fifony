@@ -2,6 +2,23 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { TanStackRouterVite } from "@tanstack/router-plugin/vite";
+import { readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+// Stamp the service worker with a build timestamp so cache names change on every build
+function stampServiceWorker() {
+  return {
+    name: "stamp-service-worker",
+    writeBundle() {
+      const swPath = resolve("app/dist/service-worker.js");
+      try {
+        const content = readFileSync(swPath, "utf8");
+        const stamped = content.replace("__BUILD_TIMESTAMP__", String(Date.now()));
+        writeFileSync(swPath, stamped, "utf8");
+      } catch {}
+    },
+  };
+}
 
 export default defineConfig(({ command }) => ({
   // In build mode, assets go under /assets/ so they don't collide with routes
@@ -14,6 +31,7 @@ export default defineConfig(({ command }) => ({
       generatedRouteTree: "./src/routeTree.gen.ts",
     }),
     react(),
+    ...(command === "build" ? [stampServiceWorker()] : []),
   ],
   root: "app",
   publicDir: "public",

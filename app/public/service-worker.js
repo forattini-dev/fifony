@@ -1,5 +1,6 @@
-const CORE_CACHE = "fifony-core-v2";
-const ASSET_CACHE = "fifony-assets-v2";
+const CACHE_VERSION = "__BUILD_TIMESTAMP__";
+const CORE_CACHE = `fifony-core-${CACHE_VERSION}`;
+const ASSET_CACHE = `fifony-assets-${CACHE_VERSION}`;
 const APP_SHELL_ROUTES = ["/kanban", "/issues", "/agents", "/providers", "/settings"];
 const APP_SHELL_FILES = ["/offline.html", "/manifest.webmanifest", "/icon.svg", "/icon-maskable.svg"];
 const API_PREFIXES = ["/api/", "/docs", "/ws"];
@@ -17,16 +18,39 @@ self.addEventListener("activate", (event) => {
     const names = await caches.keys();
     await Promise.all(
       names
-        .filter((name) => ![CORE_CACHE, ASSET_CACHE].includes(name))
+        .filter((name) => name !== CORE_CACHE && name !== ASSET_CACHE)
         .map((name) => caches.delete(name)),
     );
     await self.clients.claim();
+
+    // Notify all clients that a new version activated (they may show a refresh banner)
+    const clients = await self.clients.matchAll({ type: "window" });
+    for (const client of clients) {
+      client.postMessage({ type: "SW_UPDATED", version: CACHE_VERSION });
+    }
   })());
 });
 
 self.addEventListener("message", (event) => {
   if (event.data?.type === "SKIP_WAITING") {
     self.skipWaiting();
+  }
+
+  if (event.data?.type === "GET_OFFLINE_STATUS") {
+    const port = event.ports?.[0];
+    if (port) {
+      // Probe the API to determine online/offline state
+      fetch("/health", { signal: AbortSignal.timeout(3000) })
+        .then((res) => port.postMessage({ offline: !res.ok }))
+        .catch(() => port.postMessage({ offline: true }));
+    }
+  }
+
+  if (event.data?.type === "GET_VERSION") {
+    const port = event.ports?.[0];
+    if (port) {
+      port.postMessage({ version: CACHE_VERSION });
+    }
   }
 });
 
@@ -46,6 +70,9 @@ self.addEventListener("fetch", (event) => {
         await cache.put(request, response.clone());
         return response;
       } catch {
+        // Offline: notify clients
+        notifyClientsOffline();
+
         const cache = await caches.open(CORE_CACHE);
         return (
           await cache.match(request) ||
@@ -98,3 +125,13 @@ self.addEventListener("fetch", (event) => {
     }
   })());
 });
+
+// Broadcast offline status to all window clients
+async function notifyClientsOffline() {
+  try {
+    const clients = await self.clients.matchAll({ type: "window" });
+    for (const client of clients) {
+      client.postMessage({ type: "OFFLINE" });
+    }
+  } catch {}
+}
