@@ -1,10 +1,17 @@
-import { useState, useEffect, useRef } from "react";
-import { X, Lightbulb, Loader2 } from "lucide-react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { X, Lightbulb, Loader2, Sparkles } from "lucide-react";
+import { useSwipeToDismiss } from "../hooks/useSwipeToDismiss.js";
+import { api } from "../api.js";
 
-export function CreateIssueDrawer({ open, onClose, onSubmit, isLoading }) {
+export function CreateIssueDrawer({ open, onClose, onSubmit, isLoading, onToast }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [enhancing, setEnhancing] = useState({ title: false, description: false });
   const titleRef = useRef(null);
+  const scrollRef = useRef(null);
+
+  const onDismiss = useCallback(() => onClose(), [onClose]);
+  const { ref: swipeRef, handlers: swipeHandlers } = useSwipeToDismiss({ onDismiss, direction: "right" });
 
   useEffect(() => {
     if (open) {
@@ -21,6 +28,16 @@ export function CreateIssueDrawer({ open, onClose, onSubmit, isLoading }) {
     return () => window.removeEventListener("keydown", handler);
   }, [open, onClose]);
 
+  useEffect(() => {
+    if (!open) return;
+    history.pushState({ drawer: "create-issue" }, "");
+    const handler = (e) => {
+      if (e.state?.drawer !== "create-issue") onClose();
+    };
+    window.addEventListener("popstate", handler);
+    return () => window.removeEventListener("popstate", handler);
+  }, [open, onClose]);
+
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!title.trim()) return;
@@ -28,6 +45,29 @@ export function CreateIssueDrawer({ open, onClose, onSubmit, isLoading }) {
       title: title.trim(),
       description: description.trim(),
     });
+  };
+
+  const handleEnhance = async (field) => {
+    if (!title.trim() && field === "description") return;
+    setEnhancing((prev) => ({ ...prev, [field]: true }));
+    try {
+      const res = await api.post("/issues/enhance", {
+        field,
+        title: title.trim(),
+        description: description.trim(),
+      });
+      if (res.ok && typeof res.value === "string" && res.value.trim()) {
+        if (field === "title") setTitle(res.value.trim());
+        else setDescription(res.value.trim());
+        onToast?.(`Enhanced ${field}`, "success");
+      } else {
+        throw new Error(res.error || "No enhanced value returned.");
+      }
+    } catch (err) {
+      onToast?.(err instanceof Error ? err.message : "Enhance failed", "error");
+    } finally {
+      setEnhancing((prev) => ({ ...prev, [field]: false }));
+    }
   };
 
   return (
@@ -38,8 +78,10 @@ export function CreateIssueDrawer({ open, onClose, onSubmit, isLoading }) {
       />
 
       <div
+        ref={swipeRef}
         className={`fixed top-0 right-0 h-full z-50 bg-base-100 shadow-2xl transition-transform duration-300 ease-out
           w-full md:w-[480px] ${open ? "translate-x-0" : "translate-x-full"}`}
+        {...swipeHandlers}
       >
         <form onSubmit={handleSubmit} className="flex flex-col h-full">
           <div className="flex items-center justify-between px-6 py-4 border-b border-base-300">
@@ -52,9 +94,20 @@ export function CreateIssueDrawer({ open, onClose, onSubmit, isLoading }) {
             </button>
           </div>
 
-          <div className={`flex-1 overflow-y-auto px-6 py-6 space-y-4 ${open ? "stagger-children" : ""}`}>
+          <div ref={scrollRef} className={`flex-1 overflow-y-auto px-6 py-6 space-y-4 drawer-safe-bottom ${open ? "stagger-children" : ""}`}>
             <div className="form-control">
-              <label className="label"><span className="label-text font-medium">What needs to be done?</span></label>
+              <label className="label justify-between gap-2">
+                <span className="label-text font-medium">What needs to be done?</span>
+                <button
+                  type="button"
+                  className="btn btn-xs btn-soft btn-secondary gap-1"
+                  onClick={() => handleEnhance("title")}
+                  disabled={enhancing.title || isLoading || !title.trim()}
+                >
+                  {enhancing.title ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
+                  Enhance
+                </button>
+              </label>
               <input
                 ref={titleRef}
                 className="input input-bordered w-full"
@@ -66,7 +119,18 @@ export function CreateIssueDrawer({ open, onClose, onSubmit, isLoading }) {
             </div>
 
             <div className="form-control">
-              <label className="label"><span className="label-text font-medium">Context & details</span></label>
+              <label className="label justify-between gap-2">
+                <span className="label-text font-medium">Context & details</span>
+                <button
+                  type="button"
+                  className="btn btn-xs btn-soft btn-secondary gap-1"
+                  onClick={() => handleEnhance("description")}
+                  disabled={enhancing.description || isLoading || !title.trim()}
+                >
+                  {enhancing.description ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
+                  Enhance
+                </button>
+              </label>
               <textarea
                 className="textarea textarea-bordered w-full min-h-32"
                 placeholder="Describe the problem, expected behavior, acceptance criteria..."
@@ -81,9 +145,9 @@ export function CreateIssueDrawer({ open, onClose, onSubmit, isLoading }) {
             </div>
           </div>
 
-          <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-base-300">
-            <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn btn-primary gap-1.5" disabled={isLoading || !title.trim()}>
+          <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-base-300 max-sm:flex-col-reverse" style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem)" }}>
+            <button type="button" className="btn btn-ghost max-sm:w-full" onClick={onClose}>Cancel</button>
+            <button type="submit" className="btn btn-primary gap-1.5 max-sm:w-full" disabled={isLoading || !title.trim()}>
               {isLoading ? <Loader2 className="size-4 animate-spin" /> : <Lightbulb className="size-4" />}
               {isLoading ? "Creating..." : "Create Issue"}
             </button>

@@ -513,7 +513,39 @@ h1, h2, h3, .stat-value {
   animation: done-flash 0.8s ease-out both !important;
 }
 
-/* ── Responsive kanban — mobile horizontal scroll + scroll-snap ────────── */
+/* ── Responsive kanban — see consolidated mobile rules below ─────────── */
+
+/* ── Safe area insets ──────────────────────────────────────────────────── */
+
+.navbar {
+  padding-top: env(safe-area-inset-top);
+}
+
+.dock {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* ── Bottom sheet animations ─────────────────────────────────────────── */
+
+@keyframes slide-up-sheet {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+
+@keyframes slide-down-sheet {
+  from { transform: translateY(0); }
+  to   { transform: translateY(100%); }
+}
+
+.animate-slide-up-sheet {
+  animation: slide-up-sheet 0.3s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+.animate-slide-down-sheet {
+  animation: slide-down-sheet 0.25s ease-in both;
+}
+
+/* ── Mobile touch targets + small screen ─────────────────────────────── */
 
 @media (max-width: 767px) {
   .overflow-x-auto > .grid {
@@ -542,6 +574,78 @@ h1, h2, h3, .stat-value {
   .card-interactive .badge {
     padding: 4px 8px;
   }
+
+  /* Touch targets — 44px minimum */
+  .btn-xs {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  .btn-sm {
+    min-height: 44px;
+  }
+
+  .badge.cursor-pointer {
+    min-height: 36px;
+    padding: 6px 12px;
+  }
+
+  .tabs .tab {
+    min-height: 44px;
+  }
+
+  /* Drawer safe areas */
+  .drawer-safe-bottom {
+    padding-bottom: calc(env(safe-area-inset-bottom) + 80px);
+  }
+}
+
+/* ── Tiny screens (< 400px) ──────────────────────────────────────────── */
+
+@media (max-width: 400px) {
+  .text-\[10px\] {
+    font-size: 11px !important;
+  }
+
+  .font-mono {
+    font-size: max(11px, inherit);
+  }
+}
+
+/* ── Landscape — compact layout ──────────────────────────────────────── */
+
+@media (max-height: 500px) {
+  .navbar {
+    min-height: 2.5rem;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+
+  .dock {
+    display: none !important;
+  }
+}
+
+/* ── Kanban column indicator dots ────────────────────────────────────── */
+
+.kanban-dots {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 0;
+}
+
+.kanban-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  opacity: 0.35;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.kanban-dot.active {
+  opacity: 1;
+  transform: scale(1.4);
 }
 
 /* ── Reduced motion ────────────────────────────────────────────────────── */

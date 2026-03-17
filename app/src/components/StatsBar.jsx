@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from "react";
-import { Zap, TrendingUp, Layers, Activity } from "lucide-react";
+import { Zap, TrendingUp, Layers, Activity, ChevronDown } from "lucide-react";
 import { useTokenAnalytics, useHourlyAnalytics } from "../hooks.js";
 
 /**
@@ -174,9 +174,97 @@ function HourlySparkline({ data, valueKey = "totalTokens", height = 28, color = 
   );
 }
 
+/** Mobile-only collapsed stats — tap to expand */
+function MobileStatsBar({ totalTokens, byPhase, tokensPerHour, eventsPerHour, hasHourlyData, modelEntries, issues }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="bg-base-200 rounded-box animate-fade-in overflow-hidden">
+      <button
+        className="flex items-center justify-between w-full px-4 py-2.5 text-left"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <span className="text-base font-bold font-mono leading-tight flex items-center gap-1.5">
+          <Zap className="size-3.5 text-primary" />
+          <AnimatedCount value={totalTokens} />
+          <span className="text-[10px] uppercase tracking-wide opacity-40 font-normal ml-1">tokens</span>
+        </span>
+        <ChevronDown className={`size-4 opacity-40 transition-transform ${expanded ? "rotate-180" : ""}`} />
+      </button>
+
+      {expanded && (
+        <div className="px-4 pb-3 space-y-3 animate-fade-in border-t border-base-300 pt-3">
+          {/* Phase breakdown */}
+          {byPhase && (
+            <div>
+              <span className="text-[10px] uppercase tracking-wide opacity-40 mb-1 block">Phases</span>
+              <PhaseBreakdown byPhase={byPhase} compact />
+            </div>
+          )}
+
+          {/* Sparklines full-width */}
+          {hasHourlyData && tokensPerHour.length > 0 && (
+            <div>
+              <span className="text-[10px] uppercase tracking-wide opacity-40 mb-1 flex items-center gap-1">
+                <Zap className="size-2.5" /> Tokens/h
+              </span>
+              <HourlySparkline data={tokensPerHour} valueKey="totalTokens" height={32} color="stroke-primary" className="w-full" />
+            </div>
+          )}
+
+          {hasHourlyData && eventsPerHour.length > 0 && (
+            <div>
+              <span className="text-[10px] uppercase tracking-wide opacity-40 mb-1 flex items-center gap-1">
+                <Activity className="size-2.5" /> Events/h
+              </span>
+              <HourlySparkline data={eventsPerHour} valueKey="count" height={32} color="stroke-secondary" className="w-full" />
+            </div>
+          )}
+
+          {/* Models */}
+          {modelEntries.length > 0 && (
+            <div>
+              <span className="text-[10px] uppercase tracking-wide opacity-40 mb-1 block">Models</span>
+              <div className="flex flex-col gap-0.5">
+                {modelEntries.slice(0, 3).map(([model, tokens]) => {
+                  const color = model.includes("claude") ? "bg-primary" : model.includes("gpt") || model.includes("codex") ? "bg-secondary" : "bg-accent";
+                  const short = model.split("-").slice(-2).join("-");
+                  return (
+                    <span key={model} className="flex items-center gap-1.5 text-xs">
+                      <span className={`inline-block w-2 h-2 rounded-full ${color} shrink-0`} />
+                      <span className="opacity-60">{short}</span>
+                      <span className="font-mono opacity-80">{formatTokens(tokens)}</span>
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {issues.length > 0 && (
+            <div className="text-xs opacity-40">{issues.length} issues</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function useIsMobile() {
+  const [mobile, setMobile] = useState(() => window.innerWidth < 768);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const handler = (e) => setMobile(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+  return mobile;
+}
+
 export function StatsBar({ metrics, total, issues = [], compact = false }) {
   const { data: analytics } = useTokenAnalytics();
   const { data: hourlyData } = useHourlyAnalytics(24);
+  const isMobile = useIsMobile();
 
   const totalTokens = analytics?.overall?.totalTokens || 0;
   const byPhase = analytics?.byPhase || null;
@@ -191,6 +279,21 @@ export function StatsBar({ metrics, total, issues = [], compact = false }) {
   const modelEntries = Object.entries(byModel)
     .map(([model, data]) => [model, data?.totalTokens || 0])
     .sort((a, b) => b[1] - a[1]);
+
+  // Mobile: single metric + expandable
+  if (isMobile) {
+    return (
+      <MobileStatsBar
+        totalTokens={totalTokens}
+        byPhase={byPhase}
+        tokensPerHour={tokensPerHour}
+        eventsPerHour={eventsPerHour}
+        hasHourlyData={hasHourlyData}
+        modelEntries={modelEntries}
+        issues={issues}
+      />
+    );
+  }
 
   if (compact) {
     return (

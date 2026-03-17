@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from "react"
 import { X, Activity, SlidersHorizontal, Zap, ArrowRight, ChevronDown } from "lucide-react";
 import { timeAgo, formatDate } from "../utils.js";
 import { EmptyState } from "./EmptyState.jsx";
+import { useSwipeToDismiss } from "../hooks/useSwipeToDismiss.js";
 
 const EVENT_KINDS = ["all", "info", "state", "progress", "error", "manual", "runner"];
 
@@ -163,6 +164,9 @@ export function EventsDrawer({ open, onClose, events, kind, setKind, issueId, se
   const [isNearBottom, setIsNearBottom] = useState(true);
   const [hasNewEvents, setHasNewEvents] = useState(false);
   const prevCountRef = useRef(0);
+  const [expandedEvent, setExpandedEvent] = useState(null);
+
+  const { ref: swipeRef, handlers: swipeHandlers } = useSwipeToDismiss({ onDismiss: onClose, direction: "right" });
 
   // Escape key
   useEffect(() => {
@@ -170,6 +174,19 @@ export function EventsDrawer({ open, onClose, events, kind, setKind, issueId, se
     const handleKey = (e) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
+  }, [open, onClose]);
+
+  // History integration — back button closes drawer
+  useEffect(() => {
+    if (!open) return;
+    history.pushState({ drawer: "events" }, "");
+    const handler = (e) => {
+      if (e.state?.drawer !== "events") onClose();
+    };
+    window.addEventListener("popstate", handler);
+    return () => {
+      window.removeEventListener("popstate", handler);
+    };
   }, [open, onClose]);
 
   // Filtered rows (capped at MAX_RENDERED)
@@ -221,8 +238,10 @@ export function EventsDrawer({ open, onClose, events, kind, setKind, issueId, se
       onClick={onClose}
     >
       <div
+        ref={swipeRef}
         className="fixed top-0 right-0 z-50 h-full w-full md:w-[480px] lg:w-[540px] bg-base-100 shadow-2xl animate-slide-in-right flex flex-col"
         onClick={(e) => e.stopPropagation()}
+        {...swipeHandlers}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-base-300 shrink-0">
@@ -238,7 +257,7 @@ export function EventsDrawer({ open, onClose, events, kind, setKind, issueId, se
           </button>
         </div>
 
-        {/* Filters */}
+        {/* Filters — chips on mobile, selects on desktop */}
         <div className="px-5 py-3 border-b border-base-300 space-y-2 shrink-0">
           <div className="flex items-center gap-2 text-sm font-medium opacity-60">
             <SlidersHorizontal className="size-3.5" />
@@ -247,7 +266,39 @@ export function EventsDrawer({ open, onClose, events, kind, setKind, issueId, se
               <span className="badge badge-xs badge-primary">active</span>
             )}
           </div>
-          <div className="flex flex-wrap gap-2 items-center">
+
+          {/* Mobile: chips */}
+          <div className="flex md:hidden overflow-x-auto gap-1.5 pb-1 -webkit-overflow-scrolling-touch">
+            {EVENT_KINDS.map((k) => (
+              <button
+                key={k}
+                className={`badge badge-sm whitespace-nowrap cursor-pointer shrink-0 ${kind === k ? (KIND_COLORS[k] || "badge-primary") : "badge-ghost"}`}
+                onClick={() => setKind(k)}
+              >
+                {k === "all" ? "All" : k.charAt(0).toUpperCase() + k.slice(1)}
+              </button>
+            ))}
+          </div>
+          <div className="flex md:hidden overflow-x-auto gap-1.5 pb-1 -webkit-overflow-scrolling-touch">
+            <button
+              className={`badge badge-sm whitespace-nowrap cursor-pointer shrink-0 ${issueId === "all" ? "badge-primary" : "badge-ghost"}`}
+              onClick={() => setIssueId("all")}
+            >
+              All issues
+            </button>
+            {issueOptions.map((id) => (
+              <button
+                key={id}
+                className={`badge badge-sm font-mono whitespace-nowrap cursor-pointer shrink-0 ${issueId === id ? "badge-primary" : "badge-ghost"}`}
+                onClick={() => setIssueId(id)}
+              >
+                {id}
+              </button>
+            ))}
+          </div>
+
+          {/* Desktop: selects */}
+          <div className="hidden md:flex flex-wrap gap-2 items-center">
             <select
               className="select select-bordered select-sm flex-1 min-w-[140px]"
               value={kind}
@@ -287,7 +338,7 @@ export function EventsDrawer({ open, onClose, events, kind, setKind, issueId, se
         {/* Event list */}
         <div
           ref={listRef}
-          className="flex-1 overflow-y-auto px-5 py-3 relative"
+          className="flex-1 overflow-y-auto px-5 py-3 relative drawer-safe-bottom"
           onScroll={handleScroll}
         >
           {rows.length === 0 ? (
@@ -305,9 +356,9 @@ export function EventsDrawer({ open, onClose, events, kind, setKind, issueId, se
           )}
         </div>
 
-        {/* New events pill */}
+        {/* New events pill — positioned above mobile dock */}
         {hasNewEvents && (
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10">
+          <div className="absolute left-1/2 -translate-x-1/2 z-10" style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 5rem)" }}>
             <button
               type="button"
               className="btn btn-xs btn-primary rounded-full shadow-lg animate-fade-in-up gap-1"

@@ -10,7 +10,8 @@ export function Fab({ onClick }) {
 
   return (
     <button
-      className={`fixed right-6 bottom-24 sm:bottom-6 z-30 btn btn-circle btn-lg btn-primary shadow-lg hover:scale-110 hover:rotate-90 active:scale-95 active:rotate-0 transition-all duration-300 group ${mounted ? "animate-fab-breathe" : "animate-bounce-in"}`}
+      className={`fixed right-6 z-30 btn btn-circle btn-lg btn-primary shadow-lg hover:scale-110 hover:rotate-90 active:scale-95 active:rotate-0 transition-all duration-300 group ${mounted ? "animate-fab-breathe" : "animate-bounce-in"}`}
+      style={{ bottom: `calc(env(safe-area-inset-bottom, 0px) + 6rem)` }}
       onClick={onClick}
       aria-label="Create new issue"
     >

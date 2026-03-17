@@ -1,8 +1,9 @@
 import { useMemo, useCallback, useRef, useEffect, useState } from "react";
 import { IssueCard } from "./IssueCard.jsx";
 import { EmptyState } from "./EmptyState.jsx";
-import { Lightbulb, Plus, Play, Eye, AlertTriangle, CheckCircle, XCircle } from "lucide-react";
+import { Lightbulb, Plus, Play, Eye, AlertTriangle, CheckCircle, XCircle, RotateCcw, ArrowRight } from "lucide-react";
 import { useDragAndDrop } from "../hooks/useDragAndDrop.js";
+import { getIssueTransitions } from "../utils.js";
 
 function ColumnBadge({ count, className }) {
   const prevRef = useRef(count);
@@ -52,6 +53,15 @@ const COLUMN_HEADER_COLOR = {
   Blocked: 'oklch(var(--er))',
   Done: 'oklch(var(--su))',
   Cancelled: undefined,
+};
+
+const COLUMN_DOT_COLOR = {
+  Planning: 'oklch(var(--in))',
+  "In Progress": 'oklch(var(--p))',
+  "In Review": 'oklch(var(--s))',
+  Blocked: 'oklch(var(--er))',
+  Done: 'oklch(var(--su))',
+  Cancelled: 'oklch(var(--bc) / 0.3)',
 };
 
 const EMPTY_CONFIG = {
@@ -104,7 +114,82 @@ function PlanningEmptyState({ onCreateIssue }) {
   );
 }
 
-function KanbanColumn({ col, issues, empty, badgeClass, dragState, registerColumn, getCardHandlers, onSelect, onCreateIssue, lastDroppedId, hasRunningAgents, totalIssues }) {
+/** Mobile long-press action sheet */
+function ActionSheet({ issue, onClose, onStateChange, onSelect }) {
+  const transitions = getIssueTransitions(issue.state).filter((s) => s !== issue.state);
+
+  useEffect(() => {
+    const handler = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/30 z-50 animate-fade-in" onClick={onClose} />
+      <div
+        className="fixed bottom-0 left-0 right-0 z-50 bg-base-100 rounded-t-2xl shadow-2xl animate-slide-up-sheet"
+        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Handle */}
+        <div className="flex justify-center pt-3 pb-1">
+          <div className="w-10 h-1 rounded-full bg-base-content/20" />
+        </div>
+
+        {/* Issue info */}
+        <div className="px-4 py-2 border-b border-base-300">
+          <span className="font-mono text-xs opacity-50">{issue.identifier}</span>
+          <h3 className="font-semibold text-sm truncate">{issue.title}</h3>
+        </div>
+
+        {/* Actions */}
+        <div className="p-3 space-y-1">
+          <button
+            className="btn btn-ghost btn-sm w-full justify-start gap-2"
+            onClick={() => { onSelect(issue); onClose(); }}
+          >
+            <Eye className="size-4" /> View Details
+          </button>
+
+          {transitions.length > 0 && (
+            <div className="text-[10px] uppercase tracking-wide opacity-40 px-3 pt-2">Move to</div>
+          )}
+          {transitions.map((state) => (
+            <button
+              key={state}
+              className="btn btn-ghost btn-sm w-full justify-start gap-2"
+              onClick={() => { onStateChange(issue.id, state); onClose(); }}
+            >
+              <ArrowRight className="size-4" /> {state}
+            </button>
+          ))}
+        </div>
+
+        <div className="p-3 pt-0">
+          <button className="btn btn-ghost btn-sm w-full" onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/** Column indicator dots for mobile */
+function ColumnDots({ columns, activeIndex }) {
+  return (
+    <div className="kanban-dots md:hidden">
+      {columns.map((col, i) => (
+        <div
+          key={col}
+          className={`kanban-dot ${i === activeIndex ? "active" : ""}`}
+          style={{ backgroundColor: COLUMN_DOT_COLOR[col] }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function KanbanColumn({ col, issues, empty, badgeClass, dragState, registerColumn, getCardHandlers, onSelect, onCreateIssue, lastDroppedId, hasRunningAgents, totalIssues, onLongPress }) {
   const colRef = useRef(null);
 
   useEffect(() => {
@@ -174,6 +259,13 @@ function KanbanColumn({ col, issues, empty, badgeClass, dragState, registerColum
                   <div
                     key={issue.id}
                     className={`${beingDragged ? "kanban-card-dragging-source" : ""} ${justDropped ? "animate-pop" : ""}`}
+                    onContextMenu={(e) => {
+                      // Long press on mobile triggers context menu — use action sheet instead
+                      if ('ontouchstart' in window) {
+                        e.preventDefault();
+                        onLongPress?.(issue);
+                      }
+                    }}
                   >
                     <IssueCard
                       issue={issue}
@@ -197,6 +289,9 @@ function KanbanColumn({ col, issues, empty, badgeClass, dragState, registerColum
 
 export function BoardView({ issues, onStateChange, onRetry, onCancel, onSelect, onCreateIssue, isLoading }) {
   const [lastDroppedId, setLastDroppedId] = useState(null);
+  const [activeColumn, setActiveColumn] = useState(0);
+  const [actionSheetIssue, setActionSheetIssue] = useState(null);
+  const scrollContainerRef = useRef(null);
 
   const grouped = useMemo(() => {
     const buckets = Object.fromEntries(COLUMNS.map((c) => [c, []]));
@@ -241,6 +336,44 @@ export function BoardView({ issues, onStateChange, onRetry, onCancel, onSelect, 
     [onSelect, shouldSuppressClick]
   );
 
+  // Track active column via scroll on mobile
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const grid = container.querySelector(".grid, [class*='grid']");
+    if (!grid) return;
+
+    const handleScroll = () => {
+      const cols = grid.children;
+      if (!cols.length) return;
+      const scrollLeft = container.scrollLeft;
+      const containerWidth = container.clientWidth;
+      let bestIndex = 0;
+      let bestDistance = Infinity;
+
+      for (let i = 0; i < cols.length; i++) {
+        const col = cols[i];
+        const colCenter = col.offsetLeft + col.offsetWidth / 2;
+        const viewCenter = scrollLeft + containerWidth / 2;
+        const distance = Math.abs(colCenter - viewCenter);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestIndex = i;
+        }
+      }
+      setActiveColumn(bestIndex);
+    };
+
+    container.addEventListener("scroll", handleScroll, { passive: true });
+    return () => container.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  // Long press handler for mobile action sheet
+  const longPressTimerRef = useRef(null);
+  const handleLongPress = useCallback((issue) => {
+    setActionSheetIssue(issue);
+  }, []);
+
   if (isLoading) {
     return (
       <div className="overflow-x-auto pb-2 flex-1 flex flex-col min-h-0">
@@ -265,41 +398,58 @@ export function BoardView({ issues, onStateChange, onRetry, onCancel, onSelect, 
   }
 
   return (
-    <div
-      className="overflow-x-auto pb-2 flex-1 flex flex-col min-h-0"
-      onPointerMove={onBoardPointerMove}
-      onPointerUp={onBoardPointerUp}
-      onPointerCancel={onBoardPointerCancel}
-      style={{ touchAction: dragState ? "none" : undefined }}
-    >
+    <>
       <div
-        className={`grid gap-3 flex-1 stagger-children ${dragState ? "kanban-dragging" : ""}`}
-        style={{
-          gridTemplateColumns: `repeat(${COLUMNS.length}, minmax(0, 1fr))`,
-          minWidth: `${COLUMNS.length * 180}px`,
-        }}
+        ref={scrollContainerRef}
+        className="overflow-x-auto pb-2 flex-1 flex flex-col min-h-0"
+        onPointerMove={onBoardPointerMove}
+        onPointerUp={onBoardPointerUp}
+        onPointerCancel={onBoardPointerCancel}
+        style={{ touchAction: dragState ? "none" : undefined }}
       >
-        {COLUMNS.map((col) => (
-          <KanbanColumn
-            key={col}
-            col={col}
-            issues={grouped[col]}
-            empty={EMPTY_CONFIG[col]}
-            badgeClass={COLUMN_BADGE[col]}
-            dragState={dragState}
-            registerColumn={registerColumn}
-            getCardHandlers={getCardHandlers}
-            onSelect={guardedOnSelect}
-            onCreateIssue={onCreateIssue}
-            lastDroppedId={lastDroppedId}
-            hasRunningAgents={hasRunningAgents}
-            totalIssues={issues.length}
-          />
-        ))}
+        <div
+          className={`grid gap-3 flex-1 stagger-children ${dragState ? "kanban-dragging" : ""}`}
+          style={{
+            gridTemplateColumns: `repeat(${COLUMNS.length}, minmax(0, 1fr))`,
+            minWidth: `${COLUMNS.length * 180}px`,
+          }}
+        >
+          {COLUMNS.map((col) => (
+            <KanbanColumn
+              key={col}
+              col={col}
+              issues={grouped[col]}
+              empty={EMPTY_CONFIG[col]}
+              badgeClass={COLUMN_BADGE[col]}
+              dragState={dragState}
+              registerColumn={registerColumn}
+              getCardHandlers={getCardHandlers}
+              onSelect={guardedOnSelect}
+              onCreateIssue={onCreateIssue}
+              lastDroppedId={lastDroppedId}
+              hasRunningAgents={hasRunningAgents}
+              totalIssues={issues.length}
+              onLongPress={handleLongPress}
+            />
+          ))}
+        </div>
+
+        <DragGhost dragState={dragState} ghostRef={ghostRef} />
       </div>
 
-      <DragGhost dragState={dragState} ghostRef={ghostRef} />
-    </div>
+      {/* Column indicator dots (mobile) */}
+      <ColumnDots columns={COLUMNS} activeIndex={activeColumn} />
+
+      {/* Mobile long-press action sheet */}
+      {actionSheetIssue && (
+        <ActionSheet
+          issue={actionSheetIssue}
+          onClose={() => setActionSheetIssue(null)}
+          onStateChange={handleStateChange}
+          onSelect={guardedOnSelect}
+        />
+      )}
+    </>
   );
 }
 

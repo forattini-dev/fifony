@@ -1,13 +1,14 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   X, FileText, Tag, RotateCcw, GitBranch, Clock, AlertTriangle,
-  Folder, Layers, Gauge, History, Terminal, ArrowRight, Circle, CheckCircle2,
+  Folder, Layers, Gauge, Activity, Terminal, ArrowRight, Circle, CheckCircle2,
   PlayCircle, Eye, Ban, XCircle, Diff, Wrench, Copy, Check,
   Info, Code, Route, ClipboardCheck, ThumbsUp, ThumbsDown, MessageSquare,
-  Loader, Pause, ListOrdered, Lightbulb, Zap,
+  Loader, Pause, ListOrdered, Lightbulb, Zap, ChevronDown, SlidersHorizontal,
 } from "lucide-react";
 import { STATES, ISSUE_STATE_MACHINE, getIssueTransitions, timeAgo, formatDate, formatDuration } from "../utils.js";
 import { api } from "../api.js";
+import { useSwipeToDismiss } from "../hooks/useSwipeToDismiss.js";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -39,7 +40,7 @@ const BASE_TABS = [
   { id: "execution", label: "Execution", icon: Terminal },
   { id: "diff", label: "Diff", icon: Code },
   { id: "routing", label: "Routing", icon: Route },
-  { id: "history", label: "History", icon: History },
+  { id: "events", label: "Events", icon: Activity },
 ];
 
 const PLANNING_TAB = { id: "planning", label: "Plan", icon: Lightbulb };
@@ -123,11 +124,11 @@ function OverviewTab({ issue, onStateChange, onRetry, onCancel }) {
         <div className="space-y-3">
           <div>
             <div className="text-xs opacity-50 mb-1.5">Move to</div>
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap gap-1.5 max-sm:flex-col">
               {nextStates.map((s) => {
                 const Icon = STATE_ICON[s] || Circle;
                 return (
-                  <button key={s} className={`btn btn-sm btn-soft gap-1.5 ${STATE_BTN[s] || ""}`}
+                  <button key={s} className={`btn btn-sm btn-soft gap-1.5 max-sm:w-full ${STATE_BTN[s] || ""}`}
                     onClick={() => onStateChange?.(issue.id, s)}>
                     <Icon className="size-3.5" />{s}
                   </button>
@@ -135,12 +136,12 @@ function OverviewTab({ issue, onStateChange, onRetry, onCancel }) {
               })}
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button className="btn btn-sm btn-soft gap-1" onClick={() => onRetry?.(issue.id)}
+          <div className="flex items-center gap-2 max-sm:flex-col">
+            <button className="btn btn-sm btn-soft gap-1 max-sm:w-full" onClick={() => onRetry?.(issue.id)}
               disabled={issue.state === "Running" || issue.state === "In Review"}>
               <RotateCcw className="size-3" /> Retry
             </button>
-            <button className="btn btn-sm btn-error btn-soft gap-1" onClick={() => onCancel?.(issue.id)}
+            <button className="btn btn-sm btn-error btn-soft gap-1 max-sm:w-full" onClick={() => onCancel?.(issue.id)}
               disabled={issue.state === "Done" || issue.state === "Cancelled"}>
               <XCircle className="size-3" /> Cancel
             </button>
@@ -531,7 +532,157 @@ function RoutingTab({ issue }) {
   );
 }
 
-// ── Tab: History ────────────────────────────────────────────────────────────
+// ── Tab: Events (scoped to issue) ───────────────────────────────────────────
+
+const EVENT_KINDS = ["all", "info", "state", "progress", "error", "manual", "runner"];
+const KIND_COLORS = {
+  error: "badge-error", state: "badge-primary", progress: "badge-info",
+  manual: "badge-warning", runner: "badge-accent", info: "badge-ghost",
+};
+const STATE_BORDER_EV = {
+  Planning: "border-l-info", Todo: "border-l-warning", Queued: "border-l-info",
+  Running: "border-l-primary", Interrupted: "border-l-accent", "In Review": "border-l-secondary",
+  Blocked: "border-l-error", Done: "border-l-success", Cancelled: "border-l-neutral",
+};
+const TOKEN_RE = /([\d,]+)\s+tokens/gi;
+const AUTOSCROLL_THRESHOLD = 100;
+
+function renderEventMessage(message, isTokenEvent) {
+  if (!message) return "";
+  if (!isTokenEvent) return message;
+  const parts = [];
+  let lastIndex = 0;
+  let match;
+  const re = new RegExp(TOKEN_RE.source, "gi");
+  while ((match = re.exec(message)) !== null) {
+    if (match.index > lastIndex) parts.push(message.slice(lastIndex, match.index));
+    parts.push(<strong key={match.index} className="font-semibold">{match[0]}</strong>);
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < message.length) parts.push(message.slice(lastIndex));
+  return parts.length > 0 ? parts : message;
+}
+
+function detectEventState(message) {
+  if (!message) return null;
+  for (const state of Object.keys(STATE_BORDER_EV)) {
+    if (message.includes(state)) return state;
+  }
+  return null;
+}
+
+function EventRow({ ev }) {
+  const isTokenEvent = typeof ev.message === "string" && /tokens/i.test(ev.message);
+  const isState = ev.kind === "state";
+  const targetState = isState ? detectEventState(ev.message) : null;
+  const borderClass = targetState ? STATE_BORDER_EV[targetState] : "";
+
+  return (
+    <div className={`bg-base-200 rounded-box px-3 py-2 ${isState ? `border-l-[3px] ${borderClass}` : ""}`}>
+      <div className="flex items-center gap-2 text-xs">
+        <span className="opacity-50"><RelativeTime value={ev.at} /></span>
+        <span className={`badge badge-xs ${KIND_COLORS[ev.kind] || "badge-ghost"}`}>{ev.kind || "info"}</span>
+        {isState && <ArrowRight className="size-3 opacity-50" />}
+        {isTokenEvent && <Zap className="size-3 text-warning" />}
+      </div>
+      <div className="text-sm mt-0.5">{renderEventMessage(ev.message, isTokenEvent)}</div>
+    </div>
+  );
+}
+
+function RelativeTime({ value }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 5_000);
+    return () => clearInterval(id);
+  }, []);
+  return <span title={formatDate(value)}>{timeAgo(value)}</span>;
+}
+
+function EventsTab({ issueId, events }) {
+  const [kindFilter, setKindFilter] = useState("all");
+  const listRef = useRef(null);
+  const [isNearBottom, setIsNearBottom] = useState(true);
+  const [hasNewEvents, setHasNewEvents] = useState(false);
+  const prevCountRef = useRef(0);
+
+  const rows = useMemo(() => {
+    if (!Array.isArray(events)) return [];
+    return events
+      .filter((ev) => ev.issueId === issueId && (kindFilter === "all" || ev.kind === kindFilter))
+      .slice(0, 200);
+  }, [events, issueId, kindFilter]);
+
+  const handleScroll = useCallback(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < AUTOSCROLL_THRESHOLD;
+    setIsNearBottom(near);
+    if (near) setHasNewEvents(false);
+  }, []);
+
+  useEffect(() => {
+    if (rows.length > prevCountRef.current && rows.length > 0) {
+      if (isNearBottom && listRef.current) {
+        requestAnimationFrame(() => {
+          listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
+        });
+      } else if (prevCountRef.current > 0) {
+        setHasNewEvents(true);
+      }
+    }
+    prevCountRef.current = rows.length;
+  }, [rows.length, isNearBottom]);
+
+  const scrollToBottom = useCallback(() => {
+    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
+    setHasNewEvents(false);
+  }, []);
+
+  return (
+    <div className="flex flex-col h-full -mx-6 -my-4">
+      {/* Filter bar */}
+      <div className="px-5 py-2.5 border-b border-base-300 flex items-center gap-2 shrink-0">
+        <SlidersHorizontal className="size-3.5 opacity-50" />
+        <select
+          className="select select-bordered select-xs"
+          value={kindFilter}
+          onChange={(e) => setKindFilter(e.target.value)}
+          aria-label="Filter by event kind"
+        >
+          {EVENT_KINDS.map((k) => (
+            <option key={k} value={k}>{k === "all" ? "All kinds" : k.charAt(0).toUpperCase() + k.slice(1)}</option>
+          ))}
+        </select>
+        {rows.length > 0 && <span className="badge badge-xs badge-neutral ml-auto">{rows.length}</span>}
+      </div>
+
+      {/* Event list */}
+      <div ref={listRef} className="flex-1 overflow-y-auto px-5 py-3 relative" onScroll={handleScroll}>
+        {rows.length === 0 ? (
+          <div className="text-sm opacity-40 text-center py-8">No events for this issue yet.</div>
+        ) : (
+          <div className="space-y-2">
+            {rows.map((ev, i) => <EventRow key={`${ev.at}-${i}`} ev={ev} />)}
+          </div>
+        )}
+      </div>
+
+      {/* New events pill */}
+      {hasNewEvents && (
+        <div className="absolute bottom-16 left-1/2 -translate-x-1/2 z-10">
+          <button
+            type="button"
+            className="btn btn-xs btn-primary rounded-full shadow-lg animate-fade-in-up gap-1"
+            onClick={scrollToBottom}
+          >
+            <ChevronDown className="size-3" /> New events
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ── Tab: Planning ───────────────────────────────────────────────────────────
 
@@ -595,12 +746,12 @@ function PlanningTab({ issue, onStateChange }) {
             Generate an AI plan to break this issue into actionable steps with suggested paths, labels, and effort.
           </p>
           {isPlanning && (
-            <div className="flex items-center gap-2 justify-center">
-              <button className="btn btn-primary gap-1.5" onClick={() => handleGenerate(false)}>
+            <div className="flex items-center gap-2 justify-center max-sm:flex-col max-sm:w-full max-sm:px-4">
+              <button className="btn btn-primary gap-1.5 max-sm:w-full" onClick={() => handleGenerate(false)}>
                 <Lightbulb className="size-4" /> Generate Plan
               </button>
               <button
-                className="btn btn-ghost btn-sm gap-1 tooltip tooltip-bottom"
+                className="btn btn-ghost btn-sm gap-1 tooltip tooltip-bottom max-sm:w-full"
                 data-tip="Same model, minimal reasoning — 2-4 steps, no extras"
                 onClick={() => handleGenerate(true)}
               >
@@ -749,17 +900,33 @@ function PlanningTab({ issue, onStateChange }) {
 
       {/* Actions */}
       {isPlanning && (
-        <div className="flex items-center gap-2 pt-3 border-t border-base-300">
-          <button className="btn btn-primary gap-1.5" onClick={handleApprove}>
+        <div className="flex items-center gap-2 pt-3 border-t border-base-300 max-sm:flex-col">
+          <button className="btn btn-primary gap-1.5 max-sm:w-full" onClick={handleApprove}>
             <CheckCircle2 className="size-4" /> Approve & Start
           </button>
-          <button className="btn btn-ghost btn-sm gap-1" onClick={() => handleGenerate(false)}>
+          <button className="btn btn-ghost btn-sm gap-1 max-sm:w-full" onClick={() => handleGenerate(false)}>
             <RotateCcw className="size-3" /> Re-plan from scratch
           </button>
         </div>
       )}
     </div>
   );
+}
+
+function classifyHistoryEntry(message) {
+  const lower = message.toLowerCase();
+  if (lower.includes("created")) return { icon: Lightbulb, color: "text-info" };
+  if (lower.includes("cancel")) return { icon: XCircle, color: "text-neutral" };
+  if (lower.includes("done") || lower.includes("completed") || lower.includes("merged")) return { icon: CheckCircle2, color: "text-success" };
+  if (lower.includes("running") || lower.includes("started") || lower.includes("agent")) return { icon: PlayCircle, color: "text-primary" };
+  if (lower.includes("queued")) return { icon: ListOrdered, color: "text-info" };
+  if (lower.includes("review")) return { icon: Eye, color: "text-secondary" };
+  if (lower.includes("blocked") || lower.includes("failed") || lower.includes("error")) return { icon: AlertTriangle, color: "text-error" };
+  if (lower.includes("retry") || lower.includes("restart")) return { icon: RotateCcw, color: "text-warning" };
+  if (lower.includes("plan")) return { icon: Route, color: "text-info" };
+  if (lower.includes("state")) return { icon: ArrowRight, color: "text-primary" };
+  if (lower.includes("interrupt") || lower.includes("pause")) return { icon: Pause, color: "text-accent" };
+  return { icon: Circle, color: "text-base-content/50" };
 }
 
 function HistoryTab({ issue }) {
@@ -769,23 +936,41 @@ function HistoryTab({ issue }) {
     return <div className="text-sm opacity-40 text-center py-8">No history entries.</div>;
   }
 
+  const entries = history.map((entry) => {
+    const match = entry.match(/^\[(.+?)\]\s*(.*)$/);
+    return {
+      raw: entry,
+      timestamp: match?.[1] || null,
+      message: match?.[2] || entry,
+    };
+  });
+
   return (
-    <div className="space-y-1">
-      {history.slice().reverse().map((entry, i) => {
-        // Try to parse [timestamp] message
-        const match = entry.match(/^\[(.+?)\]\s*(.*)$/);
+    <ul className="timeline timeline-vertical timeline-compact pl-1">
+      {entries.map((entry, i) => {
+        const { icon: Icon, color } = classifyHistoryEntry(entry.message);
+        const isFirst = i === 0;
+        const isLast = i === entries.length - 1;
+
         return (
-          <div key={i} className="flex gap-3 py-1.5 border-b border-base-200 last:border-0">
-            <div className="text-xs font-mono opacity-40 shrink-0 w-20 truncate" title={match?.[1]}>
-              {match ? timeAgo(match[1]) : ""}
+          <li key={i}>
+            {!isFirst && <hr className="bg-base-300" />}
+            <div className="timeline-middle px-1">
+              <Icon className={`size-4 ${color}`} />
             </div>
-            <div className="text-xs leading-relaxed min-w-0">
-              {match ? match[2] : entry}
+            <div className="timeline-end timeline-box py-2 px-3 border-base-300 bg-base-200/50">
+              <div className="text-xs leading-relaxed">{entry.message}</div>
+              {entry.timestamp && (
+                <div className="text-[10px] font-mono opacity-40 mt-0.5" title={formatDate(entry.timestamp)}>
+                  {timeAgo(entry.timestamp)}
+                </div>
+              )}
             </div>
-          </div>
+            {!isLast && <hr className="bg-base-300" />}
+          </li>
         );
       })}
-    </div>
+    </ul>
   );
 }
 
@@ -953,6 +1138,14 @@ export function IssueDetailDrawer({ issue, onClose, onStateChange, onRetry, onCa
   const [tab, setTab] = useState("overview");
   const [visible, setVisible] = useState(false);
   const [closing, setClosing] = useState(false);
+  const tabsContainerRef = useRef(null);
+
+  const handleClose = useCallback(() => {
+    setClosing(true);
+    setTimeout(() => { setVisible(false); setClosing(false); onClose(); }, 250);
+  }, [onClose]);
+
+  const { ref: swipeRef, handlers: swipeHandlers } = useSwipeToDismiss({ onDismiss: handleClose, direction: "right" });
 
   // Reset tab when issue changes — auto-open Review tab when In Review
   useEffect(() => {
@@ -960,10 +1153,23 @@ export function IssueDetailDrawer({ issue, onClose, onStateChange, onRetry, onCa
     if (issue) { setVisible(true); setClosing(false); }
   }, [issue?.id, issue?.state]);
 
-  const handleClose = useCallback(() => {
-    setClosing(true);
-    setTimeout(() => { setVisible(false); setClosing(false); onClose(); }, 250);
-  }, [onClose]);
+  // History integration — back button closes drawer
+  useEffect(() => {
+    if (!issue || !visible) return;
+    history.pushState({ drawer: "issue-detail" }, "");
+    const handler = (e) => {
+      if (e.state?.drawer !== "issue-detail") handleClose();
+    };
+    window.addEventListener("popstate", handler);
+    return () => window.removeEventListener("popstate", handler);
+  }, [issue?.id, visible, handleClose]);
+
+  // Auto-scroll active tab into view
+  useEffect(() => {
+    if (!tabsContainerRef.current) return;
+    const active = tabsContainerRef.current.querySelector(".tab-active");
+    active?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+  }, [tab]);
 
   if (!issue && !visible) return null;
   const displayIssue = issue || {};
@@ -975,8 +1181,10 @@ export function IssueDetailDrawer({ issue, onClose, onStateChange, onRetry, onCa
       style={closing ? { animationDuration: "0.2s" } : undefined}
     >
       <div
+        ref={swipeRef}
         className={`fixed top-0 right-0 z-50 h-full w-full md:w-[520px] lg:w-[600px] bg-base-100 shadow-2xl flex flex-col ${closing ? "animate-slide-out-right" : "animate-slide-in-right"}`}
         onClick={(event) => event.stopPropagation()}
+        {...swipeHandlers}
       >
         {/* Header */}
         <div className="px-6 pt-4 pb-0 shrink-0">
@@ -993,27 +1201,36 @@ export function IssueDetailDrawer({ issue, onClose, onStateChange, onRetry, onCa
 
           <h2 className="text-lg font-bold leading-tight mb-3">{issue.title || "-"}</h2>
 
-          {/* Tabs */}
-          <div role="tablist" className="tabs tabs-lift">
-            {getTabs(issue.state).map(({ id, label, icon: Icon }) => (
-              <a
-                key={id}
-                role="tab"
-                className={`tab gap-1.5 ${tab === id ? "tab-active" : ""} ${id === "review" ? "text-secondary font-semibold" : ""}`}
-                onClick={() => setTab(id)}
-              >
-                <Icon className="size-3.5" />
-                {label}
-                {id === "review" && issue.state === "In Review" && (
-                  <span className="badge badge-xs badge-secondary">!</span>
-                )}
-              </a>
-            ))}
+          {/* Tabs — horizontally scrollable on mobile with fade edges */}
+          <div className="relative">
+            <div
+              ref={tabsContainerRef}
+              role="tablist"
+              className="tabs tabs-lift overflow-x-auto -webkit-overflow-scrolling-touch scrollbar-none"
+              style={{ scrollbarWidth: "none" }}
+            >
+              {getTabs(issue.state).map(({ id, label, icon: Icon }) => (
+                <a
+                  key={id}
+                  role="tab"
+                  className={`tab gap-1.5 whitespace-nowrap ${tab === id ? "tab-active" : ""} ${id === "review" ? "text-secondary font-semibold" : ""}`}
+                  onClick={() => setTab(id)}
+                >
+                  <Icon className="size-3.5" />
+                  {label}
+                  {id === "review" && issue.state === "In Review" && (
+                    <span className="badge badge-xs badge-secondary">!</span>
+                  )}
+                </a>
+              ))}
+            </div>
+            {/* Fade edges for scroll indication */}
+            <div className="absolute right-0 top-0 bottom-0 w-6 bg-gradient-to-l from-base-100 to-transparent pointer-events-none md:hidden" />
           </div>
         </div>
 
         {/* Tab content */}
-        <div className="flex-1 overflow-y-auto px-6 py-4 min-h-0">
+        <div className="flex-1 overflow-y-auto px-6 py-4 min-h-0 drawer-safe-bottom">
           <div key={tab} className="animate-fade-in">
             {tab === "overview" && <OverviewTab issue={issue} onStateChange={onStateChange} onRetry={onRetry} onCancel={onCancel} />}
             {tab === "planning" && <PlanningTab issue={issue} onStateChange={onStateChange} />}
@@ -1026,7 +1243,7 @@ export function IssueDetailDrawer({ issue, onClose, onStateChange, onRetry, onCa
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-3 border-t border-base-300 shrink-0 flex items-center justify-end">
+        <div className="px-6 py-3 border-t border-base-300 shrink-0 flex items-center justify-end" style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 0.75rem)" }}>
           <button type="button" className="btn btn-sm btn-ghost" onClick={handleClose}>Close</button>
         </div>
       </div>
