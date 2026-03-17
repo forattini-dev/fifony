@@ -1381,8 +1381,8 @@ export default function OnboardingWizard({ onComplete }) {
       </div>
 
       {/* Navigation footer */}
-      <div className="relative z-10 p-4 pb-6 flex justify-between items-center max-w-2xl mx-auto w-full">
-        {step > 0 ? (
+      <div className={`relative z-10 p-4 pb-6 flex items-center max-w-2xl mx-auto w-full ${step === 0 ? "justify-center" : "justify-between"}`}>
+        {step > 0 && (
           <button
             className="btn btn-ghost gap-1"
             onClick={goBack}
@@ -1390,8 +1390,6 @@ export default function OnboardingWizard({ onComplete }) {
           >
             <ChevronLeft className="size-4" /> Back
           </button>
-        ) : (
-          <div />
         )}
 
         {step < STEP_COUNT - 1 ? (
