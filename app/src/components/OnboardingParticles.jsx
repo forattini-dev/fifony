@@ -50,7 +50,7 @@ export default function OnboardingParticles() {
     };
     resize();
 
-    const count = Math.min(Math.floor((window.innerWidth * window.innerHeight) / 18000), 40);
+    const count = Math.min(Math.floor((window.innerWidth * window.innerHeight) / 8000), 80);
     particlesRef.current = Array.from({ length: count }, () =>
       createParticle(window.innerWidth, window.innerHeight)
     );
