@@ -416,15 +416,8 @@ export async function generatePlan(
   const prompt = await buildPlanPrompt(title, description, fast);
   const tempDir = mkdtempSync(join(tmpdir(), "fifony-plan-"));
   const promptFile = join(tempDir, "fifony-plan-prompt.md");
-  const envFile = join(tempDir, "fifony-plan-env.sh");
 
   writeFileSync(promptFile, `${prompt}\n`, "utf8");
-  writeFileSync(envFile, [
-    `export FIFONY_PROMPT_FILE=${JSON.stringify(promptFile)}`,
-    `export FIFONY_AGENT_PROVIDER=${JSON.stringify(preferred)}`,
-  ].join("\n"), "utf8");
-
-  const wrappedCommand = `. "${envFile}" && ${command}`;
 
   // Track output bytes live — persist progress periodically so the UI can show it
   let lastProgressPersist = 0;
@@ -432,11 +425,16 @@ export async function generatePlan(
 
   const output = await new Promise<string>((resolve, reject) => {
     let stdout = "";
-    const child = spawn(wrappedCommand, {
+    const child = spawn(command, {
       shell: true,
       cwd: tempDir,
       detached: true,
       stdio: ["pipe", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        FIFONY_PROMPT_FILE: promptFile,
+        FIFONY_AGENT_PROVIDER: preferred,
+      },
     });
     child.unref();
     child.stdin?.end();
@@ -602,23 +600,21 @@ export async function refinePlan(
   const prompt = await buildRefinePrompt(issue.title, issue.description, issue.plan, feedback);
   const tempDir = mkdtempSync(join(tmpdir(), "fifony-refine-"));
   const promptFile = join(tempDir, "fifony-refine-prompt.md");
-  const envFile = join(tempDir, "fifony-refine-env.sh");
 
   writeFileSync(promptFile, `${prompt}\n`, "utf8");
-  writeFileSync(envFile, [
-    `export FIFONY_PROMPT_FILE=${JSON.stringify(promptFile)}`,
-    `export FIFONY_AGENT_PROVIDER=${JSON.stringify(preferred)}`,
-  ].join("\n"), "utf8");
-
-  const wrappedCommand = `. "${envFile}" && ${command}`;
 
   const output = await new Promise<string>((resolve, reject) => {
     let stdout = "";
-    const child = spawn(wrappedCommand, {
+    const child = spawn(command, {
       shell: true,
       cwd: tempDir,
       detached: true,
       stdio: ["pipe", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        FIFONY_PROMPT_FILE: promptFile,
+        FIFONY_AGENT_PROVIDER: preferred,
+      },
     });
     child.unref();
     child.stdin?.end();
