@@ -10,15 +10,15 @@ type IssueStateMachineDefinition = {
 };
 
 const ISSUE_STATE_TRANSITIONS: Record<string, readonly string[]> = {
-  Planning: ["Todo", "Cancelled"],
-  Todo: ["Queued", "Planning", "Cancelled"],
-  Queued: ["Running", "Todo", "Cancelled"],
-  Running: ["In Review", "Interrupted", "Blocked", "Cancelled"],
-  Interrupted: ["Queued", "Running", "Blocked", "Cancelled"],
-  "In Review": ["Running", "Done", "Blocked", "Cancelled"],
-  Blocked: ["Planning", "Queued", "Cancelled"],
-  Done: ["Planning", "Todo", "Cancelled"],
-  Cancelled: ["Planning", "Todo", "Queued"],
+  Planning:  ["Planned", "Cancelled"],
+  Planned:   ["Queued", "Planning", "Cancelled"],
+  Queued:    ["Running"],
+  Running:   ["Reviewing", "Queued", "Blocked"],
+  Reviewing: ["Reviewed", "Queued", "Blocked"],
+  Reviewed:  ["Done", "Queued", "Planning", "Cancelled"],
+  Blocked:   ["Queued", "Planning", "Cancelled"],
+  Done:      ["Planning", "Queued"],
+  Cancelled: ["Planning", "Planned"],
 };
 
 export const ISSUE_STATE_MACHINE_DEFINITION = {
@@ -26,11 +26,11 @@ export const ISSUE_STATE_MACHINE_DEFINITION = {
   states: {
     Planning: {
       on: {
-        Todo: "Todo",
+        Planned: "Planned",
         Cancelled: "Cancelled",
       },
     },
-    Todo: {
+    Planned: {
       on: {
         Queued: "Queued",
         Planning: "Planning",
@@ -40,53 +40,47 @@ export const ISSUE_STATE_MACHINE_DEFINITION = {
     Queued: {
       on: {
         Running: "Running",
-        Todo: "Todo",
-        Cancelled: "Cancelled",
       },
     },
     Running: {
       on: {
-        "In Review": "In Review",
-        Interrupted: "Interrupted",
-        Blocked: "Blocked",
-        Cancelled: "Cancelled",
-      },
-    },
-    Interrupted: {
-      on: {
+        Reviewing: "Reviewing",
         Queued: "Queued",
-        Running: "Running",
         Blocked: "Blocked",
-        Cancelled: "Cancelled",
       },
     },
-    "In Review": {
+    Reviewing: {
       on: {
-        Running: "Running",
-        Done: "Done",
+        Reviewed: "Reviewed",
+        Queued: "Queued",
         Blocked: "Blocked",
+      },
+    },
+    Reviewed: {
+      on: {
+        Done: "Done",
+        Queued: "Queued",
+        Planning: "Planning",
         Cancelled: "Cancelled",
       },
     },
     Blocked: {
       on: {
-        Planning: "Planning",
         Queued: "Queued",
+        Planning: "Planning",
         Cancelled: "Cancelled",
       },
     },
     Done: {
       on: {
         Planning: "Planning",
-        Todo: "Todo",
-        Cancelled: "Cancelled",
+        Queued: "Queued",
       },
     },
     Cancelled: {
       on: {
         Planning: "Planning",
-        Todo: "Todo",
-        Queued: "Queued",
+        Planned: "Planned",
       },
     },
   },
@@ -114,7 +108,7 @@ let issueStateMachinePlugin: IssueStateMachinePluginLike | null = null;
 function normalizeMachineDefinition(machineDefinition: unknown): IssueStateMachineDefinition {
   const definition = machineDefinition as Partial<IssueStateMachineDefinition>;
   return {
-    initialState: typeof definition?.initialState === "string" ? definition.initialState : "Todo",
+    initialState: typeof definition?.initialState === "string" ? definition.initialState : "Planned",
     states: definition?.states && typeof definition.states === "object" && !Array.isArray(definition.states)
       ? definition.states
       : (ISSUE_STATE_MACHINE_DEFINITION as IssueStateMachineDefinition).states,

@@ -4,11 +4,11 @@ import { useUiNotificationsSetting } from "../hooks.js";
 const NOTIFY_STATES = {
   Running: { title: "Agent started", icon: "play", tag: "running" },
   Queued: { title: "Issue queued", icon: "clock", tag: "queued" },
-  "In Review": { title: "Review needed", icon: "eye", tag: "review" },
+  Reviewing: { title: "Review in progress", icon: "eye", tag: "reviewing" },
+  Reviewed: { title: "Review complete", icon: "eye", tag: "reviewed" },
   Done: { title: "Issue completed", icon: "check", tag: "done", sound: true },
   Blocked: { title: "Issue blocked", icon: "alert", tag: "blocked", sound: true },
   Cancelled: { title: "Issue cancelled", icon: "x", tag: "cancelled" },
-  Interrupted: { title: "Agent interrupted", icon: "pause", tag: "interrupted" },
 };
 
 const TOKEN_MILESTONES = [10_000, 50_000, 100_000, 500_000, 1_000_000];

@@ -24,14 +24,15 @@ function ColumnBadge({ count, className }) {
   );
 }
 
-// Kanban columns — Queued/Running/Interrupted are grouped as "In Progress"
-const COLUMNS = ["Planning", "In Progress", "In Review", "Blocked", "Done", "Cancelled"];
-const IN_PROGRESS_STATES = new Set(["Todo", "Queued", "Running", "Interrupted"]);
+// Kanban columns — Planned/Queued/Running are grouped as "In Progress", Reviewing/Reviewed as "Reviewing"
+const COLUMNS = ["Planning", "In Progress", "Reviewing", "Blocked", "Done", "Cancelled"];
+const IN_PROGRESS_STATES = new Set(["Planned", "Queued", "Running"]);
+const REVIEWING_STATES = new Set(["Reviewing", "Reviewed"]);
 
 const COLUMN_BADGE = {
   Planning: "badge-info",
   "In Progress": "badge-primary",
-  "In Review": "badge-secondary",
+  "Reviewing": "badge-secondary",
   Blocked: "badge-error",
   Done: "badge-success",
   Cancelled: "badge-neutral",
@@ -40,7 +41,7 @@ const COLUMN_BADGE = {
 const COLUMN_ACCENT_STYLE = {
   Planning: { borderTopColor: 'oklch(var(--in) / 0.4)' },
   "In Progress": { borderTopColor: 'oklch(var(--p) / 0.5)' },
-  "In Review": { borderTopColor: 'oklch(var(--s) / 0.4)' },
+  "Reviewing": { borderTopColor: 'oklch(var(--s) / 0.4)' },
   Blocked: { borderTopColor: 'oklch(var(--er) / 0.4)' },
   Done: { borderTopColor: 'oklch(var(--su) / 0.4)' },
   Cancelled: { borderTopColor: 'oklch(var(--bc) / 0.15)' },
@@ -49,7 +50,7 @@ const COLUMN_ACCENT_STYLE = {
 const COLUMN_HEADER_COLOR = {
   Planning: 'oklch(var(--in))',
   "In Progress": 'oklch(var(--p))',
-  "In Review": 'oklch(var(--s))',
+  "Reviewing": 'oklch(var(--s))',
   Blocked: 'oklch(var(--er))',
   Done: 'oklch(var(--su))',
   Cancelled: undefined,
@@ -58,7 +59,7 @@ const COLUMN_HEADER_COLOR = {
 const COLUMN_DOT_COLOR = {
   Planning: 'oklch(var(--in))',
   "In Progress": 'oklch(var(--p))',
-  "In Review": 'oklch(var(--s))',
+  "Reviewing": 'oklch(var(--s))',
   Blocked: 'oklch(var(--er))',
   Done: 'oklch(var(--su))',
   Cancelled: 'oklch(var(--bc) / 0.3)',
@@ -67,7 +68,7 @@ const COLUMN_DOT_COLOR = {
 const EMPTY_CONFIG = {
   Planning: { icon: Lightbulb, desc: "Create an issue to start planning" },
   "In Progress": { icon: Play, desc: "Issues move here when agents start" },
-  "In Review": { icon: Eye, desc: "Awaiting review" },
+  "Reviewing": { icon: Eye, desc: "Awaiting review" },
   Blocked: { icon: AlertTriangle, desc: "Needs attention" },
   Done: { icon: CheckCircle, desc: "Completed" },
   Cancelled: { icon: XCircle, desc: "Cancelled" },
@@ -191,8 +192,8 @@ function ColumnDots({ columns, activeIndex }) {
 
 // Default visible card limits for collapsible columns
 const COLLAPSE_LIMITS = {
-  Done: 5,
-  Cancelled: 3,
+  Done: 20,
+  Cancelled: 12,
 };
 
 function KanbanColumn({ col, issues, empty, badgeClass, dragState, registerColumn, getCardHandlers, onSelect, onCreateIssue, lastDroppedId, hasRunningAgents, totalIssues, onLongPress, selectedIds, onToggleSelect, hasSelection }) {
@@ -433,7 +434,10 @@ export function BoardView({ issues, onStateChange, onRetry, onCancel, onSelect, 
   const grouped = useMemo(() => {
     const buckets = Object.fromEntries(COLUMNS.map((c) => [c, []]));
     for (const issue of issues) {
-      const col = IN_PROGRESS_STATES.has(issue.state) ? "In Progress" : (buckets[issue.state] ? issue.state : "Todo");
+      let col;
+      if (IN_PROGRESS_STATES.has(issue.state)) col = "In Progress";
+      else if (REVIEWING_STATES.has(issue.state)) col = "Reviewing";
+      else col = buckets[issue.state] ? issue.state : "Planning";
       buckets[col].push(issue);
     }
     for (const c of COLUMNS) {
@@ -518,7 +522,7 @@ export function BoardView({ issues, onStateChange, onRetry, onCancel, onSelect, 
           className="grid gap-3 flex-1 stagger-children"
           style={{
             gridTemplateColumns: `repeat(${COLUMNS.length}, minmax(0, 1fr))`,
-            minWidth: `${COLUMNS.length * 180}px`,
+            minWidth: `${COLUMNS.length * 200}px`,
           }}
         >
           {COLUMNS.map((col, i) => (
@@ -548,7 +552,7 @@ export function BoardView({ issues, onStateChange, onRetry, onCancel, onSelect, 
           className={`grid gap-3 flex-1 stagger-children ${dragState ? "kanban-dragging" : ""}`}
           style={{
             gridTemplateColumns: `repeat(${COLUMNS.length}, minmax(0, 1fr))`,
-            minWidth: `${COLUMNS.length * 180}px`,
+            minWidth: `${COLUMNS.length * 200}px`,
           }}
         >
           {COLUMNS.map((col) => (

@@ -554,38 +554,11 @@ export function getBaseAgentProviders(
   ];
 }
 
-export function getCapabilityRoutingOptions(
-  workflowDefinition: WorkflowDefinition | null,
-): CapabilityResolverOptions {
-  const routingConfig = workflowDefinition ? getNestedRecord(workflowDefinition.config, "routing") : {};
-  const overridesRaw = Array.isArray(routingConfig.overrides) ? routingConfig.overrides : [];
-
-  return {
-    enabled: routingConfig.enabled === false ? false : true,
-    overrides: overridesRaw
-      .filter((entry): entry is JsonRecord => Boolean(entry) && typeof entry === "object" && !Array.isArray(entry))
-      .map((entry) => ({
-        match: {
-          labels: toStringArray((entry.match as JsonRecord | undefined)?.labels),
-          terms: toStringArray((entry.match as JsonRecord | undefined)?.terms),
-          category: toStringValue((entry.match as JsonRecord | undefined)?.category),
-          paths: toStringArray((entry.match as JsonRecord | undefined)?.paths),
-        },
-        category: toStringValue(entry.category),
-        rationale: toStringArray(entry.rationale),
-        overlays: toStringArray(entry.overlays),
-        providers: Array.isArray(entry.providers)
-          ? (entry.providers as unknown[])
-              .filter((provider): provider is JsonRecord => Boolean(provider) && typeof provider === "object" && !Array.isArray(provider))
-              .map((provider) => ({
-                provider: normalizeAgentProvider(toStringValue(provider.provider || provider.name || "codex")),
-                role: normalizeAgentRole(toStringValue(provider.role, "executor")),
-                profile: toStringValue(provider.profile),
-                reason: toStringValue(provider.reason, "Workflow routing override."),
-              }))
-          : undefined,
-      })),
-  };
+export function getCapabilityRoutingOptions(): CapabilityResolverOptions {
+  // WORKFLOW.md is no longer supported — routing overrides are not user-configurable.
+  // Provider/model/effort overrides from user settings are applied later via
+  // applyWorkflowConfigToProviders after capability classification.
+  return { enabled: true, overrides: [] };
 }
 
 export function getCapabilityPriorityMap(
@@ -697,7 +670,7 @@ export function getEffectiveAgentProviders(
       labels: issue.labels,
       paths: issue.paths,
     },
-    getCapabilityRoutingOptions(workflowDefinition),
+    getCapabilityRoutingOptions(),
   );
   applyCapabilityMetadata(issue, resolution);
 

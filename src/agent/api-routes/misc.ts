@@ -1,0 +1,246 @@
+import type { RuntimeState } from "../types.ts";
+import { logger } from "../logger.ts";
+import { toStringValue } from "../helpers.ts";
+import { isAgentStillRunning } from "../agent.ts";
+import { addEvent } from "../issues.ts";
+import { persistState } from "../store.ts";
+import { findIssue, listEvents, parseIssue } from "../api-helpers.ts";
+import { TARGET_ROOT, SOURCE_ROOT, ATTACHMENTS_ROOT } from "../constants.ts";
+import { execSync } from "node:child_process";
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { randomUUID } from "node:crypto";
+import { basename, extname, join } from "node:path";
+import { now } from "../helpers.ts";
+
+export function registerMiscRoutes(
+  app: any,
+  state: RuntimeState,
+): void {
+  app.get("/api/live/:id", async (c: any) => {
+    try {
+      const issueId = parseIssue(c);
+      if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
+      const issue = findIssue(state, issueId);
+      if (!issue) return c.json({ ok: false, error: "Issue not found." }, 404);
+
+      const parseStartedAt = (value: unknown): number | null => {
+        const valueText = typeof value === "string" ? value.trim() : "";
+        if (!valueText) return null;
+        const ts = Date.parse(valueText);
+        return Number.isFinite(ts) ? ts : null;
+      };
+
+      const startedAtText = toStringValue(issue.startedAt, "");
+      const updatedAtText = toStringValue(issue.updatedAt, "");
+      const startedAtTs = parseStartedAt(startedAtText) ?? parseStartedAt(updatedAtText);
+      const elapsed = startedAtTs ? Date.now() - startedAtTs : 0;
+
+      const wp = issue.workspacePath;
+      const liveLog = wp ? `${wp}/live-output.log` : null;
+      let logTail = "";
+      let logSize = 0;
+      if (liveLog && existsSync(liveLog)) {
+        try {
+          const stat = statSync(liveLog);
+          logSize = stat.size;
+          // Read last 8KB
+          const fd = openSync(liveLog, "r");
+          const readSize = Math.min(logSize, 8192);
+          const buf = Buffer.alloc(readSize);
+          readSync(fd, buf, 0, readSize, Math.max(0, logSize - readSize));
+          closeSync(fd);
+          logTail = buf.toString("utf8");
+        } catch {}
+      }
+      const agentStatus = isAgentStillRunning(issue);
+      return c.json({
+        ok: true,
+        issueId: issue.id,
+        state: issue.state,
+        running: issue.state === "Running" || issue.state === "Reviewing",
+        agentAlive: agentStatus.alive,
+        agentPid: agentStatus.pid?.pid ?? null,
+        startedAt: startedAtText || updatedAtText || now(),
+        elapsed: Number.isFinite(elapsed) ? elapsed : 0,
+        logSize,
+        logTail,
+        outputTail: issue.commandOutputTail || "",
+      });
+    } catch (error) {
+      const issueId = parseIssue(c);
+      logger.error(`Failed to load live issue state for ${issueId || "<unknown>"}: ${String(error)}`);
+      return c.json({ ok: false, error: "Failed to load live issue state." }, 500);
+    }
+  });
+
+  app.get("/api/diff/:id", async (c: any) => {
+    try {
+      const issueId = parseIssue(c);
+      if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
+      const issue = findIssue(state, issueId);
+      if (!issue) return c.json({ ok: false, error: "Issue not found." }, 404);
+      const wp = issue.workspacePath;
+      if (!wp || !existsSync(wp)) {
+        return c.json({ ok: true, files: [], diff: "", message: "No workspace found." });
+      }
+      let raw = "";
+      if (issue.branchName && issue.baseBranch) {
+        // Git worktree: proper branch diff
+        try {
+          raw = execSync(
+            `git diff --no-color "${issue.baseBranch}"..."${issue.branchName}"`,
+            { encoding: "utf8", maxBuffer: 4 * 1024 * 1024, timeout: 15_000, cwd: TARGET_ROOT },
+          );
+        } catch (err: any) {
+          raw = err.stdout || "";
+        }
+      } else {
+        // Legacy: no-index diff between SOURCE_ROOT and workspace
+        if (!existsSync(SOURCE_ROOT)) {
+          return c.json({ ok: true, files: [], diff: "", message: "Source root not found." });
+        }
+        try {
+          raw = execSync(
+            `git diff --no-index --no-color -- "${SOURCE_ROOT}" "${wp}"`,
+            { encoding: "utf8", maxBuffer: 4 * 1024 * 1024, timeout: 15_000 },
+          );
+        } catch (err: any) {
+          raw = err.stdout || "";
+        }
+      }
+
+      if (!raw.trim()) {
+        return c.json({ ok: true, files: [], diff: "", message: "No changes" });
+      }
+
+      // Clean paths for legacy diff (git worktree diff already uses a/ b/ prefixes)
+      let cleaned = raw;
+      if (!issue.branchName || !issue.baseBranch) {
+        const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const sourcePrefix = SOURCE_ROOT.endsWith("/") ? SOURCE_ROOT : `${SOURCE_ROOT}/`;
+        const wpPrefix = wp.endsWith("/") ? wp : `${wp}/`;
+        cleaned = raw
+          .replace(new RegExp(esc(wpPrefix), "g"), "b/")
+          .replace(new RegExp(esc(sourcePrefix), "g"), "a/");
+      }
+
+      // Split into per-file chunks and filter internals
+      const internalRe = /^(fifony[-_]|\.fifony-|WORKFLOW\.local)/;
+      const chunks = cleaned.split(/(?=^diff --git )/m);
+      const filtered = chunks.filter((chunk) => {
+        const m = chunk.match(/^diff --git a\/(.+?) b\//);
+        if (!m) return false;
+        const basename = m[1].split("/").pop() || "";
+        return !internalRe.test(basename);
+      });
+
+      const diff = filtered.join("").trim();
+
+      // Per-file summary (like GitHub PR file list)
+      const files = filtered.map((chunk) => {
+        const pathMatch = chunk.match(/^diff --git a\/(.+?) b\//);
+        const path = pathMatch?.[1] || "unknown";
+        const additions = (chunk.match(/^\+[^+]/gm) || []).length;
+        const deletions = (chunk.match(/^-[^-]/gm) || []).length;
+        const isNew = chunk.includes("new file mode");
+        const isDeleted = chunk.includes("deleted file mode");
+        const status = isNew ? "added" : isDeleted ? "removed" : "modified";
+        return { path, status, additions, deletions };
+      });
+
+      const totalAdditions = files.reduce((s, f) => s + f.additions, 0);
+      const totalDeletions = files.reduce((s, f) => s + f.deletions, 0);
+
+      return c.json({ ok: true, files, diff, totalAdditions, totalDeletions });
+    } catch (error) {
+      const issueId = parseIssue(c);
+      logger.error(`Failed to load issue diff for ${issueId || "<unknown>"}: ${String(error)}`);
+      return c.json({ ok: false, error: "Failed to load issue diff." }, 500);
+    }
+  });
+
+  app.get("/api/events/feed", async (c: any) => {
+    const since = c.req.query("since");
+    const issueId = c.req.query("issueId");
+    const kind = c.req.query("kind");
+    const events = await listEvents(state, {
+      since: typeof since === "string" ? since : undefined,
+      issueId: typeof issueId === "string" && issueId ? issueId : undefined,
+      kind: typeof kind === "string" && kind ? kind : undefined,
+    });
+    return c.json({ events: events.slice(0, 200) });
+  });
+
+  app.get("/api/gitignore/status", async (c: any) => {
+    try {
+      const gitignorePath = join(TARGET_ROOT, ".gitignore");
+      if (!existsSync(gitignorePath)) {
+        return c.json({ exists: false, hasFifony: false });
+      }
+      const content = readFileSync(gitignorePath, "utf-8");
+      const lines = content.split("\n").map((l: string) => l.trim());
+      const hasFifony = lines.some((l: string) => l === ".fifony" || l === ".fifony/" || l === "/.fifony" || l === "/.fifony/");
+      return c.json({ exists: true, hasFifony });
+    } catch (error) {
+      logger.error({ err: error }, "Failed to check .gitignore");
+      return c.json({ exists: false, hasFifony: false, error: "Failed to check .gitignore" }, 500);
+    }
+  });
+
+  app.post("/api/gitignore/add", async (c: any) => {
+    try {
+      const gitignorePath = join(TARGET_ROOT, ".gitignore");
+      if (!existsSync(gitignorePath)) {
+        writeFileSync(gitignorePath, "# Fifony state directory\n.fifony/\n", "utf-8");
+        return c.json({ ok: true, created: true });
+      }
+      const content = readFileSync(gitignorePath, "utf-8");
+      const lines = content.split("\n").map((l: string) => l.trim());
+      const hasFifony = lines.some((l: string) => l === ".fifony" || l === ".fifony/" || l === "/.fifony" || l === "/.fifony/");
+      if (hasFifony) {
+        return c.json({ ok: true, alreadyPresent: true });
+      }
+      const suffix = content.endsWith("\n") ? "" : "\n";
+      appendFileSync(gitignorePath, `${suffix}\n# Fifony state directory\n.fifony/\n`, "utf-8");
+      return c.json({ ok: true, added: true });
+    } catch (error) {
+      logger.error({ err: error }, "Failed to update .gitignore");
+      return c.json({ ok: false, error: "Failed to update .gitignore" }, 500);
+    }
+  });
+
+  app.post("/api/attachments/upload", async (c: any) => {
+    try {
+      const payload = await c.req.json() as { files?: Array<{ name: string; data: string; type: string }> };
+      if (!Array.isArray(payload.files) || payload.files.length === 0) {
+        return c.json({ ok: false, error: "No files provided." }, 400);
+      }
+      const uploadId = randomUUID();
+      const uploadDir = join(ATTACHMENTS_ROOT, "temp", uploadId);
+      mkdirSync(uploadDir, { recursive: true });
+      const paths: string[] = [];
+      for (const file of payload.files) {
+        if (typeof file.data !== "string" || !file.name) continue;
+        const safeExt = extname(file.name).replace(/[^a-z0-9.]/gi, "").slice(0, 10) || ".bin";
+        const safeName = `${randomUUID()}${safeExt}`;
+        const dest = join(uploadDir, safeName);
+        writeFileSync(dest, Buffer.from(file.data, "base64"));
+        paths.push(dest);
+      }
+      return c.json({ ok: true, paths, uploadId });
+    } catch (error) {
+      logger.error({ err: error }, "[API] Attachment upload failed");
+      return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 500);
+    }
+  });
+}

@@ -58,7 +58,7 @@ export function DashboardProvider({ children }) {
     "all",
     { normalize: (value) => (typeof value === "string" && value.trim() ? value : "all") },
   );
-  const [concurrency, setConcurrency] = useState("2");
+  const [concurrency, setConcurrency] = useState("3");
   const [toast, setToast] = useState(null);
   const [toastExiting, setToastExiting] = useState(false);
   const [confetti, setConfetti] = useState(null);

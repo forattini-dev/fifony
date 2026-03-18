@@ -49,17 +49,41 @@ export function formatDuration(ms) {
   return `${Math.floor(ms / 3_600_000)}h ${Math.floor((ms % 3_600_000) / 60_000)}m`;
 }
 
-export const STATES = ["Planning", "Todo", "Queued", "Running", "Interrupted", "In Review", "Blocked", "Done", "Cancelled"];
+/**
+ * Fill missing days in a daily data array with zero entries.
+ * Returns an array of exactly `days` entries ending on today, preserving
+ * any existing data and zeroing out days with no records.
+ *
+ * Each entry in the source array must have a `date` field ("YYYY-MM-DD").
+ * Returned entries carry all original fields (totalTokens, events, etc.)
+ * or default zeros for missing days.
+ */
+export function fillDailyGaps(data, days = 14) {
+  const byDate = new Map((data || []).filter((d) => d.date).map((d) => [d.date, d]));
+  const result = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const date = d.toISOString().slice(0, 10);
+    result.push(byDate.get(date) ?? { date, totalTokens: 0, inputTokens: 0, outputTokens: 0, events: 0 });
+  }
+  return result;
+}
+
+export const STATES = [
+  "Planning", "Planned", "Queued", "Running",
+  "Reviewing", "Reviewed", "Blocked", "Done", "Cancelled"
+];
 export const ISSUE_STATE_MACHINE = {
-  Planning: ["Todo", "Cancelled"],
-  Todo: ["Queued", "Planning", "Cancelled"],
-  Queued: ["Running", "Todo", "Cancelled"],
-  Running: ["In Review", "Interrupted", "Blocked", "Cancelled"],
-  Interrupted: ["Queued", "Running", "Blocked", "Cancelled"],
-  "In Review": ["Running", "Done", "Blocked", "Cancelled"],
-  Blocked: ["Planning", "Queued", "Cancelled"],
-  Done: ["Planning", "Todo", "Cancelled"],
-  Cancelled: ["Planning", "Todo", "Queued"],
+  Planning:  ["Planned", "Cancelled"],
+  Planned:   ["Queued", "Planning", "Cancelled"],
+  Queued:    ["Running"],
+  Running:   ["Reviewing", "Queued", "Blocked"],
+  Reviewing: ["Reviewed", "Queued", "Blocked"],
+  Reviewed:  ["Done", "Queued", "Planning", "Cancelled"],
+  Blocked:   ["Queued", "Planning", "Cancelled"],
+  Done:      ["Planning", "Queued"],
+  Cancelled: ["Planning", "Planned"],
 };
 
 export function getIssueTransitions(state) {

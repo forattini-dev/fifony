@@ -57,14 +57,23 @@ export function installGracefulShutdown(
 
     // Mark running issues as Interrupted so they resume on next boot
     for (const issue of state.issues) {
-      if (running.has(issue.id) && (issue.state === "Running" || issue.state === "In Review")) {
+      if (running.has(issue.id) && (issue.state === "Running" || issue.state === "Reviewing")) {
         try {
-          await transitionIssueState(issue, "Interrupted", `Interrupted by ${signal} — will resume on next start.`, { fallbackToLocal: true });
+          await transitionIssueState(issue, "Queued", `Interrupted by ${signal} — queued for resume on next start.`, { fallbackToLocal: true });
         } catch {
           // Issue may already be in a terminal state; proceed with shutdown regardless
-          logger.warn(`Could not transition issue ${issue.identifier} to Interrupted during shutdown.`);
+          logger.warn(`Could not transition issue ${issue.identifier} to Queued during shutdown.`);
         }
-        addEvent(state, issue.id, "info", `Issue ${issue.identifier} interrupted by shutdown.`);
+        addEvent(state, issue.id, "info", `Issue ${issue.identifier} queued for resume on next start.`);
+      }
+
+      // Planning jobs have no external process — just reset the status so the scheduler picks them up again
+      if (running.has(issue.id) && issue.state === "Planning" && issue.planningStatus === "planning") {
+        issue.planningStatus = "idle";
+        issue.planningError = `Interrupted by ${signal} — will resume.`;
+        issue.planningStartedAt = undefined;
+        markIssueDirty(issue.id);
+        addEvent(state, issue.id, "info", `Planning for ${issue.identifier} interrupted by shutdown — will resume.`);
       }
     }
 
@@ -86,7 +95,7 @@ export function installGracefulShutdown(
 
 export function analyzeParallelizability(issues: IssueEntry[]): ParallelismAnalysis {
   const todo = issues.filter((issue) =>
-    issue.state === "Todo"
+    issue.state === "Planned"
     && issue.assignedToWorker
     && issue.blockedBy.length === 0,
   );
@@ -95,7 +104,7 @@ export function analyzeParallelizability(issues: IssueEntry[]): ParallelismAnaly
     return {
       canParallelize: false,
       maxSafeParallelism: 0,
-      reason: "No runnable issues in Todo state.",
+      reason: "No runnable issues in Planned state.",
       groups: [],
     };
   }
@@ -165,29 +174,50 @@ export function analyzeParallelizability(issues: IssueEntry[]): ParallelismAnaly
 
 export async function ensureNotStale(state: RuntimeState, staleTimeoutMs: number): Promise<void> {
   const limit = Date.now() - staleTimeoutMs;
+
+  // Recover stale planning jobs (Planning state with planningStatus="planning" but worker died)
+  for (const issue of state.issues) {
+    if (issue.state !== "Planning" || issue.planningStatus !== "planning") continue;
+    if (!issue.planningStartedAt) continue;
+    const elapsed = Date.now() - Date.parse(issue.planningStartedAt);
+    if (elapsed > staleTimeoutMs) {
+      issue.planningStatus = "idle";
+      issue.planningError = "Planning worker stalled — auto-recovered.";
+      issue.planningStartedAt = undefined;
+      markIssueDirty(issue.id);
+      addEvent(state, issue.id, "info", `Planning for ${issue.identifier} recovered from stale.`);
+      logger.info({ issueId: issue.id, identifier: issue.identifier, elapsed }, "[Scheduler] Recovered stale planning job");
+    }
+  }
+
   for (const issue of state.issues) {
     if (!EXECUTING_STATES.has(issue.state)) continue;
     if (issueHasResumableSession(issue)) continue;
 
-    // Fast path: if the agent PID is dead, immediately mark as Blocked
+    // Fast path: if the agent PID is dead, silently recover to Queued (no attempt++)
     const agentStatus = isAgentStillRunning(issue);
     const pidDead = agentStatus.pid !== null && !agentStatus.alive;
 
-    if (pidDead || Date.parse(issue.updatedAt) < limit) {
+    if (pidDead) {
+      logger.info({ issueId: issue.id, identifier: issue.identifier, state: issue.state, pid: agentStatus.pid?.pid }, "[Scheduler] PID dead — silently recovering to Queued");
+      issue.startedAt = undefined;
+      markIssueDirty(issue.id);
+      await transitionIssueState(issue, "Queued", `Agent process died (PID ${agentStatus.pid!.pid}) — auto-recovering.`);
+      addEvent(state, issue.id, "info", `Issue ${issue.identifier} agent process died (PID ${agentStatus.pid!.pid}), silently recovered to Queued.`);
+      continue;
+    }
+
+    // Stale timeout: block with reason (no PID dead, just no updates)
+    if (Date.parse(issue.updatedAt) < limit) {
       const staleMinutes = Math.round((Date.now() - Date.parse(issue.updatedAt)) / 60_000);
-      const reason = pidDead
-        ? `Agent process died (PID ${agentStatus.pid!.pid}) — auto-recovering.`
-        : `Issue state auto-recovered from stale execution.`;
-      logger.info({ issueId: issue.id, identifier: issue.identifier, state: issue.state, updatedAt: issue.updatedAt, pidDead }, "[Scheduler] Recovering stale issue");
+      const reason = `Stale execution — no updates for over ${staleMinutes} minute(s) in ${issue.state} state.`;
+      logger.info({ issueId: issue.id, identifier: issue.identifier, state: issue.state, updatedAt: issue.updatedAt }, "[Scheduler] Recovering stale issue → Blocked");
       issue.attempts += 1;
       issue.nextRetryAt = getNextRetryAt(issue, state.config.retryDelayMs);
       issue.startedAt = undefined;
       markIssueDirty(issue.id);
       await transitionIssueState(issue, "Blocked", reason);
-      const eventMsg = pidDead
-        ? `Issue ${issue.identifier} agent process died (PID ${agentStatus.pid!.pid}), moved to Blocked for retry.`
-        : `Issue ${issue.identifier} was stale for over ${staleMinutes} minute(s) in ${issue.state} state, moved to Blocked for retry.`;
-      addEvent(state, issue.id, "info", eventMsg);
+      addEvent(state, issue.id, "info", `Issue ${issue.identifier} was stale for over ${staleMinutes} minute(s) in ${issue.state} state, moved to Blocked for retry.`);
     }
   }
 }
@@ -214,7 +244,11 @@ export function pickNextIssues(
   }
   return candidates
     .sort((a, b) => {
-      const stateWeight = (c: IssueEntry) => c.state === "Running" ? 0 : c.state === "Blocked" ? 2 : 1;
+      const stateWeight = (c: IssueEntry) =>
+        c.state === "Running"   ? 0 :
+        c.state === "Planning"  ? 0 :
+        c.state === "Reviewing" ? 0 :
+        c.state === "Blocked"   ? 2 : 1;
       const weightDiff = stateWeight(a) - stateWeight(b);
       if (weightDiff !== 0) return weightDiff;
       if (a.priority !== b.priority) return a.priority - b.priority;

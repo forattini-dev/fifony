@@ -16,6 +16,8 @@ type EnhanceIssuePayload = {
   field: EnhancementField;
   title: string;
   description: string;
+  issueType?: string;
+  images?: string[];
   provider?: string;
   preferredProvider?: string;
 };
@@ -37,10 +39,12 @@ function getProviderCommand(
   return resolveAgentCommand(provider, config.agentCommand || "", codexCommand, claudeCommand);
 }
 
-async function buildPrompt(field: EnhancementField, title: string, description: string): Promise<string> {
+async function buildPrompt(field: EnhancementField, title: string, description: string, issueType?: string, images?: string[]): Promise<string> {
   const context = {
     title: title || "(empty)",
     description: description || "(empty)",
+    issueType: issueType || "blank",
+    images: images?.length ? images : undefined,
   };
 
   if (field === "title") {
@@ -136,6 +140,7 @@ async function runProviderCommand(
   description: string,
   field: EnhancementField,
   timeoutMs: number,
+  images?: string[],
 ): Promise<string> {
   const tempDir = mkdtempSync(join(tmpdir(), "fifony-enhance-"));
   const promptFile = join(tempDir, "fifony-enhance-prompt.md");
@@ -143,6 +148,13 @@ async function runProviderCommand(
   const resultFile = join(tempDir, "fifony-result.txt");
   writeFileSync(promptFile, `${prompt}\n`, "utf8");
   writeFileSync(issuePayloadFile, JSON.stringify({ title, description, field }, null, 2), "utf8");
+
+  // For Codex: inject --image flags before the stdin redirect
+  let effectiveCommand = command;
+  if (provider === "codex" && images?.length) {
+    const imageFlags = images.map((p) => `--image "${p}"`).join(" ");
+    effectiveCommand = command.replace('< "$FIFONY_PROMPT_FILE"', `${imageFlags} < "$FIFONY_PROMPT_FILE"`);
+  }
 
   const spawnEnv = {
     ...env,
@@ -154,6 +166,7 @@ async function runProviderCommand(
     FIFONY_ISSUE_JSON: issuePayloadFile,
     FIFONY_AGENT_PROVIDER: provider,
     FIFONY_RESULT_FILE: resultFile,
+    ...(images?.length ? { FIFONY_IMAGE_PATHS: images.join(",") } : {}),
   };
 
   return await new Promise((resolve, reject) => {
@@ -161,7 +174,7 @@ async function runProviderCommand(
     let output = "";
     let timeout = false;
 
-    const child = spawn(command, {
+    const child = spawn(effectiveCommand, {
       shell: true,
       cwd: tempDir,
       env: spawnEnv,
@@ -220,6 +233,7 @@ export async function enhanceIssueField(
   const field: EnhancementField = payload.field === "description" ? "description" : "title";
   const title = typeof payload.title === "string" ? payload.title.trim() : "";
   const description = typeof payload.description === "string" ? payload.description.trim() : "";
+  const issueType = typeof payload.issueType === "string" ? payload.issueType.trim() : undefined;
   const requestedProvider = normalizeAgentProvider(
     typeof payload.preferredProvider === "string" ? payload.preferredProvider : payload.provider ?? config.agentProvider,
   );
@@ -241,7 +255,8 @@ export async function enhanceIssueField(
     throw new Error(`No AI provider available (codex/claude). Detected: ${known}`);
   }
 
-  const prompt = await buildPrompt(field, title, description);
+  const images = Array.isArray(payload.images) ? payload.images.filter((p): p is string => typeof p === "string") : undefined;
+  const prompt = await buildPrompt(field, title, description, issueType, images);
   const errors: string[] = [];
 
   // JSON schema for structured enhance output via OpenAI API
@@ -309,6 +324,7 @@ export async function enhanceIssueField(
         description,
         field,
         config.commandTimeoutMs,
+        images,
       );
       logger.info({ provider: selectedProvider, field, rawOutput: output.slice(0, 2000) }, "Enhance raw output");
       const value = parseEnhancerOutput(output, field);

@@ -1,6 +1,7 @@
 import { createLazyFileRoute } from "@tanstack/react-router";
-import { useTokenAnalytics, useHourlyAnalytics } from "../hooks.js";
-import { Zap, TrendingUp, Layers, Activity, Cpu, Clock } from "lucide-react";
+import { useTokenAnalytics } from "../hooks.js";
+import { fillDailyGaps } from "../utils.js";
+import { Zap, TrendingUp, Layers, Cpu, Clock, Activity } from "lucide-react";
 import { useRef, useEffect, useState } from "react";
 
 // ── Format helpers ───────────────────────────────────────────────────────
@@ -111,85 +112,157 @@ function PhaseBreakdownLarge({ byPhase }) {
   );
 }
 
-// ── Daily bar chart (large) ──────────────────────────────────────────────
+// ── Combined activity chart (tokens + events, shared x-axis) ─────────────
 
-function DailyBarChart({ data, height = 160 }) {
-  if (!data || data.length === 0) return null;
-  const max = Math.max(...data.map((d) => d.totalTokens || 0), 1);
+function ActivityChart({ daily }) {
+  if (!daily || daily.length === 0) return null;
 
-  return (
-    <div className="flex items-end gap-2 w-full" style={{ height }}>
-      {data.map((d, i) => {
-        const tokens = d.totalTokens || 0;
-        const h = Math.max(2, Math.round((tokens / max) * height));
-        const dayLabel = d.date
-          ? new Date(d.date + "T00:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })
-          : `Day ${i + 1}`;
-        const shortDay = d.date
-          ? new Date(d.date + "T00:00:00").toLocaleDateString(undefined, { weekday: "short" })
-          : `${i + 1}`;
+  const [hoveredIdx, setHoveredIdx] = useState(null);
+  const today = new Date().toISOString().slice(0, 10);
+  const data = daily;
 
-        return (
-          <div key={d.date || i} className="flex-1 flex flex-col items-center gap-1.5 group">
-            <span className="text-[10px] font-mono opacity-0 group-hover:opacity-70 transition-opacity">
-              {formatTokens(tokens)}
-            </span>
-            <div
-              className="w-full bg-primary rounded-t-md opacity-70 hover:opacity-100 transition-all duration-300 cursor-default"
-              style={{ height: h }}
-              title={`${dayLabel}: ${formatTokensFull(tokens)} tokens`}
-            />
-            <span className="text-[10px] opacity-50">{shortDay}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
+  const maxTokens = Math.max(...data.map((d) => d.totalTokens || 0), 1);
+  const maxEvents = Math.max(...data.map((d) => d.events || 0), 1);
 
-// ── Hourly sparkline (large) ─────────────────────────────────────────────
+  const labelEvery = data.length <= 7 ? 1 : data.length <= 14 ? 2 : data.length <= 21 ? 3 : 5;
 
-function LargeSparkline({ data, valueKey = "totalTokens", height = 60, color = "stroke-primary", label }) {
-  if (!data || data.length === 0) return null;
-  const values = data.map((d) => d[valueKey] || d.count || 0);
-  const max = Math.max(...values, 1);
-  const w = 200;
-  const points = values.map((v, i) => {
-    const x = (i / Math.max(values.length - 1, 1)) * w;
-    const y = height - (v / max) * (height - 4) - 2;
-    return `${x},${y}`;
-  }).join(" ");
+  const TOKEN_H = 80;
+  const EVENT_H = 28;
 
-  const total = values.reduce((a, b) => a + b, 0);
-  const avg = values.length > 0 ? Math.round(total / values.length) : 0;
-  const peak = Math.max(...values);
+  const hovered = hoveredIdx != null ? data[hoveredIdx] : null;
+  // Clamp tooltip so it doesn't overflow: left-anchor for first third, right-anchor for last third
+  const tooltipAlign = hoveredIdx == null ? "center"
+    : hoveredIdx < data.length / 3 ? "left"
+    : hoveredIdx > (data.length * 2) / 3 ? "right"
+    : "center";
 
   return (
-    <div className="flex flex-col gap-2 flex-1 min-w-0">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-medium opacity-60">{label}</span>
-        <span className="flex items-center gap-3 text-[10px] opacity-50">
-          <span>avg: <span className="font-mono">{formatTokens(avg)}/h</span></span>
-          <span>peak: <span className="font-mono">{formatTokens(peak)}/h</span></span>
+    <div>
+      {/* Legend */}
+      <div className="flex items-center gap-5 mb-3">
+        <span className="flex items-center gap-1.5 text-xs opacity-50">
+          <span className="inline-block w-2.5 h-2.5 rounded-sm bg-primary" />
+          Tokens / day
+        </span>
+        <span className="flex items-center gap-1.5 text-xs opacity-50">
+          <span className="inline-block w-2.5 h-2.5 rounded-sm bg-secondary" />
+          Events / day
         </span>
       </div>
-      <svg viewBox={`0 0 ${w} ${height}`} className="w-full" style={{ height }} preserveAspectRatio="none">
-        <polyline
-          points={`0,${height} ${points} ${w},${height}`}
-          fill="currentColor"
-          className={color.replace("stroke-", "text-")}
-          opacity="0.08"
-        />
-        <polyline
-          points={points}
-          fill="none"
-          className={color}
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          vectorEffect="non-scaling-stroke"
-        />
-      </svg>
+
+      {/* Chart — one column per day spanning both rows */}
+      <div className="relative">
+
+        {/* Tooltip */}
+        {hovered && (
+          <div
+            className="absolute -top-1 z-10 pointer-events-none"
+            style={{
+              left: tooltipAlign !== "right" ? `${((hoveredIdx + 0.5) / data.length) * 100}%` : undefined,
+              right: tooltipAlign === "right" ? `${((data.length - 1 - hoveredIdx) / data.length) * 100}%` : undefined,
+              transform: tooltipAlign === "center" ? "translateX(-50%) translateY(-100%)"
+                : tooltipAlign === "left" ? "translateY(-100%)"
+                : "translateY(-100%)",
+            }}
+          >
+            <div className="bg-base-300 border border-base-content/10 rounded-lg px-2.5 py-1.5 shadow-lg text-left whitespace-nowrap">
+              <div className="text-[10px] font-semibold opacity-60 mb-1">
+                {hovered.date === today ? "Today" : new Date(hovered.date + "T00:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <span className="flex items-center gap-1.5 text-xs">
+                  <span className="inline-block w-2 h-2 rounded-sm bg-primary shrink-0" />
+                  <span className="font-mono font-semibold">{(hovered.totalTokens || 0).toLocaleString()}</span>
+                  <span className="opacity-50">tokens</span>
+                </span>
+                <span className="flex items-center gap-1.5 text-xs">
+                  <span className="inline-block w-2 h-2 rounded-sm bg-secondary shrink-0" />
+                  <span className="font-mono font-semibold">{hovered.events || 0}</span>
+                  <span className="opacity-50">events</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Columns */}
+        <div className="flex gap-px">
+          {data.map((d, i) => {
+            const tokenVal = d.totalTokens || 0;
+            const eventVal = d.events || 0;
+            const tokenH = tokenVal > 0 ? Math.max(3, Math.round((tokenVal / maxTokens) * TOKEN_H)) : 0;
+            const eventH = eventVal > 0 ? Math.max(3, Math.round((eventVal / maxEvents) * EVENT_H)) : 0;
+            const isToday = d.date === today;
+            const isHovered = hoveredIdx === i;
+
+            return (
+              <div
+                key={d.date}
+                className="flex-1 flex flex-col cursor-default"
+                onMouseEnter={() => setHoveredIdx(i)}
+                onMouseLeave={() => setHoveredIdx(null)}
+              >
+                {/* Token bar area */}
+                <div className="relative" style={{ height: TOKEN_H }}>
+                  {tokenH > 0 && (
+                    <div
+                      className={`absolute bottom-0 left-0 right-0 rounded-t-[2px] bg-primary transition-opacity duration-100 ${
+                        isHovered ? "opacity-80" : isToday ? "opacity-90" : "opacity-35"
+                      }`}
+                      style={{ height: tokenH }}
+                    />
+                  )}
+                  {/* Hover highlight column */}
+                  {isHovered && (
+                    <div className="absolute inset-0 bg-base-content/5 rounded-sm" />
+                  )}
+                </div>
+
+                {/* Divider */}
+                <div className={`h-px transition-colors duration-100 ${isHovered ? "bg-base-content/20" : "bg-base-300"}`} />
+
+                {/* Event bar area */}
+                <div className="relative" style={{ height: EVENT_H }}>
+                  {eventH > 0 && (
+                    <div
+                      className={`absolute bottom-0 left-0 right-0 rounded-t-[2px] bg-secondary transition-opacity duration-100 ${
+                        isHovered ? "opacity-80" : isToday ? "opacity-90" : "opacity-35"
+                      }`}
+                      style={{ height: eventH }}
+                    />
+                  )}
+                  {isHovered && (
+                    <div className="absolute inset-0 bg-base-content/5 rounded-sm" />
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* X-axis labels */}
+        <div className="flex gap-px mt-1.5">
+          {data.map((d, i) => {
+            const isToday = d.date === today;
+            const isHovered = hoveredIdx === i;
+            const showLabel = isToday || i === 0 || i % labelEvery === 0;
+            const shortLabel = d.date
+              ? new Date(d.date + "T00:00:00").toLocaleDateString(undefined, { month: "numeric", day: "numeric" })
+              : "";
+            return (
+              <div key={d.date} className="flex-1 overflow-hidden">
+                {showLabel && (
+                  <span className={`block text-center text-[9px] truncate transition-opacity duration-100 ${
+                    isHovered ? "opacity-80" : isToday ? "opacity-60 font-semibold" : "opacity-30"
+                  }`}>
+                    {isToday ? "today" : shortLabel}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
@@ -355,7 +428,6 @@ export const Route = createLazyFileRoute("/analytics")({
 
 function AnalyticsPage() {
   const { data: analytics, isLoading: analyticsLoading } = useTokenAnalytics();
-  const { data: hourlyData, isLoading: hourlyLoading } = useHourlyAnalytics(24);
 
   if (analyticsLoading && !analytics) return <AnalyticsSkeleton />;
 
@@ -363,11 +435,8 @@ function AnalyticsPage() {
   const totalTokens = overall?.totalTokens || 0;
   const byPhase = analytics?.byPhase || null;
   const byModel = analytics?.byModel || {};
-  const daily = analytics?.daily || [];
+  const daily = fillDailyGaps(analytics?.daily, 32);
   const topIssues = analytics?.topIssues || [];
-
-  const tokensPerHour = hourlyData?.tokensPerHour || [];
-  const eventsPerHour = hourlyData?.eventsPerHour || [];
 
   // Today vs this week
   const today = new Date().toISOString().slice(0, 10);
@@ -375,17 +444,20 @@ function AnalyticsPage() {
   const tokensToday = todayEntry?.totalTokens || 0;
   const tokensThisWeek = daily.reduce((sum, d) => sum + (d.totalTokens || 0), 0);
 
-  if (totalTokens === 0 && daily.length === 0 && topIssues.length === 0) {
-    return <EmptyAnalytics />;
-  }
+  // Events aggregates (from EC-backed daily.events)
+  const totalEvents = daily.reduce((sum, d) => sum + (d.events || 0), 0);
+  const eventsToday = todayEntry?.events || 0;
+
+  const hasAnyData = totalTokens > 0 || totalEvents > 0 || topIssues.length > 0;
+  if (!hasAnyData) return <EmptyAnalytics />;
 
   return (
     <div className="flex-1 flex flex-col min-h-0 px-4 pb-4 pt-3 overflow-y-auto">
       <div className="max-w-6xl w-full mx-auto space-y-6 stagger-children">
 
-        {/* Section 1: Token Overview */}
+        {/* Section 1: Overview stats */}
         <section>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Total tokens */}
             <div className="stat bg-base-200 rounded-box">
               <div className="stat-figure text-primary">
@@ -398,18 +470,30 @@ function AnalyticsPage() {
               <div className="stat-desc font-mono">{formatTokensFull(totalTokens)}</div>
             </div>
 
-            {/* Today */}
+            {/* Tokens today */}
             <div className="stat bg-base-200 rounded-box">
               <div className="stat-figure text-accent">
                 <Clock className="size-6" />
               </div>
-              <div className="stat-title">Today</div>
+              <div className="stat-title">Tokens Today</div>
               <div className="stat-value text-2xl">
                 <AnimatedCount value={tokensToday} />
               </div>
               <div className="stat-desc">
-                This week: {formatTokens(tokensThisWeek)}
+                30d: {formatTokens(tokensThisWeek)}
               </div>
+            </div>
+
+            {/* Total events */}
+            <div className="stat bg-base-200 rounded-box">
+              <div className="stat-figure text-secondary">
+                <Activity className="size-6" />
+              </div>
+              <div className="stat-title">Total Events</div>
+              <div className="stat-value text-2xl">
+                <AnimatedCount value={totalEvents} format={(n) => String(n || 0)} />
+              </div>
+              <div className="stat-desc">Today: {eventsToday}</div>
             </div>
 
             {/* Phase breakdown summary */}
@@ -429,51 +513,20 @@ function AnalyticsPage() {
           </div>
         </section>
 
-        {/* Section 2: Daily Token Chart */}
-        {daily.length > 0 && (
+        {/* Section 2: Daily Activity Chart */}
+        {(daily.some((d) => (d.totalTokens || 0) > 0) || daily.some((d) => (d.events || 0) > 0)) && (
           <section className="bg-base-200 rounded-box p-5">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold flex items-center gap-2">
                 <TrendingUp className="size-4 text-primary" />
-                Daily Token Usage
+                Daily Activity
               </h2>
-              <span className="text-xs opacity-40">Last {daily.length} days</span>
             </div>
-            <DailyBarChart data={daily} height={160} />
+            <ActivityChart daily={daily} />
           </section>
         )}
 
-        {/* Section 3: Hourly Activity */}
-        {(tokensPerHour.length > 0 || eventsPerHour.length > 0) && (
-          <section className="bg-base-200 rounded-box p-5">
-            <h2 className="text-sm font-semibold flex items-center gap-2 mb-4">
-              <Activity className="size-4 text-secondary" />
-              Hourly Activity (last 24h)
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {tokensPerHour.length > 0 && (
-                <LargeSparkline
-                  data={tokensPerHour}
-                  valueKey="totalTokens"
-                  height={60}
-                  color="stroke-primary"
-                  label="Tokens / hour"
-                />
-              )}
-              {eventsPerHour.length > 0 && (
-                <LargeSparkline
-                  data={eventsPerHour}
-                  valueKey="count"
-                  height={60}
-                  color="stroke-secondary"
-                  label="Events / hour"
-                />
-              )}
-            </div>
-          </section>
-        )}
-
-        {/* Section 4: Top Issues */}
+        {/* Section 3: Top Issues */}
         {topIssues.length > 0 && (
           <section className="bg-base-200 rounded-box p-5">
             <h2 className="text-sm font-semibold flex items-center gap-2 mb-4">

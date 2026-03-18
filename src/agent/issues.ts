@@ -1,5 +1,4 @@
 import { env } from "node:process";
-import * as tokenLedger from "./token-ledger.ts";
 import { markIssueDirty, markEventDirty } from "./dirty-tracker.ts";
 import { invalidateMetrics } from "./metrics-cache.ts";
 import type {
@@ -40,11 +39,11 @@ import {
   toStringArray,
   clamp,
   normalizeState,
+  parseIssueState,
   parseEnvNumber,
   parseIntArg,
   parsePositiveIntEnv,
   withRetryBackoff,
-  getNestedRecord,
   getNestedString,
   getNestedNumber,
   fail,
@@ -60,7 +59,6 @@ import { resolveTaskCapabilities } from "../routing/capability-resolver.ts";
 
 export function normalizeIssue(
   raw: JsonRecord,
-  workflowDefinition: WorkflowDefinition | null,
 ): IssueEntry | null {
   const id = toStringValue(raw.id, "");
   if (!id) return null;
@@ -73,7 +71,7 @@ export function normalizeIssue(
     title: toStringValue(raw.title, `Issue ${id}`),
     description: toStringValue(raw.description, ""),
     priority: toNumberValue(raw.priority, 1),
-    state: normalizeState(raw.state),
+    state: normalizeState(raw.state, raw.plan && typeof raw.plan === "object" ? "Planned" : "Planning"),
     branchName: toStringValue(raw.branchName) || toStringValue(raw.branch_name),
     url: toStringValue(raw.url),
     assigneeId: toStringValue(raw.assignee_id),
@@ -91,6 +89,10 @@ export function normalizeIssue(
     attempts: toNumberValue(raw.attempts, 0),
     maxAttempts: toNumberValue(raw.max_attempts, 3),
     nextRetryAt: toStringValue(raw.next_retry_at),
+    planVersion: 0,
+    executeAttempt: 0,
+    reviewAttempt: 0,
+    planHistory: [],
   };
 
   if (!issue.capabilityCategory) {
@@ -101,7 +103,7 @@ export function normalizeIssue(
       description: issue.description,
       labels: issue.labels,
       paths: issue.paths,
-    }, getCapabilityRoutingOptions(workflowDefinition)));
+    }, getCapabilityRoutingOptions()));
   }
 
   return issue;
@@ -147,7 +149,6 @@ export function nextLocalIssueId(issues: IssueEntry[]): string {
 export function createIssueFromPayload(
   payload: JsonRecord,
   issues: IssueEntry[],
-  workflowDefinition: WorkflowDefinition | null,
 ): IssueEntry {
   const identifier = toStringValue(payload.identifier, nextLocalIssueId(issues));
   const id = toStringValue(payload.id, identifier.replace(/^#/, "issue-"));
@@ -155,6 +156,8 @@ export function createIssueFromPayload(
   const createdAt = now();
   const blockedBy = toStringArray(payload.blockedBy);
   const paths = toStringArray(payload.paths);
+  const images = toStringArray(payload.images);
+  const initialState = parseIssueState(payload.state) ?? (payload.plan ? "Planned" : "Planning");
 
   const issue: IssueEntry = {
     id,
@@ -162,7 +165,7 @@ export function createIssueFromPayload(
     title: toStringValue(payload.title, `Issue ${identifier}`),
     description: toStringValue(payload.description, ""),
     priority: clamp(toNumberValue(payload.priority, 1), 1, 10),
-    state: payload.plan ? "Todo" : "Planning",
+    state: initialState,
     branchName: toStringValue(payload.branchName),
     url: toStringValue(payload.url),
     assigneeId: toStringValue(payload.assigneeId),
@@ -180,8 +183,14 @@ export function createIssueFromPayload(
     attempts: 0,
     maxAttempts: clamp(toNumberValue(payload.maxAttempts, 3), 1, 10),
     terminalWeek: "",
+    images: images.length ? images : undefined,
+    issueType: toStringValue(payload.issueType) || undefined,
     effort: parseEffortConfig(payload.effort),
     plan: payload.plan && typeof payload.plan === "object" ? payload.plan as IssueEntry["plan"] : undefined,
+    planVersion: payload.plan ? 1 : 0,
+    executeAttempt: 0,
+    reviewAttempt: 0,
+    planHistory: [],
   };
 
   // If plan provides suggestions, apply them
@@ -204,13 +213,13 @@ export function createIssueFromPayload(
     description: issue.description,
     labels: issue.labels,
     paths: issue.paths,
-  }, getCapabilityRoutingOptions(workflowDefinition)));
+  }, getCapabilityRoutingOptions()));
 
   return issue;
 }
 
 export function deriveConfig(args: string[]): RuntimeConfig {
-  const parsedConcurrency = parsePositiveIntEnv("FIFONY_WORKER_CONCURRENCY", 2);
+  const parsedConcurrency = parsePositiveIntEnv("FIFONY_WORKER_CONCURRENCY", 3);
   let pollIntervalMs = parseEnvNumber("FIFONY_POLL_INTERVAL_MS", 1200);
   let workerConcurrency = parsedConcurrency;
   let maxAttemptsDefault = parseEnvNumber("FIFONY_MAX_ATTEMPTS", 3);
@@ -314,7 +323,7 @@ export function buildRuntimeState(
         identifier: toStringValue(existing.identifier, existing.id),
         title: toStringValue(existing.title, `Issue ${toStringValue(existing.identifier, existing.id)}`),
         description: toStringValue(existing.description, ""),
-        state: normalizeState(existing.state),
+        state: normalizeState(existing.state, existing.plan ? "Planned" : "Planning"),
         paths: toStringArray(existing.paths),
         inferredPaths: toStringArray(existing.inferredPaths),
         labels: toStringArray(existing.labels),
@@ -329,6 +338,10 @@ export function buildRuntimeState(
         nextRetryAt: toStringValue(existing.nextRetryAt),
         updatedAt: toStringValue(existing.updatedAt, now()),
         createdAt: toStringValue(existing.createdAt, now()),
+        planVersion: toNumberValue(existing.planVersion, existing.plan ? 1 : 0),
+        executeAttempt: toNumberValue(existing.executeAttempt, toNumberValue(existing.attempts, 0)),
+        reviewAttempt: toNumberValue(existing.reviewAttempt, toNumberValue(existing.attempts, 0)),
+        planHistory: Array.isArray(existing.planHistory) ? existing.planHistory : [],
       };
     })
     .filter((issue): issue is IssueEntry => issue !== null)
@@ -396,13 +409,13 @@ export function computeMetrics(issues: IssueEntry[]): RuntimeMetrics {
       case "Planning":
         planning += 1;
         break;
-      case "Todo":
+      case "Planned":
         queued += 1;
         break;
       case "Queued":
       case "Running":
-      case "Interrupted":
-      case "In Review":
+      case "Reviewing":
+      case "Reviewed":
         inProgress += 1;
         break;
       case "Blocked":
@@ -478,8 +491,14 @@ export function addEvent(
   state.events = [event, ...state.events].slice(0, PERSIST_EVENTS_MAX);
   markEventDirty(event.id);
 
-  // Track event in hourly counter for sparklines
-  try { tokenLedger.recordEvent(); } catch { /* non-critical */ }
+  // Increment per-issue event counter (tracked by EventualConsistency plugin for daily analytics)
+  if (issueId) {
+    const issue = state.issues.find((i) => i.id === issueId);
+    if (issue) {
+      issue.eventsCount = (issue.eventsCount || 0) + 1;
+      markIssueDirty(issue.id);
+    }
+  }
 
   logger.info({ issueId, kind }, message);
 }
@@ -487,13 +506,21 @@ export function addEvent(
 export function transition(issue: IssueEntry, target: IssueState, note: string): void {
   const previous = issue.state;
   logger.debug({ issueId: issue.id, identifier: issue.identifier, from: previous, to: target, note }, "[State] Issue transition");
+
+  if (target === "Blocked" && !note.trim()) {
+    throw new Error("Transition to Blocked requires an explicit reason.");
+  }
+  if (target === "Blocked") {
+    issue.lastError = note;
+  }
+
   issue.state = target;
   issue.updatedAt = now();
   markIssueDirty(issue.id);
   invalidateMetrics();
   issue.history.push(`[${issue.updatedAt}] ${note}`);
 
-  if (previous === "Blocked" && target === "Todo") {
+  if (previous === "Blocked" && target === "Planned") {
     issue.lastError = undefined;
     issue.nextRetryAt = undefined;
   }
@@ -507,10 +534,6 @@ export function transition(issue: IssueEntry, target: IssueState, note: string):
   // Clear terminalWeek when leaving terminal state
   if (TERMINAL_STATES.has(previous) && !TERMINAL_STATES.has(target)) {
     issue.terminalWeek = "";
-  }
-
-  if (target === "Todo") {
-    issue.attempts = Math.max(0, issue.attempts - 1);
   }
 
   if (target === "Done") {
@@ -658,16 +681,34 @@ export async function transitionIssueState(
   }
 }
 
-export async function handleStatePatch(state: RuntimeState, issue: IssueEntry, payload: JsonRecord): Promise<void> {
-  const nextState = normalizeState(payload.state);
-  const allowed = new Set(ALLOWED_STATES);
+/**
+ * Archive the current plan, bump planVersion, reset execution/review counters,
+ * and return the issue to Planning state. Does NOT reset `attempts` — backoff continues.
+ */
+export function triggerReplan(issue: IssueEntry): void {
+  if (issue.plan) {
+    if (!Array.isArray(issue.planHistory)) issue.planHistory = [];
+    issue.planHistory.push(issue.plan);
+    issue.plan = undefined;
+  }
+  issue.planVersion = (issue.planVersion ?? 0) + 1;
+  issue.executeAttempt = 0;
+  issue.reviewAttempt = 0;
+  transition(issue, "Planning", "Replan requested.");
+  issue.planningStatus = "idle";
+  issue.planningError = undefined;
+  issue.planningStartedAt = undefined;
+  markIssueDirty(issue.id);
+}
 
-  if (!allowed.has(nextState)) {
+export async function handleStatePatch(state: RuntimeState, issue: IssueEntry, payload: JsonRecord): Promise<void> {
+  const nextState = parseIssueState(payload.state);
+  if (!nextState || !ALLOWED_STATES.includes(nextState)) {
     throw new Error(`Unsupported state: ${String(payload.state)}`);
   }
 
   await transitionIssueState(issue, nextState, `Manual state update: ${nextState}`);
-  if (nextState === "Todo") {
+  if (nextState === "Planned") {
     issue.nextRetryAt = undefined;
     issue.lastError = undefined;
   }

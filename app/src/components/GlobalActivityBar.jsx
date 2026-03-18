@@ -19,11 +19,10 @@ export function GlobalActivityBar({ issues }) {
         case "Running": running++; break;
         case "Queued": queued++; break;
         case "Planning":
-          if (issue.planningStatus === "planning" || issue.planningStatus === "refining") {
-            planning++;
-          }
+          planning++;
           break;
-        case "In Review": reviewing++; break;
+        case "Reviewing":
+        case "Reviewed": reviewing++; break;
         case "Blocked": blocked++; break;
       }
     }

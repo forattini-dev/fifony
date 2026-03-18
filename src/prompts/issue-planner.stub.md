@@ -10,6 +10,12 @@ FAST MODE: Be brief and direct. Minimize reasoning depth.
 
 Issue title: {{title}}
 Issue description: {{description}}
+{{#if images}}
+Visual evidence (attached screenshots for context):
+{{#each images}}
+- {{this}}
+{{/each}}
+{{/if}}
 {{#unless fast}}
 
 Quality rules:

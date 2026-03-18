@@ -160,6 +160,7 @@ h1, h2, h3, .stat-value {
 /* ── Utility animation classes ─────────────────────────────────────────── */
 
 .animate-fade-in       { animation: fade-in 0.25s ease-out both; }
+.animate-fade-out      { animation: fade-in 0.2s ease-in both reverse; }
 .animate-fade-in-up    { animation: fade-in-up 0.35s ease-out both; }
 .animate-fade-in-scale { animation: fade-in-scale 0.25s ease-out both; }
 .animate-slide-in-right { animation: slide-in-right 0.3s ease-out both; }
@@ -569,14 +570,14 @@ h1, h2, h3, .stat-value {
     overflow-x: auto;
     scroll-snap-type: x mandatory;
     -webkit-overflow-scrolling: touch;
-    scroll-padding: 0 12px;
+    scroll-padding-left: 12px;
     gap: 12px;
-    padding-bottom: 8px;
+    padding: 0 12px 8px;
   }
 
   .overflow-x-auto > .grid > .kanban-column {
-    min-width: 260px;
-    max-width: 85vw;
+    min-width: calc(100vw - 24px);
+    max-width: calc(100vw - 24px);
     flex-shrink: 0;
     scroll-snap-align: start;
   }

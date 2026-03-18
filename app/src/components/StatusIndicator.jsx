@@ -2,7 +2,7 @@ import React from "react";
 import { useElapsedTime } from "../hooks/useElapsedTime.js";
 import {
   Loader, Clock, Play, Eye, AlertTriangle, CheckCircle2,
-  XCircle, ListOrdered, Lightbulb, Pause, Timer,
+  XCircle, ListOrdered, Lightbulb, Timer,
 } from "lucide-react";
 
 /**
@@ -19,16 +19,16 @@ function deriveSubStatus(issue) {
       if (planningStatus === "planning") {
         return { label: "Generating plan...", icon: Loader, color: "text-info", spin: true };
       }
-      if (planningStatus === "refining") {
-        return { label: "Refining plan...", icon: Loader, color: "text-info", spin: true };
-      }
       if (issue.plan) {
         return { label: "Plan ready", icon: Lightbulb, color: "text-info", spin: false };
       }
-      return { label: "Awaiting plan", icon: Lightbulb, color: "text-info/60", spin: false };
+      if (issue.planningError) {
+        return { label: "Plan failed", icon: AlertTriangle, color: "text-error", spin: false };
+      }
+      return { label: "Aguardando scheduler…", icon: Clock, color: "text-info/60", spin: false };
     }
 
-    case "Todo":
+    case "Planned":
       return { label: "Ready to queue", icon: ListOrdered, color: "text-warning/70", spin: false };
 
     case "Queued": {
@@ -58,16 +58,16 @@ function deriveSubStatus(issue) {
       return { label: "Agent working...", icon: Play, color: "text-primary", spin: false, pulse: true };
     }
 
-    case "Interrupted":
-      return { label: "Interrupted, will retry", icon: Pause, color: "text-accent", spin: false };
-
-    case "In Review": {
+    case "Reviewing": {
       const phase = derivePhase(tokensByPhase);
       if (phase === "Reviewing") {
         return { label: "Review in progress...", icon: Eye, color: "text-secondary", spin: false, pulse: true };
       }
-      return { label: "Awaiting review", icon: Eye, color: "text-secondary/70", spin: false };
+      return { label: "Reviewing", icon: Eye, color: "text-secondary/70", spin: false };
     }
+
+    case "Reviewed":
+      return { label: "Review complete", icon: Eye, color: "text-success/70", spin: false };
 
     case "Blocked":
       return {
@@ -103,7 +103,7 @@ function derivePhase(tokensByPhase) {
 export function StatusIndicator({ issue, showElapsed = true, compact = false }) {
   const sub = deriveSubStatus(issue);
   const Icon = sub.icon;
-  const isActive = ["Running", "Queued", "Planning", "In Review"].includes(issue.state);
+  const isActive = ["Running", "Queued", "Planning", "Reviewing"].includes(issue.state);
   const elapsed = useElapsedTime(isActive && showElapsed ? issue.startedAt : null);
 
   return (
@@ -134,7 +134,7 @@ export function StatusIndicator({ issue, showElapsed = true, compact = false }) 
 export function StatusBadgeExpanded({ issue }) {
   const sub = deriveSubStatus(issue);
   const Icon = sub.icon;
-  const isActive = ["Running", "Queued", "Planning", "In Review"].includes(issue.state);
+  const isActive = ["Running", "Queued", "Planning", "Reviewing"].includes(issue.state);
   const elapsed = useElapsedTime(isActive ? issue.startedAt : null);
 
   return (

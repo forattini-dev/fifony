@@ -6,6 +6,9 @@
  *
  * Hydrated once at startup from existing issue data,
  * then kept in sync incrementally as turns complete.
+ *
+ * Event counts (events/day) are tracked via the EventualConsistencyPlugin
+ * using the `eventsCount` field on IssueEntry — not here.
  */
 
 import type { AgentProviderRole, AgentTokenUsage, IssueEntry } from "./types.ts";
@@ -20,6 +23,7 @@ export type TokenBucket = {
 
 export type DailyBucket = TokenBucket & {
   date: string; // "2026-03-16"
+  events?: number;
 };
 
 export type HourlyBucket = TokenBucket & {
@@ -28,7 +32,6 @@ export type HourlyBucket = TokenBucket & {
 
 export type HourlySnapshot = {
   tokensPerHour: HourlyBucket[];
-  eventsPerHour: Array<{ hour: string; count: number }>;
 };
 
 export type TokenAnalytics = {
@@ -69,9 +72,6 @@ const byIssue = new Map<string, { identifier: string; title: string; totalTokens
 /** Hourly token buckets: "2026-03-16T14" → bucket */
 const hourly = new Map<string, TokenBucket>();
 
-/** Hourly event counter: "2026-03-16T14" → count */
-const eventsHourly = new Map<string, number>();
-
 const HOURLY_RETENTION = 48; // keep last 48 hours
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -85,13 +85,10 @@ function currentHour(): string {
 }
 
 function pruneOldHours(): void {
-  if (hourly.size <= HOURLY_RETENTION && eventsHourly.size <= HOURLY_RETENTION) return;
+  if (hourly.size <= HOURLY_RETENTION) return;
   const cutoff = new Date(Date.now() - HOURLY_RETENTION * 3600_000).toISOString().slice(0, 13);
   for (const key of hourly.keys()) {
     if (key < cutoff) hourly.delete(key);
-  }
-  for (const key of eventsHourly.keys()) {
-    if (key < cutoff) eventsHourly.delete(key);
   }
 }
 
@@ -173,23 +170,12 @@ export function record(
 }
 
 /**
- * Record an event occurrence. Called from addEvent().
- * Tracks event frequency per hour for sparkline display.
- */
-export function recordEvent(): void {
-  const hour = currentHour();
-  eventsHourly.set(hour, (eventsHourly.get(hour) || 0) + 1);
-  pruneOldHours();
-}
-
-/**
  * Get hourly snapshot for sparkline display.
- * Returns last 24 hours of token usage and event counts.
+ * Returns last N hours of token usage.
  */
 export function getHourlySnapshot(hours = 24): HourlySnapshot {
   const now = Date.now();
   const tokensPerHour: HourlyBucket[] = [];
-  const eventsPerHour: Array<{ hour: string; count: number }> = [];
 
   for (let i = hours - 1; i >= 0; i--) {
     const h = new Date(now - i * 3600_000).toISOString().slice(0, 13);
@@ -200,13 +186,9 @@ export function getHourlySnapshot(hours = 24): HourlySnapshot {
       outputTokens: tokenBucket?.outputTokens || 0,
       totalTokens: tokenBucket?.totalTokens || 0,
     });
-    eventsPerHour.push({
-      hour: h,
-      count: eventsHourly.get(h) || 0,
-    });
   }
 
-  return { tokensPerHour, eventsPerHour };
+  return { tokensPerHour };
 }
 
 /**
@@ -248,15 +230,27 @@ export function hydrate(issues: IssueEntry[]): void {
       }
     }
 
-    // Note: daily breakdown cannot be reconstructed from issue data alone
-    // (we don't store per-day history on the issue). This is fine — daily
-    // data accumulates correctly from record() calls going forward.
-    // Historical daily data lives in the EC plugin as a secondary source.
+    // Reconstruct daily token buckets from completedAt date
+    const date = issue.completedAt?.slice(0, 10);
+    if (date && issue.tokenUsage && issue.tokenUsage.totalTokens > 0) {
+      addTo(getOrCreate(daily, date), issue.tokenUsage);
+    }
+    if (date && issue.tokensByPhase) {
+      for (const [phase, pu] of Object.entries(issue.tokensByPhase)) {
+        if (pu.totalTokens > 0) addTo(getOrCreate(dailyByPhase, `${phase}:${date}`), pu);
+      }
+    }
+    if (date && issue.tokensByModel) {
+      for (const [model, mu] of Object.entries(issue.tokensByModel)) {
+        if (mu.totalTokens > 0) addTo(getOrCreate(dailyByModel, `${model}:${date}`), mu);
+      }
+    }
   }
 }
 
 /**
  * Get full analytics snapshot. O(1) — reads from pre-computed maps.
+ * Note: daily[].events is populated by the API layer from EventualConsistency.
  */
 export function getAnalytics(topN = 20): TokenAnalytics {
   // Daily overall

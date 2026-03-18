@@ -178,6 +178,8 @@ export async function initStateStore(): Promise<void> {
             { field: "tokensByPhase.planner.totalTokens", fieldPath: "tokensByPhase.planner.totalTokens", initialValue: 0, cohort: { granularity: "day" } },
             { field: "tokensByPhase.executor.totalTokens", fieldPath: "tokensByPhase.executor.totalTokens", initialValue: 0, cohort: { granularity: "day" } },
             { field: "tokensByPhase.reviewer.totalTokens", fieldPath: "tokensByPhase.reviewer.totalTokens", initialValue: 0, cohort: { granularity: "day" } },
+            // Event count (incremented on each addEvent call for this issue)
+            { field: "eventsCount", fieldPath: "eventsCount", initialValue: 0, cohort: { granularity: "day" } },
           ],
         },
         enableAnalytics: true,
@@ -382,6 +384,28 @@ export async function loadPersistedSettings(): Promise<RuntimeSettingRecord[]> {
 export async function replacePersistedSetting(setting: RuntimeSettingRecord): Promise<void> {
   if (!settingStateResource) return;
   await settingStateResource.replace(setting.id, setting);
+}
+
+/**
+ * Query EC plugin for daily event counts (sum of eventsCount deltas per day).
+ * Returns last N days as { date: "2026-03-18", events: 5 }[].
+ */
+export async function getEcDailyEvents(days = 90): Promise<Array<{ date: string; events: number }>> {
+  if (!activeEcPlugin?.getLastNDays) return [];
+  try {
+    const raw = await activeEcPlugin.getLastNDays(S3DB_ISSUE_RESOURCE, "eventsCount", days);
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((r: unknown) => {
+        const rec = r as Record<string, unknown>;
+        const date = (rec.date ?? rec.cohort ?? rec.key ?? "") as string;
+        const events = Number(rec.total ?? rec.value ?? rec.sum ?? rec.count ?? 0);
+        return { date: String(date).slice(0, 10), events };
+      })
+      .filter((e) => e.date && e.events > 0);
+  } catch {
+    return [];
+  }
 }
 
 export async function closeStateStore(): Promise<void> {

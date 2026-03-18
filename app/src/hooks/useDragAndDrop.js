@@ -8,17 +8,20 @@ import { ISSUE_STATE_MACHINE } from "../utils.js";
 /** States that belong to each column (for resolving drop target). */
 const COLUMN_STATES = {
   Planning: ["Planning"],
-  "In Progress": ["Todo", "Queued"],
-  "In Review": ["In Review"],
+  "In Progress": ["Planned", "Queued"],
+  Reviewing: ["Reviewing", "Reviewed"],
   Blocked: ["Blocked"],
   Done: ["Done"],
   Cancelled: ["Cancelled"],
 };
 
-/** Reverse: actual states → column name. Must match BoardView's IN_PROGRESS_STATES. */
-const IN_PROGRESS_STATES = new Set(["Todo", "Queued", "Running", "Interrupted"]);
+/** Reverse: actual states → column name. Must match BoardView's IN_PROGRESS_STATES and REVIEWING_STATES. */
+const IN_PROGRESS_STATES = new Set(["Planned", "Queued", "Running"]);
+const REVIEWING_STATES = new Set(["Reviewing", "Reviewed"]);
 function stateToColumn(state) {
-  return IN_PROGRESS_STATES.has(state) ? "In Progress" : state;
+  if (IN_PROGRESS_STATES.has(state)) return "In Progress";
+  if (REVIEWING_STATES.has(state)) return "Reviewing";
+  return state;
 }
 
 /**

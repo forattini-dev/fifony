@@ -2,11 +2,11 @@ export type JsonRecord = Record<string, unknown>;
 
 export type IssueState =
   | "Planning"
-  | "Todo"
+  | "Planned"
   | "Queued"
   | "Running"
-  | "Interrupted"
-  | "In Review"
+  | "Reviewing"
+  | "Reviewed"
   | "Blocked"
   | "Done"
   | "Cancelled";
@@ -67,6 +67,9 @@ export type IssueEntry = {
   tokenUsage?: AgentTokenUsage; // aggregated across all turns/attempts
   tokensByPhase?: Record<AgentProviderRole, AgentTokenUsage>; // per-phase breakdown (planner/executor/reviewer)
   tokensByModel?: Record<string, AgentTokenUsage>; // full per-model breakdown with input/output
+  images?: string[]; // absolute paths to attached image files (screenshots, evidence)
+  issueType?: string; // template type selected at creation (blank/bug/feature/refactor/docs/chore)
+  eventsCount?: number; // total events added to this issue — tracked via EventualConsistency plugin
   usage?: { tokens: Record<string, number> }; // { tokens: { "claude-opus-4-6": 12345, "gpt-5.3": 6789 } } — for EventualConsistency
   effort?: EffortConfig; // per-issue reasoning effort override
   linesAdded?: number;
@@ -77,12 +80,20 @@ export type IssueEntry = {
   mergedAt?: string;
   /** Summary of the merge result */
   mergeResult?: { copied: number; deleted: number; skipped: number; conflicts: number };
-  /** Planning process status — driven by background plan generation */
-  planningStatus?: "idle" | "planning" | "refining";
-  /** ISO timestamp when planning/refining started */
+  /** Planning process status — driven by scheduler-managed planning job */
+  planningStatus?: "idle" | "planning";
+  /** ISO timestamp when planning started */
   planningStartedAt?: string;
   /** Error message from last plan generation attempt */
   planningError?: string;
+  /** Increments with each plan generation (0 = no plan, 1 = first plan, 2+ = after replan) */
+  planVersion: number;
+  /** Execution attempt counter for current planVersion (resets on replan) */
+  executeAttempt: number;
+  /** Review attempt counter for current planVersion (resets on replan) */
+  reviewAttempt: number;
+  /** Previous plans archived before each replan */
+  planHistory?: IssuePlan[];
 };
 
 export type IssuePlanStep = {

@@ -1,40 +1,40 @@
 import { useRef, useEffect, useCallback, useState } from "react";
 import {
   Bell, X, CheckCheck, Play, Clock, Eye,
-  CheckCircle, AlertTriangle, XCircle, Pause, Zap,
+  CheckCircle, AlertTriangle, XCircle, Zap,
 } from "lucide-react";
 import { timeAgo } from "../utils.js";
 
 const STATE_ICONS = {
   Running: Play,
   Queued: Clock,
-  "In Review": Eye,
+  Reviewing: Eye,
+  Reviewed: Eye,
   Done: CheckCircle,
   Blocked: AlertTriangle,
   Cancelled: XCircle,
-  Interrupted: Pause,
   "token-milestone": Zap,
 };
 
 const STATE_COLORS = {
   Running: "text-info",
   Queued: "text-warning",
-  "In Review": "text-accent",
+  Reviewing: "text-accent",
+  Reviewed: "text-success",
   Done: "text-success",
   Blocked: "text-error",
   Cancelled: "text-base-content/40",
-  Interrupted: "text-warning",
   "token-milestone": "text-secondary",
 };
 
 const STATE_BG = {
   Running: "bg-info/8",
   Queued: "bg-warning/8",
-  "In Review": "bg-accent/8",
+  Reviewing: "bg-accent/8",
+  Reviewed: "bg-success/8",
   Done: "bg-success/8",
   Blocked: "bg-error/8",
   Cancelled: "bg-base-200",
-  Interrupted: "bg-warning/8",
   "token-milestone": "bg-secondary/8",
 };
 

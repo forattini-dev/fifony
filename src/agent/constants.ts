@@ -55,6 +55,8 @@ export const SOURCE_MARKER = `${SOURCE_ROOT}/.fifony-local-source-ready`;
 
 export const WORKFLOW_RENDERED = `${STATE_ROOT}/WORKFLOW.local.md`;
 
+export const ATTACHMENTS_ROOT = `${STATE_ROOT}/attachments`;
+
 export const S3DB_DATABASE_PATH = `${STATE_ROOT}/s3db`;
 export const S3DB_BUCKET = env.FIFONY_STORAGE_BUCKET ?? "fifony";
 export const S3DB_KEY_PREFIX = env.FIFONY_STORAGE_KEY_PREFIX ?? "state";
@@ -80,18 +82,18 @@ export const DEBUG_BOOT = env.FIFONY_DEBUG_BOOT === "1";
 
 export const ALLOWED_STATES: IssueState[] = [
   "Planning",
-  "Todo",
+  "Planned",
   "Queued",
   "Running",
-  "Interrupted",
-  "In Review",
+  "Reviewing",
+  "Reviewed",
   "Blocked",
   "Done",
   "Cancelled",
 ];
 
 export const TERMINAL_STATES = new Set<IssueState>(["Done", "Cancelled"]);
-export const EXECUTING_STATES = new Set<IssueState>(["Running", "In Review"]);
+export const EXECUTING_STATES = new Set<IssueState>(["Running", "Reviewing"]);
 export const PERSIST_EVENTS_MAX = 500;
 
 // ── CLI skip flags ──────────────────────────────────────────────────────────

@@ -47,8 +47,8 @@
     "node": ">=23"
   },
   "dependencies": {
-    "@tanstack/react-query": "^5.90.21",
-    "@tanstack/react-router": "^1.167.3",
+    "@tanstack/react-query": "^5.91.0",
+    "@tanstack/react-router": "^1.167.4",
     "cli-args-parser": "^1.0.6",
     "lucide-react": "^0.577.0",
     "node-cron": "^4.2.1",
@@ -62,11 +62,11 @@
     "yaml": "^2.8.2"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.2.1",
-    "@tanstack/router-plugin": "^1.166.12",
+    "@tailwindcss/vite": "^4.2.2",
+    "@tanstack/router-plugin": "^1.166.13",
     "@vitejs/plugin-react": "^6.0.1",
     "daisyui": "^5.5.19",
-    "tailwindcss": "^4.2.1",
+    "tailwindcss": "^4.2.2",
     "tsup": "^8.5.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",

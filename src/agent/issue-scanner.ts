@@ -6,7 +6,6 @@ import {
 import {
   getCapabilityRoutingOptions,
 } from "./providers.ts";
-import type { WorkflowDefinition } from "./types.ts";
 
 export type ScannedIssue = {
   source: "todo" | "fixme" | "hack" | "github";
@@ -107,9 +106,8 @@ export function scanForTodos(targetRoot: string): ScannedIssue[] {
  */
 export function categorizeScannedIssues(
   issues: ScannedIssue[],
-  workflowDefinition: WorkflowDefinition | null,
 ): ScannedIssue[] {
-  const options = getCapabilityRoutingOptions(workflowDefinition);
+  const options = getCapabilityRoutingOptions();
 
   return issues.map((issue) => {
     const resolution = resolveTaskCapabilities({

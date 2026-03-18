@@ -73,7 +73,8 @@ export function buildClaudeCommand(options: {
 export function buildCodexCommand(options: {
   model?: string;
   addDirs?: string[];
-  reasoningEffort?: string; // not supported by codex CLI, kept for API compatibility
+  imagePaths?: string[];
+  reasoningEffort?: string;
 }): string {
   const parts = ["codex", "exec", "--skip-git-repo-check"];
 
@@ -81,9 +82,19 @@ export function buildCodexCommand(options: {
     parts.push(`--model ${options.model}`);
   }
 
+  if (options.reasoningEffort) {
+    parts.push(`--reasoning-effort ${options.reasoningEffort}`);
+  }
+
   if (options.addDirs?.length) {
     for (const dir of options.addDirs) {
       parts.push(`--add-dir "${dir}"`);
+    }
+  }
+
+  if (options.imagePaths?.length) {
+    for (const img of options.imagePaths) {
+      parts.push(`--image "${img}"`);
     }
   }
 

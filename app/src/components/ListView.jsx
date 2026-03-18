@@ -9,13 +9,13 @@ import {
 import { timeAgo, formatDuration } from "../utils.js";
 
 const STATE_BADGE = {
-  Planning: "badge-info", Todo: "badge-warning", Queued: "badge-info", Running: "badge-primary", Interrupted: "badge-accent",
-  "In Review": "badge-secondary", Blocked: "badge-error", Done: "badge-success", Cancelled: "badge-neutral",
+  Planning: "badge-info", Planned: "badge-warning", Queued: "badge-info", Running: "badge-primary",
+  Reviewing: "badge-secondary", Reviewed: "badge-success", Blocked: "badge-error", Done: "badge-success", Cancelled: "badge-neutral",
 };
 
 const STATE_BG = {
-  Planning: "border-l-info", Todo: "border-l-warning", Queued: "border-l-info", Running: "border-l-primary", Interrupted: "border-l-accent",
-  "In Review": "border-l-secondary", Blocked: "border-l-error", Done: "border-l-success", Cancelled: "border-l-neutral",
+  Planning: "border-l-info", Planned: "border-l-warning", Queued: "border-l-info", Running: "border-l-primary",
+  Reviewing: "border-l-secondary", Reviewed: "border-l-success", Blocked: "border-l-error", Done: "border-l-success", Cancelled: "border-l-neutral",
 };
 
 function formatTokens(n) {
@@ -109,7 +109,7 @@ function GridIssueCard({ issue, onSelect }) {
         )}
 
         {/* Live status indicator for active states */}
-        {["Planning", "Queued", "Running", "In Review", "Blocked"].includes(issue.state) && (
+        {["Planning", "Planned", "Queued", "Running", "Reviewing", "Reviewed", "Blocked"].includes(issue.state) && (
           <div className="pt-1">
             <StatusIndicator issue={issue} showElapsed />
           </div>

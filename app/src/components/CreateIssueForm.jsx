@@ -1,15 +1,15 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { X, Lightbulb, Loader2, Sparkles, FileText, Bug, RefreshCw, BookOpen, Wrench } from "lucide-react";
+import { X, Lightbulb, Loader2, Sparkles, FileText, Bug, RefreshCw, BookOpen, Wrench, Paperclip, ImageIcon } from "lucide-react";
 import { useSwipeToDismiss } from "../hooks/useSwipeToDismiss.js";
 import { api } from "../api.js";
 
 const ISSUE_TEMPLATES = [
-  { id: "blank", label: "Blank", icon: FileText, title: "", description: "" },
-  { id: "bug", label: "Bug Fix", icon: Bug, title: "fix: ", description: "## Problem\n\n## Expected Behavior\n\n## Steps to Reproduce\n\n" },
-  { id: "feature", label: "Feature", icon: Sparkles, title: "feat: ", description: "## Goal\n\n## Acceptance Criteria\n\n## Notes\n\n" },
-  { id: "refactor", label: "Refactor", icon: RefreshCw, title: "refactor: ", description: "## Current State\n\n## Desired State\n\n## Scope\n\n" },
-  { id: "docs", label: "Documentation", icon: BookOpen, title: "docs: ", description: "## What to Document\n\n## Target Audience\n\n" },
-  { id: "chore", label: "Chore", icon: Wrench, title: "chore: ", description: "## Task\n\n## Why Now\n\n" },
+  { id: "blank",    label: "Blank",         icon: FileText,  activeColor: "border-base-content/30 bg-base-content/5 text-base-content",         title: "",            description: "" },
+  { id: "bug",      label: "Bug Fix",        icon: Bug,       activeColor: "border-error/50 bg-error/8 text-error",                               title: "fix: ",       description: "## Problem\n\n## Expected Behavior\n\n## Steps to Reproduce\n\n" },
+  { id: "feature",  label: "Feature",        icon: Sparkles,  activeColor: "border-primary/50 bg-primary/8 text-primary",                         title: "feat: ",      description: "## Goal\n\n## Acceptance Criteria\n\n## Notes\n\n" },
+  { id: "refactor", label: "Refactor",       icon: RefreshCw, activeColor: "border-warning/50 bg-warning/8 text-warning",                         title: "refactor: ",  description: "## Current State\n\n## Desired State\n\n## Scope\n\n" },
+  { id: "docs",     label: "Docs",           icon: BookOpen,  activeColor: "border-info/50 bg-info/8 text-info",                                  title: "docs: ",      description: "## What to Document\n\n## Target Audience\n\n" },
+  { id: "chore",    label: "Chore",          icon: Wrench,    activeColor: "border-secondary/50 bg-secondary/8 text-secondary",                   title: "chore: ",     description: "## Task\n\n## Why Now\n\n" },
 ];
 
 export function CreateIssueDrawer({ open, onClose, onSubmit, isLoading, onToast }) {
@@ -17,8 +17,11 @@ export function CreateIssueDrawer({ open, onClose, onSubmit, isLoading, onToast 
   const [description, setDescription] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState("blank");
   const [enhancing, setEnhancing] = useState({ title: false, description: false });
+  const [images, setImages] = useState([]); // [{ name, preview, path }]
+  const [uploading, setUploading] = useState(false);
   const titleRef = useRef(null);
   const scrollRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   const applyTemplate = useCallback((templateId) => {
     const tpl = ISSUE_TEMPLATES.find((t) => t.id === templateId);
@@ -37,6 +40,7 @@ export function CreateIssueDrawer({ open, onClose, onSubmit, isLoading, onToast 
       setTitle("");
       setDescription("");
       setSelectedTemplate("blank");
+      setImages([]);
       setTimeout(() => titleRef.current?.focus(), 100);
     }
   }, [open]);
@@ -48,6 +52,45 @@ export function CreateIssueDrawer({ open, onClose, onSubmit, isLoading, onToast 
     return () => window.removeEventListener("keydown", handler);
   }, [open, onClose]);
 
+  const uploadFiles = useCallback(async (files) => {
+    if (!files.length) return;
+    setUploading(true);
+    try {
+      const encoded = await Promise.all(files.map((file) => new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve({ name: file.name, data: reader.result.split(",")[1], type: file.type, preview: reader.result });
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      })));
+      const res = await api.post("/attachments/upload", { files: encoded.map(({ name, data, type }) => ({ name, data, type })) });
+      if (res.ok && res.paths) {
+        const newImages = res.paths.map((path, i) => ({ name: files[i]?.name ?? path, preview: encoded[i]?.preview, path }));
+        setImages((prev) => [...prev, ...newImages]);
+      } else {
+        onToast?.(res.error || "Upload failed", "error");
+      }
+    } catch {
+      onToast?.("Upload failed", "error");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }, [onToast]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePaste = (e) => {
+      const files = Array.from(e.clipboardData?.items ?? [])
+        .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+        .map((item) => item.getAsFile())
+        .filter(Boolean);
+      if (files.length) uploadFiles(files);
+    };
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, [open, uploadFiles]);
+
+  const handleFileSelect = (e) => uploadFiles(Array.from(e.target.files ?? []));
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -55,6 +98,8 @@ export function CreateIssueDrawer({ open, onClose, onSubmit, isLoading, onToast 
     onSubmit({
       title: title.trim(),
       description: description.trim(),
+      issueType: selectedTemplate !== "blank" ? selectedTemplate : undefined,
+      images: images.map((img) => img.path),
     });
   };
 
@@ -66,6 +111,8 @@ export function CreateIssueDrawer({ open, onClose, onSubmit, isLoading, onToast 
         field,
         title: title.trim(),
         description: description.trim(),
+        issueType: selectedTemplate,
+        images: images.map((img) => img.path),
       });
       if (res.ok && typeof res.value === "string" && res.value.trim()) {
         if (field === "title") setTitle(res.value.trim());
@@ -105,8 +152,8 @@ export function CreateIssueDrawer({ open, onClose, onSubmit, isLoading, onToast 
             </button>
           </div>
 
-          <div ref={scrollRef} className={`flex-1 overflow-y-auto px-6 py-6 space-y-4 drawer-safe-bottom ${open ? "stagger-children" : ""}`}>
-            <div className="flex flex-wrap gap-1.5">
+          <div ref={scrollRef} className={`flex-1 overflow-y-auto px-6 py-6 flex flex-col gap-4 drawer-safe-bottom ${open ? "stagger-children" : ""}`}>
+            <div className="grid grid-cols-3 gap-1.5">
               {ISSUE_TEMPLATES.map((tpl) => {
                 const Icon = tpl.icon;
                 const isActive = selectedTemplate === tpl.id;
@@ -114,11 +161,15 @@ export function CreateIssueDrawer({ open, onClose, onSubmit, isLoading, onToast 
                   <button
                     key={tpl.id}
                     type="button"
-                    className={`btn btn-xs gap-1 ${isActive ? "btn-primary" : "btn-ghost"}`}
                     onClick={() => applyTemplate(tpl.id)}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-left transition-all duration-150 text-sm font-medium ${
+                      isActive
+                        ? tpl.activeColor
+                        : "border-base-300 text-base-content/50 hover:border-base-content/20 hover:text-base-content/70 hover:bg-base-200/50"
+                    }`}
                   >
-                    <Icon className="size-3" />
-                    {tpl.label}
+                    <Icon className="size-3.5 shrink-0" />
+                    <span className="truncate">{tpl.label}</span>
                   </button>
                 );
               })}
@@ -147,7 +198,7 @@ export function CreateIssueDrawer({ open, onClose, onSubmit, isLoading, onToast 
               />
             </div>
 
-            <div className="form-control">
+            <div className="form-control flex-1 flex flex-col min-h-0">
               <label className="label justify-between gap-2">
                 <span className="label-text font-medium">Context & details</span>
                 <button
@@ -161,11 +212,46 @@ export function CreateIssueDrawer({ open, onClose, onSubmit, isLoading, onToast 
                 </button>
               </label>
               <textarea
-                className="textarea textarea-bordered w-full min-h-32"
+                className="textarea textarea-bordered w-full flex-1 min-h-40 resize-none"
                 placeholder="Describe the problem, expected behavior, acceptance criteria..."
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
               />
+            </div>
+
+            <div className="form-control">
+              <label className="label justify-between gap-2">
+                <span className="label-text font-medium">Screenshots & Evidence</span>
+                <button
+                  type="button"
+                  className="btn btn-xs btn-soft btn-ghost gap-1"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                >
+                  {uploading ? <Loader2 className="size-3 animate-spin" /> : <Paperclip className="size-3" />}
+                  Attach
+                </button>
+              </label>
+              <input ref={fileInputRef} type="file" multiple accept="image/*" className="hidden" onChange={handleFileSelect} />
+              {images.length > 0 && (
+                <div className="flex flex-wrap gap-2 mt-1">
+                  {images.map((img, i) => (
+                    <div key={i} className="relative group">
+                      {img.preview
+                        ? <img src={img.preview} alt={img.name} className="size-16 object-cover rounded-lg border border-base-300" />
+                        : <div className="size-16 rounded-lg border border-base-300 bg-base-200 flex items-center justify-center"><ImageIcon className="size-5 opacity-40" /></div>
+                      }
+                      <button
+                        type="button"
+                        className="absolute -top-1.5 -right-1.5 size-4 rounded-full bg-error text-error-content flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={() => setImages((prev) => prev.filter((_, j) => j !== i))}
+                      >
+                        <X className="size-2.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="bg-base-200 rounded-box p-3 text-xs opacity-60 space-y-1">

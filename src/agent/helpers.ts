@@ -68,12 +68,16 @@ export function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-export function normalizeState(value: unknown): IssueState {
+export function parseIssueState(value: unknown): IssueState | undefined {
   const raw = typeof value === "string" ? value.trim() : "";
   if ((ALLOWED_STATES as readonly string[]).includes(raw)) {
     return raw as IssueState;
   }
-  return "Todo";
+  return undefined;
+}
+
+export function normalizeState(value: unknown, fallback: IssueState = "Planning"): IssueState {
+  return parseIssueState(value) ?? fallback;
 }
 
 export function parseEnvNumber(name: string, fallback: number): number {

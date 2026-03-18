@@ -189,21 +189,21 @@ async function main() {
 
   // Recover orphaned agent processes from previous session
   if (!skipRecovery) {
-    logger.debug({ issueCount: state.issues.filter((i) => i.state === "Running" || i.state === "Interrupted" || i.state === "Queued").length }, "[Boot] Checking for orphaned agent processes");
+    logger.debug({ issueCount: state.issues.filter((i) => i.state === "Running" || i.state === "Queued").length }, "[Boot] Checking for orphaned agent processes");
     for (const issue of state.issues) {
-      if (issue.state === "Running" || issue.state === "Interrupted" || issue.state === "Queued") {
+      if (issue.state === "Running" || issue.state === "Queued") {
         const { alive, pid } = isAgentStillRunning(issue);
         if (alive && pid) {
           logger.info(`Agent for ${issue.identifier} still alive (PID ${pid.pid}), keeping state as Running.`);
           issue.state = "Running";
           addEvent(state, issue.id, "info", `Orphaned agent detected (PID ${pid.pid}), still alive — tracking resumed.`);
         } else {
-          // Agent died — clean PID file, mark as Interrupted for resumption
+          // Agent died — clean PID file, mark as Queued for resumption
           if (issue.workspacePath) cleanStalePidFile(issue.workspacePath);
           if (issue.state === "Running") {
-            issue.state = "Interrupted";
-            issue.history.push(`[${now()}] Agent process not found on boot — marked Interrupted.`);
-            addEvent(state, issue.id, "info", `Agent for ${issue.identifier} not found, marked Interrupted.`);
+            issue.state = "Queued";
+            issue.history.push(`[${now()}] Agent process not found on boot — marked Queued.`);
+            addEvent(state, issue.id, "info", `Agent for ${issue.identifier} not found, marked Queued.`);
           }
         }
       }

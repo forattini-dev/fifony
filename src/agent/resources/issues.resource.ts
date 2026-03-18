@@ -95,7 +95,7 @@ async function retryIssue(c: unknown) {
   if (TERMINAL_STATES.has(issue.state)) {
     issue.lastError = undefined;
     issue.nextRetryAt = undefined;
-    await transitionIssueState(issue, "Todo", "Manual retry requested.");
+    await transitionIssueState(issue, "Queued", "Manual retry requested.");
   } else {
     issue.nextRetryAt = undefined;
     issue.lastError = undefined;
@@ -111,7 +111,7 @@ async function createIssue(c: unknown) {
   const context = getApiRuntimeContextOrThrow();
   try {
     const payload = await (c as { req: { json: () => Promise<unknown> } }).req.json() as JsonRecord;
-    const issue = createIssueFromPayload(payload, context.state.issues, context.workflowDefinition);
+    const issue = createIssueFromPayload(payload, context.state.issues);
     context.state.issues.push(issue);
     addEvent(context.state, issue.id, "info", `Issue ${issue.identifier} created via API.`);
     await persistState(context.state);

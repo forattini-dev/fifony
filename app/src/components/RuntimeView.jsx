@@ -1,16 +1,16 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { Cpu, Circle, Clock, Terminal, CheckCircle2, XCircle, AlertTriangle, Pause, ListOrdered, Zap, Gauge, Users } from "lucide-react";
+import { Cpu, Circle, Clock, Terminal, CheckCircle2, XCircle, AlertTriangle, Eye, ListOrdered, Zap, Gauge, Users } from "lucide-react";
 import { timeAgo, formatDuration } from "../utils.js";
 import { api } from "../api.js";
 
 const STATE_BADGE = {
-  Queued: "badge-info", Running: "badge-primary", Interrupted: "badge-accent",
-  "In Review": "badge-secondary", Blocked: "badge-error", Done: "badge-success", Cancelled: "badge-neutral",
+  Queued: "badge-info", Running: "badge-primary", Reviewing: "badge-secondary",
+  Reviewed: "badge-success", Blocked: "badge-error", Done: "badge-success", Cancelled: "badge-neutral",
 };
 
 const STATE_ICON = {
-  Queued: ListOrdered, Running: Circle, Interrupted: Pause,
-  "In Review": Circle, Blocked: AlertTriangle, Done: CheckCircle2, Cancelled: XCircle,
+  Queued: ListOrdered, Running: Circle, Reviewing: Eye,
+  Reviewed: Eye, Blocked: AlertTriangle, Done: CheckCircle2, Cancelled: XCircle,
 };
 
 function formatTokens(n) {
@@ -77,7 +77,7 @@ function AgentSlot({ index, issue, total }) {
   }
 
   const isRunning = issue.state === "Running";
-  const borderClass = issue.state === "In Review"
+  const borderClass = issue.state === "Reviewing" || issue.state === "Reviewed"
     ? "border-secondary bg-secondary/5"
     : "border-primary bg-primary/5";
 
@@ -188,11 +188,11 @@ function CockpitSummary({ running, queued, concurrency, totalTokensToday }) {
 
 export function RuntimeView({ state, providers, parallelism, onRefresh, issues: allIssues = [] }) {
   const stateIssues = Array.isArray(state.issues) ? state.issues : [];
-  const concurrency = Number(state.config?.workerConcurrency) || 2;
+  const concurrency = Number(state.config?.workerConcurrency) || 3;
 
-  const running = stateIssues.filter((i) => i.state === "Running" || i.state === "In Review");
+  const running = stateIssues.filter((i) => i.state === "Running" || i.state === "Reviewing");
   const queued = stateIssues.filter((i) =>
-    i.state === "Todo" || i.state === "Queued" || i.state === "Interrupted"
+    i.state === "Planned" || i.state === "Queued"
     || (i.state === "Blocked" && i.nextRetryAt),
   );
   const completed = stateIssues

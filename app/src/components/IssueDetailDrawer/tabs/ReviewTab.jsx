@@ -1,0 +1,271 @@
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import {
+  GitMerge, GitBranch, CheckCircle2, AlertTriangle, ClipboardCheck,
+  Code, Terminal, ThumbsUp, ThumbsDown, RotateCcw, ImageIcon, Paperclip, Loader,
+} from "lucide-react";
+import { api } from "../../../api.js";
+import { Section } from "../shared.jsx";
+import { DiffFileItem, DiffViewer } from "./DiffTab.jsx";
+
+export function ReviewTab({ issue, issueId, onStateChange }) {
+  const [diffData, setDiffData] = useState(null);
+  const [diffLoading, setDiffLoading] = useState(false);
+  const [note, setNote] = useState("");
+  const [verdict, setVerdict] = useState(null);
+  const [expandedFile, setExpandedFile] = useState(null);
+  const [reviewImages, setReviewImages] = useState(issue.images ?? []);
+  const [imgUploading, setImgUploading] = useState(false);
+  const reviewFileRef = useRef(null);
+
+  const fetchDiff = useCallback(async () => {
+    setDiffLoading(true);
+    try {
+      const res = await api.get(`/diff/${encodeURIComponent(issueId)}`);
+      setDiffData(res);
+    } catch { setDiffData(null); }
+    finally { setDiffLoading(false); }
+  }, [issueId]);
+
+  useEffect(() => { setDiffData(null); setVerdict(null); setNote(""); setExpandedFile(null); setReviewImages(issue.images ?? []); }, [issueId]);
+  useEffect(() => { fetchDiff(); }, [fetchDiff]);
+
+  const uploadReviewImages = useCallback(async (files) => {
+    if (!files.length) return;
+    setImgUploading(true);
+    try {
+      const encoded = await Promise.all(files.map((file) => new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve({ name: file.name, data: reader.result.split(",")[1], type: file.type });
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      })));
+      const res = await api.post(`/issues/${encodeURIComponent(issueId)}/images`, { files: encoded });
+      if (res.ok && res.paths) setReviewImages((prev) => [...prev, ...res.paths]);
+    } catch {}
+    finally {
+      setImgUploading(false);
+      if (reviewFileRef.current) reviewFileRef.current.value = "";
+    }
+  }, [issueId]);
+
+  const isInReview = issue.state === "Reviewing" || issue.state === "Reviewed";
+  const isDone = issue.state === "Done";
+
+  useEffect(() => {
+    if (!isInReview) return;
+    const handlePaste = (e) => {
+      const pastedFiles = Array.from(e.clipboardData?.items ?? [])
+        .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+        .map((item) => item.getAsFile())
+        .filter(Boolean);
+      if (pastedFiles.length) uploadReviewImages(pastedFiles);
+    };
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, [isInReview, uploadReviewImages]);
+
+  const files = diffData?.files || [];
+  const diff = diffData?.diff || "";
+
+  // Parse diff into per-file chunks
+  const diffChunks = {};
+  if (diff) {
+    for (const chunk of diff.split(/(?=^diff --git )/m)) {
+      const m = chunk.match(/^diff --git a\/(.+?) b\//);
+      if (m) diffChunks[m[1]] = chunk.split("\n");
+    }
+  }
+
+  const handleApprove = () => { setVerdict("approved"); onStateChange?.(issue.id, "Done"); };
+  const handleRework = () => { setVerdict("rework"); onStateChange?.(issue.id, "Queued"); };
+  const handleReject = () => { setVerdict("rejected"); onStateChange?.(issue.id, "Blocked"); };
+
+  const mergeResult = issue.mergeResult;
+  const isMerged = !!issue.mergedAt;
+
+  return (
+    <div className="space-y-5">
+      {/* Merge / approval banner */}
+      {isMerged && (
+        <div className={`alert border text-sm ${mergeResult?.conflicts > 0 ? "border-warning/30 bg-warning/5" : "border-success/30 bg-success/5"}`}>
+          <GitMerge className={`size-4 shrink-0 ${mergeResult?.conflicts > 0 ? "text-warning" : "text-success"}`} />
+          <div>
+            <span className="font-semibold">Code merged to project root</span>
+            {mergeResult && (
+              <span className="opacity-70"> — {mergeResult.copied} file{mergeResult.copied !== 1 ? "s" : ""} copied{mergeResult.deleted > 0 ? `, ${mergeResult.deleted} deleted` : ""}</span>
+            )}
+            {mergeResult?.conflicts > 0 && (
+              <p className="text-xs text-warning font-medium mt-0.5">{mergeResult.conflicts} file{mergeResult.conflicts !== 1 ? "s" : ""} conflicted with another worker and were skipped.</p>
+            )}
+            <p className="text-xs opacity-50 mt-0.5">The approved branch has been integrated into the current project branch.</p>
+          </div>
+        </div>
+      )}
+      {!isMerged && isDone && (
+        <div className="alert border border-info/30 bg-info/5 text-sm">
+          <GitBranch className="size-4 shrink-0 text-info" />
+          <div>
+            <span className="font-semibold">Review approved, merge still pending</span>
+            <p className="text-xs opacity-70 mt-0.5">
+              The code is still isolated on {issue.branchName ? <span className="font-mono">{issue.branchName}</span> : "the issue branch"} and in the worktree until you run Merge.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Status banners */}
+      {isDone && (
+        <div className="alert alert-success text-sm"><CheckCircle2 className="size-4" /> This issue has been approved.</div>
+      )}
+      {issue.state === "Blocked" && (
+        <div className="alert alert-error text-sm"><AlertTriangle className="size-4" /> Review failed. Check execution output.</div>
+      )}
+      {verdict === "approved" && isInReview && (
+        <div className="alert alert-success text-sm"><ThumbsUp className="size-4" /> Approved! Moving to Done.</div>
+      )}
+      {verdict === "rework" && (
+        <div className="alert alert-warning text-sm"><RotateCcw className="size-4" /> Sent back for rework.</div>
+      )}
+
+      {/* Checklist */}
+      {isInReview && !verdict && (
+        <Section title="Review Checklist" icon={ClipboardCheck}>
+          <div className="space-y-2 text-sm">
+            <p className="opacity-60">Before deciding, consider:</p>
+            <ul className="list-disc ml-5 space-y-1 opacity-80">
+              <li>Does the diff address the issue title and description?</li>
+              <li>Are there unintended side effects or regressions?</li>
+              <li>Is the scope appropriate — no unnecessary changes?</li>
+              <li>Are there files that shouldn't have been modified?</li>
+            </ul>
+          </div>
+        </Section>
+      )}
+
+      {/* Changes — GitHub PR style */}
+      <Section title="Changes" icon={Code}>
+        {diffLoading ? (
+          <div className="flex items-center gap-2 text-sm opacity-50 py-4">
+            <span className="loading loading-spinner loading-xs" /> Loading changes...
+          </div>
+        ) : files.length > 0 ? (
+          <div className="space-y-3">
+            <div className="flex items-center gap-3 text-sm">
+              <span className="opacity-60">{files.length} file{files.length !== 1 ? "s" : ""}</span>
+              <span className="text-success font-mono text-xs">+{diffData?.totalAdditions || 0}</span>
+              <span className="text-error font-mono text-xs">-{diffData?.totalDeletions || 0}</span>
+            </div>
+            <div className="space-y-1">
+              {files.map((file) => (
+                <DiffFileItem
+                  key={file.path}
+                  file={file}
+                  isOpen={expandedFile === file.path}
+                  onToggle={() => setExpandedFile(expandedFile === file.path ? null : file.path)}
+                />
+              ))}
+            </div>
+            {expandedFile && diffChunks[expandedFile] && (
+              <div>
+                <div className="text-xs font-mono opacity-50 mb-1">{expandedFile}</div>
+                <DiffViewer lines={diffChunks[expandedFile]} />
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="text-sm opacity-40 py-4">No changes detected.</div>
+        )}
+      </Section>
+
+      {/* Agent output context */}
+      {(issue.lastError || issue.commandOutputTail) && (
+        <Section title="Agent Output" icon={Terminal}>
+          {issue.lastError && (
+            <pre className="text-xs bg-error/10 rounded-box p-3 overflow-x-auto whitespace-pre-wrap max-h-40 overflow-y-auto mb-2">
+              {issue.lastError}
+            </pre>
+          )}
+          {issue.commandOutputTail && !issue.lastError && (
+            <pre className="text-xs bg-base-200 rounded-box p-3 overflow-x-auto whitespace-pre-wrap max-h-40 overflow-y-auto">
+              {issue.commandOutputTail}
+            </pre>
+          )}
+        </Section>
+      )}
+
+      {/* Evidence Images */}
+      {(isInReview || isDone) && (
+        <Section title="Evidence" icon={ImageIcon}>
+          <input
+            ref={reviewFileRef}
+            type="file"
+            multiple
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => uploadReviewImages(Array.from(e.target.files ?? []))}
+          />
+          {reviewImages.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              {reviewImages.map((imgPath, i) => {
+                const filename = imgPath.split("/").pop();
+                const src = `/api/issues/${encodeURIComponent(issueId)}/images/${encodeURIComponent(filename)}`;
+                return (
+                  <a key={i} href={src} target="_blank" rel="noreferrer" className="block">
+                    <img src={src} alt={filename} className="size-20 object-cover rounded-lg border border-base-300 hover:opacity-80 transition-opacity" />
+                  </a>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-xs opacity-40">No screenshots attached yet.</p>
+          )}
+          {isInReview && (
+            <button
+              type="button"
+              className="btn btn-xs btn-soft btn-ghost gap-1 mt-2"
+              onClick={() => reviewFileRef.current?.click()}
+              disabled={imgUploading}
+            >
+              {imgUploading ? <Loader className="size-3 animate-spin" /> : <Paperclip className="size-3" />}
+              Attach Screenshot
+            </button>
+          )}
+        </Section>
+      )}
+
+      {/* Note */}
+      {isInReview && !verdict && (
+        <Section title="Review Note" icon={Terminal}>
+          <textarea
+            className="textarea textarea-bordered w-full text-sm"
+            rows={3}
+            placeholder="Optional: leave a note about your decision..."
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+          />
+        </Section>
+      )}
+
+      {/* Decision buttons */}
+      {isInReview && !verdict && (
+        <div className="border-t border-base-300 pt-4 space-y-3">
+          <div className="text-sm font-semibold">Verdict</div>
+          <div className="flex flex-wrap gap-2">
+            <button className="btn btn-success btn-sm gap-1.5 flex-1" onClick={handleApprove}>
+              <ThumbsUp className="size-4" /> Approve
+            </button>
+            <button className="btn btn-warning btn-sm gap-1.5 flex-1" onClick={handleRework}>
+              <RotateCcw className="size-4" /> Request Rework
+            </button>
+            <button className="btn btn-error btn-sm gap-1.5 flex-1" onClick={handleReject}>
+              <ThumbsDown className="size-4" /> Reject
+            </button>
+          </div>
+          <p className="text-xs opacity-40">
+            <strong>Approve</strong> moves to Done. <strong>Rework</strong> sends back to executor. <strong>Reject</strong> blocks the issue.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
