@@ -1,7 +1,7 @@
-Integrate {{client}} with the local fifo MCP server.
+Integrate {{client}} with the local fifony MCP server.
 
 Goal: {{goal}}
 
 {{integrationGuide}}
 
-Use the available fifo resources and tools instead of inventing your own persistence model.
+Use the available fifony resources and tools instead of inventing your own persistence model.

@@ -1,4 +1,4 @@
-Review the WORKFLOW.md for this fifo workspace as {{provider}}.
+Review the WORKFLOW.md for this fifony workspace as {{provider}}.
 
 Workspace: {{workspaceRoot}}
 Workflow present: {{workflowPresent}}

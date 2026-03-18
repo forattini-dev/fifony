@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "fifo Dashboard",
-  "short_name": "fifo",
-  "description": "fifo local orchestrator dashboard (React + PWA)",
+  "name": "fifony Dashboard",
+  "short_name": "fifony",
+  "description": "fifony local orchestrator dashboard (React + PWA)",
   "lang": "en-US",
   "start_url": "/kanban",
   "scope": "/",
