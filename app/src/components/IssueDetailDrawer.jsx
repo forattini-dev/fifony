@@ -837,6 +837,7 @@ function PlanningTab({ issue, onStateChange, workflowConfig }) {
   const [feedback, setFeedback] = useState("");
   const [error, setError] = useState(null);
   const [localGenerating, setLocalGenerating] = useState(false);
+  const [localRefining, setLocalRefining] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [showAllRefinements, setShowAllRefinements] = useState(false);
   const refineRef = useRef(null);
@@ -847,7 +848,7 @@ function PlanningTab({ issue, onStateChange, workflowConfig }) {
 
   // Server-driven status via WS, with local fallback for when WS isn't connected
   const isGenerating = issue.planningStatus === "planning" || (localGenerating && !plan);
-  const isRefining = issue.planningStatus === "refining";
+  const isRefining = issue.planningStatus === "refining" || localRefining;
   const isBusy = isGenerating || isRefining;
 
   // Show server-side planning errors
@@ -864,6 +865,13 @@ function PlanningTab({ issue, onStateChange, workflowConfig }) {
       setLocalGenerating(false);
     }
   }, [localGenerating, plan, issue.planningStatus, issue.planningError]);
+
+  // Auto-clear local refining state when server confirms status or error
+  useEffect(() => {
+    if (localRefining && (issue.planningStatus === "refining" || issue.planningStatus === "done" || issue.planningError)) {
+      setLocalRefining(false);
+    }
+  }, [localRefining, issue.planningStatus, issue.planningError]);
 
   // Safety timeout: clear generating after 5 minutes
   useEffect(() => {
@@ -919,6 +927,7 @@ function PlanningTab({ issue, onStateChange, workflowConfig }) {
   const handleRefine = async () => {
     if (!feedback.trim()) return;
     setError(null);
+    setLocalRefining(true);
     try {
       const res = await api.post(`/issues/${encodeURIComponent(issue.id)}/plan/refine`, { feedback: feedback.trim() });
       if (!res.ok) throw new Error(res.error || "Refinement failed.");
@@ -926,6 +935,7 @@ function PlanningTab({ issue, onStateChange, workflowConfig }) {
       // Server will set planningStatus="refining" → WS broadcasts → UI updates
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      setLocalRefining(false);
     }
   };
 
