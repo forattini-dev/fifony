@@ -838,6 +838,7 @@ function PlanningTab({ issue, onStateChange, workflowConfig }) {
   const [error, setError] = useState(null);
   const [localGenerating, setLocalGenerating] = useState(false);
   const [localRefining, setLocalRefining] = useState(false);
+  const [localApproving, setLocalApproving] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [showAllRefinements, setShowAllRefinements] = useState(false);
   const refineRef = useRef(null);
@@ -917,10 +918,13 @@ function PlanningTab({ issue, onStateChange, workflowConfig }) {
   };
 
   const handleApprove = async () => {
+    setLocalApproving(true);
     try {
       await api.post(`/issues/${encodeURIComponent(issue.id)}/approve`);
+      // State will transition via WS: Planning → Todo/Queued/Running
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      setLocalApproving(false);
     }
   };
 
@@ -1236,8 +1240,8 @@ function PlanningTab({ issue, onStateChange, workflowConfig }) {
       {/* Actions */}
       {isPlanning && !isBusy && (
         <div className="flex items-center gap-2 pt-3 border-t border-base-300 max-sm:flex-col">
-          <button className="btn btn-primary gap-1.5 max-sm:w-full" onClick={handleApprove}>
-            <CheckCircle2 className="size-4" /> Approve & Start
+          <button className="btn btn-primary gap-1.5 max-sm:w-full" onClick={handleApprove} disabled={localApproving}>
+            {localApproving ? <><Loader className="size-4 animate-spin" /> Starting...</> : <><CheckCircle2 className="size-4" /> Approve & Start</>}
           </button>
           <button className="btn btn-ghost btn-sm gap-1 max-sm:w-full" onClick={() => handleGenerate(false)}>
             <RotateCcw className="size-3" /> Re-plan from scratch
