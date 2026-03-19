@@ -46,7 +46,7 @@ export async function initQueueWorkers(state: RuntimeState): Promise<void> {
     const planPluginInstance = new S3QueuePlugin({
       resource: S3DB_ISSUE_RESOURCE,
       visibilityTimeout: 1_200_000,
-      pollInterval: 10_000,
+      pollInterval: 5_000,
       maxAttempts: 3,
       concurrency: 1,
       autoStart: false,
@@ -61,7 +61,7 @@ export async function initQueueWorkers(state: RuntimeState): Promise<void> {
     const executePluginInstance = new S3QueuePlugin({
       resource: S3DB_ISSUE_RESOURCE,
       visibilityTimeout: 3_600_000,
-      pollInterval: 10_000,
+      pollInterval: 5_000,
       maxAttempts: 3,
       concurrency: state.config.workerConcurrency,
       autoStart: false,
@@ -76,7 +76,7 @@ export async function initQueueWorkers(state: RuntimeState): Promise<void> {
     const reviewPluginInstance = new S3QueuePlugin({
       resource: S3DB_ISSUE_RESOURCE,
       visibilityTimeout: 1_200_000,
-      pollInterval: 10_000,
+      pollInterval: 5_000,
       maxAttempts: 3,
       concurrency: 1,
       autoStart: false,
