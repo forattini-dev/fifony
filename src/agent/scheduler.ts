@@ -21,20 +21,20 @@ import {
   getIssueCapabilityPriority,
 } from "./providers.ts";
 import { canRunIssue, issueHasResumableSession, runIssueOnce, isAgentStillRunning } from "./agent.ts";
+import { setWakeResolve, wakeScheduler } from "./wake-signal.ts";
+import { areQueueWorkersActive } from "./queue-workers.ts";
+
+// States fully managed by queue workers — scheduler must not dispatch these when queues are active
+const QUEUE_MANAGED_STATES = new Set(["Planning", "Queued", "Reviewing"]);
+
+export { wakeScheduler };
 
 let shuttingDown = false;
 let lastPersistAt = 0;
 const PERSIST_DEBOUNCE_MS = 5000;
 
-// ── Wake signal ─────────────────────────────────────────────────────────────
-let schedulerWakeResolve: (() => void) | null = null;
-
-export function wakeScheduler(): void {
-  schedulerWakeResolve?.();
-}
-
 // ── Adaptive polling ────────────────────────────────────────────────────────
-const IDLE_POLL_MS = 5000;
+const IDLE_POLL_MS = 1000;
 const ACTIVE_POLL_MS = 500;
 
 export function isShuttingDown(): boolean {
@@ -236,8 +236,12 @@ export function pickNextIssues(
   state: RuntimeState,
   running: Set<string>,
 ): IssueEntry[] {
+  const queueManaged = areQueueWorkersActive();
   const candidates = state.issues
-    .filter((issue) => canRunIssue(issue, running, state) && !isPerStateFull(issue, state, running));
+    .filter((issue) => {
+      if (queueManaged && QUEUE_MANAGED_STATES.has(issue.state)) return false;
+      return canRunIssue(issue, running, state) && !isPerStateFull(issue, state, running);
+    });
   if (candidates.length > 0) {
     logger.debug({ candidates: candidates.map((i) => ({ id: i.identifier, state: i.state, priority: i.priority })) }, "[Scheduler] Eligible candidates for dispatch");
   }
@@ -328,9 +332,9 @@ export async function scheduler(
       const effectivePoll = running.size > 0 ? ACTIVE_POLL_MS : IDLE_POLL_MS;
       await Promise.race([
         sleep(effectivePoll),
-        new Promise<void>((resolve) => { schedulerWakeResolve = resolve; }),
+        new Promise<void>((resolve) => { setWakeResolve(resolve); }),
       ]);
-      schedulerWakeResolve = null;
+      setWakeResolve(null);
     }
     return;
   }

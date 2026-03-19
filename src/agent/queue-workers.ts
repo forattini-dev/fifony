@@ -143,6 +143,10 @@ export async function enqueueForReview(issue: IssueEntry): Promise<void> {
   await (reviewResource as any).enqueue({ ...issue, _queueTarget: "Reviewing" });
 }
 
+export function areQueueWorkersActive(): boolean {
+  return planPlugin !== null && executePlugin !== null && reviewPlugin !== null;
+}
+
 export async function getQueueStats(): Promise<Record<string, unknown>> {
   const [plan, execute, review] = await Promise.allSettled([
     planPlugin?.getStats(),

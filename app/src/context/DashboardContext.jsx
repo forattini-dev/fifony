@@ -82,8 +82,8 @@ export function DashboardProvider({ children }) {
   const wsStatus = useRuntimeWebSocket(handleRuntimeSocketMessage);
   const liveMode = wsStatus === "connected";
 
-  const runtime = useRuntimeState({ pollInterval: liveMode ? 10000 : 3000, showAll: completionFilter === "all" });
-  const events = useRuntimeEvents(eventKind, eventIssueId, liveMode ? 10000 : 2500);
+  const runtime = useRuntimeState({ pollInterval: liveMode ? 3000 : 3000, showAll: completionFilter === "all" });
+  const events = useRuntimeEvents(eventKind, eventIssueId, liveMode ? 3000 : 2500);
   const providers = useProviders();
   const parallelism = useParallelism();
   const providersUsage = useProvidersUsage();

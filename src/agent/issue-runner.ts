@@ -27,6 +27,7 @@ import { ensureWorktreeCommitted, hydrateIssuePathsFromWorkspace, describeRoutin
 import { prepareWorkspace } from "./workspace-setup.ts";
 import { inferCapabilityPaths } from "../routing/capability-resolver.ts";
 import { getWorkflowConfig, loadRuntimeSettings } from "./settings.ts";
+import { wakeScheduler } from "./wake-signal.ts";
 
 /**
  * Run a planning job for an issue in the Planning state within a worker slot.
@@ -313,6 +314,7 @@ export async function runIssueOnce(
         state.metrics = computeMetrics(state.issues);
         state.updatedAt = now();
         persistState(state).catch(() => {});
+        wakeScheduler();
       });
     return;
   }
