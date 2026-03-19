@@ -64,13 +64,11 @@ export async function refinePlan(
   }
 
   const configuredProvider = planStageProvider && available.includes(planStageProvider) ? planStageProvider : null;
-  const preferred = (configuredProvider && configuredProvider !== "codex")
-    ? configuredProvider
-    : available.includes("claude") ? "claude"
-    : available[0];
+  const preferred = configuredProvider
+    ?? (available.includes("claude") ? "claude" : available[0]);
   if (!preferred) throw new Error("No AI provider available for plan refinement.");
 
-  // If provider changed (e.g. codex → claude), discard the provider-specific model
+  // If provider changed (configured wasn't available → fallback), discard provider-specific model
   if (preferred !== configuredProvider) planStageModel = undefined;
 
   const refineStartMs = Date.now();

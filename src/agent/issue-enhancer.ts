@@ -243,8 +243,10 @@ export async function enhanceIssueField(
   };
 
   addProvider(requestedProvider);
-  addProvider("codex");
-  addProvider("claude");
+  // Fall back to any other available provider, in detection order
+  for (const entry of providers) {
+    if (entry.available) addProvider(entry.name);
+  }
 
   if (!orderedProviders.length) {
     const known = providers.map((entry) => `${entry.name}:${entry.available ? "available" : "missing"}`).join(", ");
