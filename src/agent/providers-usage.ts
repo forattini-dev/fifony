@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
+import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { env } from "node:process";
 import { logger } from "./logger.ts";
@@ -421,12 +421,9 @@ function collectGeminiUsage(): ProviderUsage | null {
   // Read models from the installed CLI package (same source as discoverModels)
   const models: ModelInfo[] = [];
   try {
-    const { execFileSync: exec } = await import("node:child_process");
-    const { realpathSync } = await import("node:fs");
-    const { dirname: dn } = await import("node:path");
-    const binPath = exec("which", ["gemini"], { encoding: "utf8", timeout: 3000 }).trim();
+    const binPath = execSync("which gemini", { encoding: "utf8", timeout: 3000 }).trim();
     const realBin = realpathSync(binPath);
-    const modelsPath = join(dn(dn(realBin)), "node_modules", "@google", "gemini-cli-core", "dist", "src", "config", "models.js");
+    const modelsPath = join(dirname(dirname(realBin)), "node_modules", "@google", "gemini-cli-core", "dist", "src", "config", "models.js");
     if (existsSync(modelsPath)) {
       const content = readFileSync(modelsPath, "utf8");
       const regex = /export const ([A-Z0-9_]+)\s*=\s*'(gemini-[^']+)';/g;
