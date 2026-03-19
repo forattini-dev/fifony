@@ -2,7 +2,7 @@ import { getStepperLabels } from "../constants";
 
 function StepIndicator({ current, wantsDiscovery }) {
   const labels = getStepperLabels(wantsDiscovery);
-  // current is 1-based from the wizard (step 1 = Providers = stepper index 0)
+  // current is 1-based from the wizard because the welcome screen is hidden from the stepper
   const stepperIndex = current - 1;
   return (
     <ul className="steps steps-horizontal w-full max-w-2xl text-xs">

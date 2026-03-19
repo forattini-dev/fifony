@@ -187,6 +187,8 @@ export type RuntimeConfig = {
   beforeRemoveHook: string;
 };
 
+export type ProjectNameSource = "saved" | "detected" | "missing";
+
 export type RuntimeMetrics = {
   total: number;
   planning: number;
@@ -208,6 +210,10 @@ export type RuntimeState = {
   trackerKind: "filesystem";
   sourceRepoUrl: string;
   sourceRef: string;
+  projectName?: string;
+  detectedProjectName?: string;
+  projectNameSource?: ProjectNameSource;
+  queueTitle?: string;
   dashboardPort?: string;
   booting?: boolean;
   config: RuntimeConfig;

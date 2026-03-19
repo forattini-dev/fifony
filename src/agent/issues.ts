@@ -29,6 +29,8 @@ import {
   STATE_ROOT,
   TARGET_ROOT,
 } from "./constants.ts";
+import type { ProjectMetadata } from "./project-meta.ts";
+import { resolveProjectMetadata } from "./project-meta.ts";
 import {
   now,
   isoWeek,
@@ -316,6 +318,7 @@ export function dedupHistoryEntries(issues: IssueEntry[]): void {
 export function buildRuntimeState(
   previous: RuntimeState | null,
   config: RuntimeConfig,
+  projectMetadata: ProjectMetadata = resolveProjectMetadata([], TARGET_ROOT),
 ): RuntimeState {
   const mergedIssues = (previous?.issues ?? [])
     .map((rawIssue) => {
@@ -371,6 +374,10 @@ export function buildRuntimeState(
     trackerKind: "filesystem",
     sourceRepoUrl: TARGET_ROOT,
     sourceRef: "workspace",
+    projectName: projectMetadata.projectName,
+    detectedProjectName: projectMetadata.detectedProjectName,
+    projectNameSource: projectMetadata.projectNameSource,
+    queueTitle: projectMetadata.queueTitle,
     config: {
       ...config,
       dashboardPort: previous?.config.dashboardPort,

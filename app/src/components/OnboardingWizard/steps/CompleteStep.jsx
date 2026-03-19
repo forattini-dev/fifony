@@ -13,6 +13,11 @@ function CompleteStep({ config, launching }) {
 
       <div className="card bg-base-200 w-full max-w-sm">
         <div className="card-body p-4 gap-2 text-sm text-left">
+          <div className="flex justify-between gap-4">
+            <span className="text-base-content/60">Queue title</span>
+            <span className="font-semibold text-right break-words">{config.queueTitle || "fifony"}</span>
+          </div>
+          <div className="divider my-0" />
           <div className="flex justify-between">
             <span className="text-base-content/60">Pipeline</span>
             <span className="font-semibold capitalize text-xs font-mono">

@@ -7,10 +7,12 @@ import {
   useProviders,
   useParallelism,
   useProvidersUsage,
+  useSettings,
   useRuntimeWebSocket,
   useTheme,
   usePwa,
   useUiSetting,
+  getSettingsList,
   SETTING_ID_UI_ISSUES_STATE_FILTER,
   SETTING_ID_UI_ISSUES_CATEGORY_FILTER,
   SETTING_ID_UI_ISSUES_COMPLETION_FILTER,
@@ -19,6 +21,7 @@ import {
 } from "../hooks";
 import { useNotifications } from "../hooks/useNotifications";
 import { STATES } from "../utils";
+import { resolveProjectMeta } from "../project-meta.js";
 
 const DashboardContext = createContext(null);
 const EVENT_KINDS = ["all", "info", "state", "progress", "error", "manual", "runner"];
@@ -31,6 +34,7 @@ export function useDashboard() {
 }
 
 export function DashboardProvider({ children }) {
+  const settingsQuery = useSettings();
   const [theme, setTheme] = useTheme();
   const [stateFilter, setStateFilter] = useUiSetting(
     SETTING_ID_UI_ISSUES_STATE_FILTER,
@@ -87,6 +91,10 @@ export function DashboardProvider({ children }) {
   const data = runtime.data || {};
   const issues = Array.isArray(data.issues) ? data.issues : [];
   const metrics = data.metrics || {};
+  const projectMeta = useMemo(
+    () => resolveProjectMeta(getSettingsList(settingsQuery.data), data),
+    [settingsQuery.data, data],
+  );
   const status = liveMode ? "ok" : data.config ? "ok" : "offline";
   const eventsData = liveMode ? eventSnapshot : events.data?.events || [];
 
@@ -239,6 +247,8 @@ export function DashboardProvider({ children }) {
     status, wsStatus, liveMode,
     // Data
     data, issues, filtered, metrics, eventsData, providers, parallelism, providersUsage,
+    projectName: projectMeta.projectName,
+    queueTitle: projectMeta.queueTitle,
     categoryOptions, issueOptions,
     runtime,
     // Filters
@@ -273,6 +283,7 @@ export function DashboardProvider({ children }) {
   }), [
     theme, status, wsStatus, liveMode, data, issues, filtered, metrics, eventsData,
     providers, parallelism, providersUsage, categoryOptions, issueOptions, runtime,
+    projectMeta,
     query, stateFilter, categoryFilter, completionFilter,
     isEventsOpen, eventKind, eventIssueId,
     isCreateOpen, selectedIssue, concurrency, toast, toastExiting, confetti, pwa, notifications,

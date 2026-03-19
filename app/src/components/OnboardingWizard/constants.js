@@ -3,7 +3,7 @@ import { Zap, Gauge, Brain, Flame, Search } from "lucide-react";
 // ── Step labels ───────────────────────────────────────────────────────────────
 
 export const BASE_STEP_LABELS = [
-  "Welcome", "Branch", "Providers", "Scan Project", "Domains",
+  "Welcome", "Project", "Branch", "Providers", "Scan Project", "Domains",
   "Agents & Skills", "Effort", "Workers & Theme", "Launch",
 ];
 
@@ -17,13 +17,13 @@ export function getStepLabels(wantsDiscovery) {
 }
 
 export function getStepCount(wantsDiscovery) {
-  return wantsDiscovery ? 10 : 9;
+  return wantsDiscovery ? 11 : 10;
 }
 
 // ── Stepper labels ────────────────────────────────────────────────────────────
 
 export const BASE_STEPPER_LABELS = [
-  "Branch", "Pipeline", "Scan", "Domains", "Agents",
+  "Project", "Branch", "Pipeline", "Scan", "Domains", "Agents",
   "Effort", "Workers & Theme", "Launch",
 ];
 

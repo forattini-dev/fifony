@@ -3,6 +3,7 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import { Kanban, ListTodo, Activity, Bot, TrendingUp, Sliders } from "lucide-react";
 import { timeAgo } from "../utils.js";
 import NotificationCenter from "./NotificationCenter.jsx";
+import { buildQueueTitle } from "../project-meta.js";
 
 const NAV_ITEMS = [
   { to: "/kanban", label: "Kanban", icon: Kanban },
@@ -81,17 +82,28 @@ function displayRepoName(sourceRepo) {
   return name;
 }
 
-export function Header({ issueCount, sourceRepo, updatedAt, onToggleEvents, eventsOpen, wsStatus, notifications, issues }) {
+export function Header({ issueCount, sourceRepo, queueTitle, updatedAt, onToggleEvents, eventsOpen, wsStatus, notifications, issues }) {
   const routerState = useRouterState();
   const currentPath = routerState.location.pathname;
   const navRef = useRef(null);
   const repoDisplay = displayRepoName(sourceRepo);
+  const title = queueTitle || "fifony";
+  const repoSubtitle = repoDisplay && title !== buildQueueTitle(repoDisplay) ? repoDisplay : null;
 
   return (
     <div className="navbar bg-base-100 shadow-sm px-4">
-      <div className="flex-1 gap-2">
-        <Link to="/" className="btn btn-ghost text-xl font-bold tracking-tight" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", letterSpacing: '-0.02em', fontWeight: 800 }}>fifony</Link>
-        {repoDisplay && <span className="text-xs opacity-40 hidden lg:inline">{repoDisplay}</span>}
+      <div className="flex-1 min-w-0 gap-2">
+        <div className="min-w-0">
+          <Link
+            to="/"
+            className="btn btn-ghost px-2 text-lg sm:text-xl font-bold tracking-tight max-w-full"
+            title={title}
+            style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", letterSpacing: "-0.02em", fontWeight: 800 }}
+          >
+            <span className="truncate">{title}</span>
+          </Link>
+          {repoSubtitle && <div className="text-xs opacity-40 hidden lg:block truncate px-2">{repoSubtitle}</div>}
+        </div>
       </div>
 
       <div className="flex-none hidden md:flex">

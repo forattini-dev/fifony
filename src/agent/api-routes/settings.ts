@@ -4,6 +4,7 @@ import { now, clamp } from "../helpers.ts";
 import { addEvent } from "../issues.ts";
 import { persistState } from "../store.ts";
 import { detectAvailableProviders, discoverModels } from "../providers.ts";
+import { resolveProjectMetadata, SETTING_ID_PROJECT_NAME } from "../project-meta.ts";
 import {
   applyPersistedSettings,
   buildDefaultWorkflowConfig,
@@ -60,6 +61,17 @@ export function registerSettingsRoutes(
       scope: scopeValue as RuntimeSettingScope,
       source: sourceValue as RuntimeSettingSource,
     });
+    if (settingId === SETTING_ID_PROJECT_NAME) {
+      const settings = await loadRuntimeSettings();
+      const projectMetadata = resolveProjectMetadata(settings, state.sourceRepoUrl);
+      state.projectName = projectMetadata.projectName;
+      state.detectedProjectName = projectMetadata.detectedProjectName;
+      state.projectNameSource = projectMetadata.projectNameSource;
+      state.queueTitle = projectMetadata.queueTitle;
+      state.updatedAt = now();
+      addEvent(state, undefined, "manual", `Project title updated to ${projectMetadata.queueTitle}.`);
+      await persistState(state);
+    }
     if (RUNTIME_CONFIG_SETTING_IDS.has(settingId)) {
       state.config = applyPersistedSettings(state.config, [setting]);
       state.updatedAt = now();

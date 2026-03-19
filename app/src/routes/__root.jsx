@@ -30,6 +30,10 @@ function RootLayout() {
   const navigate = useNavigate();
   const [shortcutsHelpOpen, setShortcutsHelpOpen] = useState(false);
 
+  useEffect(() => {
+    document.title = ctx.queueTitle || "fifony";
+  }, [ctx.queueTitle]);
+
   const closeAllDrawers = useCallback(() => {
     ctx.setIsCreateOpen(false);
     ctx.setSelectedIssue(null);
@@ -80,6 +84,7 @@ function RootLayout() {
 
       <Header
         issueCount={ctx.issues.length}
+        queueTitle={ctx.queueTitle}
         sourceRepo={ctx.data.sourceRepoUrl}
         updatedAt={ctx.data.updatedAt}
         wsStatus={ctx.wsStatus}

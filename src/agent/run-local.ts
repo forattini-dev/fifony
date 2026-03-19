@@ -11,6 +11,7 @@ import {
   persistDetectedProvidersSetting,
   syncRuntimeConfigSettings,
 } from "./settings.ts";
+import { buildQueueTitle, detectProjectName, resolveProjectMetadata } from "./project-meta.ts";
 import {
   detectAvailableProviders,
   resolveDefaultProvider,
@@ -25,6 +26,7 @@ import { startDevFrontend } from "./dev-server.ts";
 import { recoverPlanningSession } from "./issue-planner.ts";
 import { hydrate as hydrateTokenLedger } from "./token-ledger.ts";
 import { detectDefaultBranch } from "./workspace-setup.ts";
+import type { RuntimeState } from "./types.ts";
 
 function usage() {
   console.log(
@@ -92,6 +94,7 @@ async function main() {
 
   const dashboardPort = port ?? (config.dashboardPort ? Number.parseInt(config.dashboardPort, 10) : undefined);
   const skipRecovery = args.includes("--skip-recovery") || args.includes("--fast-boot");
+  const detectedProjectName = detectProjectName(TARGET_ROOT);
 
   // ── Phase B: Parallel initialization ────────────────────────────────────────
   debugBoot("main:phase-b-start");
@@ -103,15 +106,19 @@ async function main() {
   // ── Early API start: dashboard available while boot continues ─────────────
   // Build a minimal placeholder state for the early API server
   const earlyState: RuntimeState = {
+    projectName: detectedProjectName,
+    detectedProjectName,
+    projectNameSource: detectedProjectName ? "detected" : "missing",
+    queueTitle: buildQueueTitle(detectedProjectName),
     startedAt: now(),
     updatedAt: now(),
     trackerKind: "filesystem",
-    sourceRepoUrl: "",
+    sourceRepoUrl: TARGET_ROOT,
     sourceRef: "workspace",
     config,
     issues: [],
     events: [],
-    metrics: { total: 0, queued: 0, inProgress: 0, blocked: 0, done: 0, cancelled: 0, activeWorkers: 0 },
+    metrics: { total: 0, planning: 0, queued: 0, inProgress: 0, blocked: 0, done: 0, cancelled: 0, activeWorkers: 0 },
     notes: [],
     booting: true,
   };
@@ -141,7 +148,8 @@ async function main() {
 
   config = applyPersistedSettings(config, persistedSettings);
   await syncRuntimeConfigSettings(config, persistedSettings);
-  const state = buildRuntimeState(previous, config);
+  const projectMetadata = resolveProjectMetadata(persistedSettings, TARGET_ROOT);
+  const state = buildRuntimeState(previous, config, projectMetadata);
   debugBoot("main:state-merged");
 
   state.config.dashboardPort = dashboardPort ? String(dashboardPort) : undefined;

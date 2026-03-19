@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api";
 import { useSettings, getSettingsList, getSettingValue, SETTINGS_QUERY_KEY, upsertSettingPayload } from "../../hooks";
+import { PROJECT_SETTING_ID, buildQueueTitle, normalizeProjectName, resolveProjectMeta } from "../../project-meta.js";
 import Confetti from "../Confetti";
 import OnboardingParticles from "../OnboardingParticles";
 import { ChevronRight } from "lucide-react";
@@ -14,6 +15,7 @@ import StepIndicator from "./steps/StepIndicator";
 import StepContent from "./steps/StepContent";
 import WizardNavFooter from "./steps/WizardNavFooter";
 import WelcomeStep from "./steps/WelcomeStep";
+import ProjectStep from "./steps/ProjectStep";
 import BranchStep from "./steps/BranchStep";
 import PipelineStep from "./steps/PipelineStep";
 import ScanProjectStep from "./steps/ScanProjectStep";
@@ -36,6 +38,7 @@ export default function OnboardingWizard({ onComplete }) {
   const [launching, setLaunching] = useState(false);
   const [confetti, setConfetti] = useState(null);
   const hydratedRef = useRef(false);
+  const projectHydratedRef = useRef(false);
 
   // Config state
   const [pipeline, setPipeline] = useState({ planner: "", executor: "", reviewer: "" });
@@ -47,6 +50,9 @@ export default function OnboardingWizard({ onComplete }) {
   const [scanResult, setScanResult] = useState(null);
   const [analysisResult, setAnalysisResult] = useState(null);
   const [projectDescription, setProjectDescription] = useState("");
+  const [projectName, setProjectNameState] = useState("");
+  const [projectSource, setProjectSource] = useState("missing");
+  const [runtimeSnapshot, setRuntimeSnapshot] = useState(null);
   const [selectedDomains, setSelectedDomains] = useState([]);
   const [selectedAgents, setSelectedAgents] = useState([]);
   const [selectedSkills, setSelectedSkills] = useState([]);
@@ -72,10 +78,13 @@ export default function OnboardingWizard({ onComplete }) {
   // Load workspace path and branch on mount
   useEffect(() => {
     api.get("/state").then((data) => {
+      setRuntimeSnapshot(data || {});
       const path = data?.sourceRepoUrl || data?.config?.sourceRepo || "";
       setWorkspacePath(path);
       setDefaultBranch(data?.config?.defaultBranch || "");
-    }).catch(() => {});
+    }).catch(() => {
+      setRuntimeSnapshot({});
+    });
   }, []);
 
   useEffect(() => {
@@ -105,9 +114,30 @@ export default function OnboardingWizard({ onComplete }) {
     }
   }, [settings, settingsQuery.isLoading]);
 
-  // Fetch providers (and models) when reaching step 1
   useEffect(() => {
-    if (step === 1 && providers === null) {
+    if (projectHydratedRef.current || settingsQuery.isLoading || runtimeSnapshot === null) return;
+    projectHydratedRef.current = true;
+
+    const projectMeta = resolveProjectMeta(settings, runtimeSnapshot);
+    setProjectNameState(projectMeta.projectName);
+    setProjectSource(projectMeta.source);
+  }, [runtimeSnapshot, settings, settingsQuery.isLoading]);
+
+  const setProjectName = useCallback((value) => {
+    setProjectNameState(value);
+    setProjectSource("manual");
+  }, []);
+
+  const normalizedProjectName = normalizeProjectName(projectName);
+  const queueTitle = buildQueueTitle(normalizedProjectName);
+
+  useEffect(() => {
+    document.title = buildQueueTitle(normalizedProjectName || runtimeSnapshot?.detectedProjectName || runtimeSnapshot?.projectName || "");
+  }, [normalizedProjectName, runtimeSnapshot]);
+
+  // Fetch providers (and models) shortly before the pipeline step
+  useEffect(() => {
+    if (step >= 2 && providers === null) {
       setProvidersLoading(true);
       Promise.all([
         api.get("/providers"),
@@ -151,7 +181,7 @@ export default function OnboardingWizard({ onComplete }) {
         setProvidersLoading(false);
       });
     }
-  }, [step]);
+  }, [step, providers]);
 
   // Apply theme preview immediately
   useEffect(() => {
@@ -163,7 +193,11 @@ export default function OnboardingWizard({ onComplete }) {
 
   // Save settings progressively as user advances
   const saveStepSettings = useCallback((currentStepName) => {
-    if (currentStepName === "Providers") {
+    if (currentStepName === "Project") {
+      if (normalizedProjectName) {
+        saveSetting(PROJECT_SETTING_ID, normalizedProjectName, "system").catch(() => {});
+      }
+    } else if (currentStepName === "Providers") {
       // Save pipeline as providers array + primary provider
       const pipelineProviders = [
         { provider: pipeline.planner, role: "planner" },
@@ -182,7 +216,7 @@ export default function OnboardingWizard({ onComplete }) {
       saveSetting("ui.theme", selectedTheme, "ui").catch(() => {});
       api.post("/config/concurrency", { concurrency }).catch(() => {});
     }
-  }, [pipeline, efforts, models, concurrency, selectedTheme]);
+  }, [pipeline, efforts, models, concurrency, selectedTheme, normalizedProjectName]);
 
   const goNext = useCallback(() => {
     if (step < STEP_COUNT - 1) {
@@ -200,10 +234,12 @@ export default function OnboardingWizard({ onComplete }) {
   }, [step]);
 
   const handleLaunch = useCallback(async () => {
+    if (!normalizedProjectName) return;
     setLaunching(true);
     try {
       // Save all settings in parallel
       const saves = [
+        saveSetting(PROJECT_SETTING_ID, normalizedProjectName, "system"),
         saveSetting("ui.theme", selectedTheme, "ui"),
         saveSetting("ui.onboarding.completed", true, "ui"),
       ];
@@ -234,6 +270,13 @@ export default function OnboardingWizard({ onComplete }) {
 
       // Optimistically update settings cache so OnboardingGate immediately sees completed=true
       qc.setQueryData(SETTINGS_QUERY_KEY, (current) => upsertSettingPayload(current, {
+        id: PROJECT_SETTING_ID,
+        scope: "system",
+        value: normalizedProjectName,
+        source: "user",
+        updatedAt: new Date().toISOString(),
+      }));
+      qc.setQueryData(SETTINGS_QUERY_KEY, (current) => upsertSettingPayload(current, {
         id: "ui.onboarding.completed",
         scope: "ui",
         value: true,
@@ -250,6 +293,13 @@ export default function OnboardingWizard({ onComplete }) {
     } catch {
       // Even on error, mark as done so user isn't stuck
       qc.setQueryData(SETTINGS_QUERY_KEY, (current) => upsertSettingPayload(current, {
+        id: PROJECT_SETTING_ID,
+        scope: "system",
+        value: normalizedProjectName,
+        source: "user",
+        updatedAt: new Date().toISOString(),
+      }));
+      qc.setQueryData(SETTINGS_QUERY_KEY, (current) => upsertSettingPayload(current, {
         id: "ui.onboarding.completed",
         scope: "ui",
         value: true,
@@ -260,11 +310,12 @@ export default function OnboardingWizard({ onComplete }) {
       qc.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
       onComplete?.();
     }
-  }, [pipeline, efforts, models, concurrency, selectedTheme, selectedAgents, selectedSkills, qc, onComplete]);
+  }, [normalizedProjectName, pipeline, efforts, models, concurrency, selectedTheme, selectedAgents, selectedSkills, qc, onComplete]);
 
   // Can proceed from step
   const canProceed =
     stepName === "Welcome" ||
+    (stepName === "Project" && Boolean(normalizedProjectName)) ||
     stepName === "Branch" ||
     (stepName === "Providers" && (pipeline.executor || providersLoading)) ||
     stepName === "Scan Project" ||
@@ -279,6 +330,8 @@ export default function OnboardingWizard({ onComplete }) {
   const existingSkills = (scanResult?.existingSkills || []).map((s) => typeof s === "string" ? { name: s } : s);
 
   const config = {
+    projectName: normalizedProjectName,
+    queueTitle,
     pipeline,
     efforts,
     concurrency,
@@ -305,8 +358,17 @@ export default function OnboardingWizard({ onComplete }) {
 
       {/* Step content area */}
       <div className="relative z-10 flex-1 flex flex-col items-center justify-start px-4 py-6 overflow-y-auto">
-        <StepContent direction={direction} stepKey={step} center={stepName === "Welcome" || stepName === "Branch" || stepName === "Providers" || stepName === "Launch"}>
+        <StepContent direction={direction} stepKey={step} center={stepName === "Welcome" || stepName === "Project" || stepName === "Branch" || stepName === "Providers" || stepName === "Launch"}>
           {stepName === "Welcome" && <WelcomeStep workspacePath={workspacePath} onGetStarted={goNext} />}
+          {stepName === "Project" && (
+            <ProjectStep
+              projectName={projectName}
+              setProjectName={setProjectName}
+              detectedProjectName={runtimeSnapshot?.detectedProjectName || ""}
+              projectSource={projectSource}
+              workspacePath={workspacePath}
+            />
+          )}
           {stepName === "Branch" && (
             <BranchStep
               currentBranch={defaultBranch}
