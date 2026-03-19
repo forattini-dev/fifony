@@ -56,11 +56,11 @@ function RoleEffortSelector({ role, title, description, providerName, value, onC
             className="range range-primary range-sm w-full"
             step={1}
           />
-          <div className="flex justify-between mt-1 px-0.5">
+          <div className="flex justify-between px-2.5 mt-1 text-[10px]">
             {options.map((opt) => (
               <span
                 key={`${role}-tick-${opt.value}`}
-                className={`text-[10px] ${opt.value === current.value ? current.color + " font-semibold" : "text-base-content/30"}`}
+                className={opt.value === current.value ? current.color + " font-semibold" : "text-base-content/30"}
               >
                 {opt.label}
               </span>

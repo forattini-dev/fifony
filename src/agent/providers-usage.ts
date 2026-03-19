@@ -418,11 +418,32 @@ function collectGeminiUsage(): ProviderUsage | null {
   const weekStart = computeWeekStart();
   const nextResetAt = computeNextMonday().toISOString();
 
-  const models: ModelInfo[] = [
-    { slug: "gemini-2.5-pro",   displayName: "Gemini 2.5 Pro",   description: "Most capable model" },
-    { slug: "gemini-2.5-flash", displayName: "Gemini 2.5 Flash", description: "Balanced performance" },
-    { slug: "gemini-2.0-flash", displayName: "Gemini 2.0 Flash", description: "Fast and efficient" },
-  ];
+  // Read models from the installed CLI package (same source as discoverModels)
+  const models: ModelInfo[] = [];
+  try {
+    const { execFileSync: exec } = await import("node:child_process");
+    const { realpathSync } = await import("node:fs");
+    const { dirname: dn } = await import("node:path");
+    const binPath = exec("which", ["gemini"], { encoding: "utf8", timeout: 3000 }).trim();
+    const realBin = realpathSync(binPath);
+    const modelsPath = join(dn(dn(realBin)), "node_modules", "@google", "gemini-cli-core", "dist", "src", "config", "models.js");
+    if (existsSync(modelsPath)) {
+      const content = readFileSync(modelsPath, "utf8");
+      const regex = /export const ([A-Z0-9_]+)\s*=\s*'(gemini-[^']+)';/g;
+      const seen = new Set<string>();
+      let m: RegExpExecArray | null;
+      while ((m = regex.exec(content)) !== null) {
+        const [, constName, slug] = m;
+        if (seen.has(slug) || slug.includes("embedding")) continue;
+        seen.add(slug);
+        models.push({
+          slug,
+          displayName: slug,
+          description: constName.startsWith("PREVIEW_") ? "Preview" : "Stable",
+        });
+      }
+    }
+  } catch { /* fall through — models stays empty */ }
 
   let currentModel = "";
   const settingsPath = join(homedir(), ".gemini", "settings.json");

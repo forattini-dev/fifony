@@ -1,6 +1,6 @@
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import type {
   AgentProviderDefinition,
@@ -201,28 +201,81 @@ function readClaudeConfig(): { model?: string } {
 }
 
 /**
- * Read the user's configured default model from ~/.gemini/settings.json.
+ * Read the user's config from ~/.gemini/settings.json.
+ * Returns the configured model (if any) and whether preview features are enabled.
  */
-export function readGeminiConfig(): { model?: string } {
+export function readGeminiConfig(): { model?: string; previewFeatures?: boolean } {
   try {
     const settingsPath = join(homedir(), ".gemini", "settings.json");
     if (!existsSync(settingsPath)) return {};
     const raw = readFileSync(settingsPath, "utf8");
-    const settings = JSON.parse(raw) as { model?: string; selectedAuthType?: string };
-    return { model: typeof settings.model === "string" ? settings.model : undefined };
+    const settings = JSON.parse(raw) as {
+      model?: string;
+      general?: { previewFeatures?: boolean };
+    };
+    return {
+      model: typeof settings.model === "string" ? settings.model : undefined,
+      previewFeatures: settings.general?.previewFeatures === true,
+    };
   } catch {
     return {};
   }
 }
 
+/**
+ * Find the models.js file from the installed @google/gemini-cli package.
+ *
+ * Strategy: resolve the `gemini` symlink → get real path of dist/index.js
+ * → navigate to node_modules/@google/gemini-cli-core/dist/src/config/models.js
+ * This is always in sync with whatever version of the CLI is installed.
+ */
+function resolveGeminiModelsFile(): string | null {
+  try {
+    const binPath = execFileSync("which", ["gemini"], { encoding: "utf8", timeout: 3000 }).trim();
+    if (!binPath) return null;
+    // Resolve the symlink: bin/gemini → .../node_modules/@google/gemini-cli/dist/index.js
+    const realBin = realpathSync(binPath);
+    // Go up: dist/index.js → dist → @google/gemini-cli
+    const cliRoot = dirname(dirname(realBin));
+    const modelsPath = join(cliRoot, "node_modules", "@google", "gemini-cli-core", "dist", "src", "config", "models.js");
+    return existsSync(modelsPath) ? modelsPath : null;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchGeminiModels(): Promise<DiscoveredModel[]> {
-  // Gemini CLI does not cache a local models file like Codex does.
-  // Return the well-known stable model aliases — always valid.
-  return [
-    { id: "gemini-2.5-pro",    provider: "gemini", label: "gemini-2.5-pro (latest)",   tier: "Most capable" },
-    { id: "gemini-2.5-flash",  provider: "gemini", label: "gemini-2.5-flash (latest)",  tier: "Balanced" },
-    { id: "gemini-2.0-flash",  provider: "gemini", label: "gemini-2.0-flash (latest)",  tier: "Fast" },
-  ];
+  const modelsPath = resolveGeminiModelsFile();
+  if (!modelsPath) return [];
+
+  try {
+    const content = readFileSync(modelsPath, "utf8");
+
+    // Parse `export const SOME_CONST = 'gemini-...'` lines
+    const regex = /export const ([A-Z0-9_]+)\s*=\s*'(gemini-[^']+)';/g;
+    const seen = new Set<string>();
+    const stable: DiscoveredModel[] = [];
+    const preview: DiscoveredModel[] = [];
+
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(content)) !== null) {
+      const [, constName, modelId] = match;
+      if (seen.has(modelId)) continue;
+      if (modelId.includes("embedding")) continue;
+      seen.add(modelId);
+
+      const isPreview = constName.startsWith("PREVIEW_");
+      const tier = isPreview ? "Preview" : "Stable";
+      const model: DiscoveredModel = { id: modelId, provider: "gemini", label: modelId, tier };
+      if (isPreview) preview.push(model);
+      else stable.push(model);
+    }
+
+    // Stable models first, preview models after
+    return [...stable, ...preview];
+  } catch {
+    return [];
+  }
 }
 
 async function fetchCodexModels(): Promise<DiscoveredModel[]> {
@@ -351,13 +404,20 @@ export async function discoverModels(providers: DetectedProvider[]): Promise<Rec
     }
 
     if (tasks[i].name === "gemini") {
-      const { model: configuredModel } = readGeminiConfig();
+      const { model: configuredModel, previewFeatures } = readGeminiConfig();
       if (configuredModel) {
+        // Explicit model configured — promote it to top
         const idx = models.findIndex((m) => m.id === configuredModel);
         if (idx > 0) {
           models = [models[idx], ...models.slice(0, idx), ...models.slice(idx + 1)];
         } else if (idx === -1) {
           models = [{ id: configuredModel, provider: "gemini", label: configuredModel, tier: "Configured default" }, ...models];
+        }
+      } else if (previewFeatures) {
+        // No explicit model, but preview features enabled → promote the first preview model to top
+        const previewIdx = models.findIndex((m) => m.tier === "Preview");
+        if (previewIdx > 0) {
+          models = [models[previewIdx], ...models.slice(0, previewIdx), ...models.slice(previewIdx + 1)];
         }
       }
     }
