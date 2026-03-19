@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { IssuePlan, RuntimeConfig, WorkflowDefinition, IssueEntry, AgentTokenUsage } from "./types.ts";
+import type { IssuePlan, RuntimeConfig, IssueEntry, AgentTokenUsage } from "./types.ts";
 import { appendFileTail, now } from "./helpers.ts";
 import { detectAvailableProviders } from "./providers.ts";
 import { getWorkflowConfig, loadRuntimeSettings } from "./settings.ts";
@@ -11,7 +11,7 @@ import { record as recordTokens } from "./token-ledger.ts";
 import { STATE_ROOT } from "./constants.ts";
 import { type PlanningSessionUsage } from "./planning-session.ts";
 import { parsePlanOutput, tryBuildPlan, extractPlanTokenUsage } from "./planning-parser.ts";
-import { buildRefinePrompt, getPlanCommand, generatePlanViaOpenAI } from "./planning-prompts.ts";
+import { buildRefinePrompt, getPlanCommand } from "./planning-prompts.ts";
 
 // ── Debug helpers ─────────────────────────────────────────────────────────────
 
@@ -40,7 +40,7 @@ export async function refinePlan(
   issue: IssueEntry,
   feedback: string,
   config: RuntimeConfig,
-  workflowDefinition: WorkflowDefinition | null,
+  _workflowDefinition: null,
 ): Promise<RefinePlanResult> {
   if (!issue.plan) throw new Error("Issue has no plan to refine.");
 
@@ -63,10 +63,15 @@ export async function refinePlan(
     // Fall through to default provider selection
   }
 
-  const preferred = planStageProvider && available.includes(planStageProvider)
-    ? planStageProvider
-    : available.includes("claude") ? "claude" : available[0];
+  const configuredProvider = planStageProvider && available.includes(planStageProvider) ? planStageProvider : null;
+  const preferred = (configuredProvider && configuredProvider !== "codex")
+    ? configuredProvider
+    : available.includes("claude") ? "claude"
+    : available[0];
   if (!preferred) throw new Error("No AI provider available for plan refinement.");
+
+  // If provider changed (e.g. codex → claude), discard the provider-specific model
+  if (preferred !== configuredProvider) planStageModel = undefined;
 
   const refineStartMs = Date.now();
   const prompt = await buildRefinePrompt(issue.title, issue.description, issue.plan, feedback);
@@ -74,37 +79,8 @@ export async function refinePlan(
   let plan: IssuePlan | null = null;
   let refineUsage: PlanningSessionUsage;
 
-  // ── Codex provider: call OpenAI API directly (structured output support) ──
-  if (preferred === "codex") {
-    logger.debug({ provider: preferred, model: planStageModel, effort: planStageEffort }, "[Planner] Using OpenAI API path for Codex refinement");
-
-    try {
-      const apiResult = await generatePlanViaOpenAI(prompt, planStageModel, planStageEffort);
-      const durationMs = Date.now() - refineStartMs;
-      apiResult.usage.durationMs = durationMs;
-
-      logger.info({ rawOutput: apiResult.content.slice(0, 2000) }, `Refine raw output from ${preferred} (API)`);
-      savePlanDebugFiles("refine-api", prompt, apiResult.content);
-
-      plan = parsePlanOutput(apiResult.content);
-      if (!plan) {
-        try {
-          const directParsed = JSON.parse(apiResult.content);
-          plan = tryBuildPlan(directParsed);
-        } catch {
-          // Fall through to error handling below
-        }
-      }
-
-      refineUsage = apiResult.usage;
-      refineUsage.model = apiResult.model;
-    } catch (err) {
-      logger.error({ err }, "[Planner] OpenAI API call failed for plan refinement");
-      throw new Error(`OpenAI API call failed for plan refinement: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-  // ── Claude/other providers: spawn CLI process ──
-  else {
+  // ── All providers: spawn CLI process ──
+  {
     const command = getPlanCommand(preferred, planStageModel);
     if (!command) throw new Error(`No command configured for provider ${preferred}.`);
 

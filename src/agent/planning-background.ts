@@ -1,4 +1,4 @@
-import type { IssuePlan, RuntimeConfig, WorkflowDefinition, IssueEntry } from "./types.ts";
+import type { IssuePlan, RuntimeConfig, IssueEntry } from "./types.ts";
 import { now } from "./helpers.ts";
 import { logger } from "./logger.ts";
 import { type PlanningSessionUsage } from "./planning-session.ts";
@@ -21,7 +21,7 @@ export type PlanCallbacks = {
 export function generatePlanInBackground(
   issue: IssueEntry,
   config: RuntimeConfig,
-  workflowDefinition: WorkflowDefinition | null,
+  _workflowDefinition: null,
   callbacks: PlanCallbacks,
   options?: { fast?: boolean },
 ): void {
@@ -36,7 +36,7 @@ export function generatePlanInBackground(
   addEvent(issue.id, "info", `${fast ? "Fast plan" : "Plan"} generation starting for ${issue.identifier} (provider detection in progress).`);
 
   // Fire-and-forget — errors are caught and stored on the issue
-  generatePlan(issue.title, issue.description, config, workflowDefinition, { fast })
+  generatePlan(issue.title, issue.description, config, null, { fast })
     .then(async ({ plan, usage }) => {
       issue.plan = plan;
       issue.planningStatus = "idle";
@@ -72,7 +72,7 @@ export function refinePlanInBackground(
   issue: IssueEntry,
   feedback: string,
   config: RuntimeConfig,
-  workflowDefinition: WorkflowDefinition | null,
+  _workflowDefinition: null,
   callbacks: PlanCallbacks,
 ): void {
   const { addEvent, persistState, applyUsage, applySuggestions } = callbacks;
@@ -85,7 +85,7 @@ export function refinePlanInBackground(
   const feedbackSnippet = feedback.length > 60 ? `${feedback.slice(0, 57)}...` : feedback;
   addEvent(issue.id, "info", `Plan refinement starting for ${issue.identifier}: "${feedbackSnippet}".`);
 
-  refinePlan(issue, feedback, config, workflowDefinition)
+  refinePlan(issue, feedback, config, null)
     .then(async ({ plan, usage }) => {
       issue.plan = plan;
       issue.planningStatus = "idle";

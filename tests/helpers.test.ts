@@ -230,7 +230,7 @@ describe("clamp", () => {
 // ── normalizeState() ──────────────────────────────────────────────────────────
 
 describe("normalizeState", () => {
-  const validStates = ["Planning", "Todo", "Queued", "Running", "Interrupted", "In Review", "Blocked", "Done", "Cancelled"];
+  const validStates = ["Planning", "Planned", "Queued", "Running", "Reviewing", "Reviewed", "Blocked", "Done", "Cancelled"];
 
   for (const state of validStates) {
     it(`passes through valid state: ${state}`, () => {
@@ -238,21 +238,21 @@ describe("normalizeState", () => {
     });
   }
 
-  it("returns 'Todo' for unknown state", () => {
-    assert.equal(normalizeState("Unknown"), "Todo");
+  it("returns 'Planning' for unknown state", () => {
+    assert.equal(normalizeState("Unknown"), "Planning");
   });
 
-  it("returns 'Todo' for empty string", () => {
-    assert.equal(normalizeState(""), "Todo");
+  it("returns 'Planning' for empty string", () => {
+    assert.equal(normalizeState(""), "Planning");
   });
 
-  it("returns 'Todo' for non-string", () => {
-    assert.equal(normalizeState(null), "Todo");
-    assert.equal(normalizeState(42), "Todo");
+  it("returns 'Planning' for non-string", () => {
+    assert.equal(normalizeState(null), "Planning");
+    assert.equal(normalizeState(42), "Planning");
   });
 
   it("is case-sensitive (lowercase fails)", () => {
-    assert.equal(normalizeState("todo"), "Todo");
+    assert.equal(normalizeState("planned"), "Planning");
   });
 });
 

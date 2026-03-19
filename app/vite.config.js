@@ -54,6 +54,15 @@ export default defineConfig(({ command }) => ({
       },
     },
   },
+  optimizeDeps: {
+    include: [
+      "react",
+      "react-dom",
+      "react-dom/client",
+      "@tanstack/react-query",
+      "@tanstack/react-router",
+    ],
+  },
   resolve: {
     dedupe: ["react", "react-dom", "@tanstack/react-query", "@tanstack/react-router"],
   },
@@ -61,7 +70,20 @@ export default defineConfig(({ command }) => ({
     port: 5173,
     host: true,
     proxy: {
-      "/api": "http://localhost:4000",
+      "/api": {
+        target: "http://localhost:4000",
+        changeOrigin: false,
+        // Allow SSE (text/event-stream) to flow without buffering
+        configure: (proxy) => {
+          proxy.on("proxyRes", (proxyRes) => {
+            const ct = proxyRes.headers["content-type"] || "";
+            if (ct.includes("text/event-stream")) {
+              proxyRes.headers["cache-control"] = "no-cache";
+              proxyRes.headers["x-accel-buffering"] = "no";
+            }
+          });
+        },
+      },
       "/ws": { target: "ws://localhost:4000", ws: true },
       "/docs": "http://localhost:4000",
       "/health": "http://localhost:4000",

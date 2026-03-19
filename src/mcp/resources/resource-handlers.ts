@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { discoverIntegrations } from "../../integrations/catalog.js";
 import { inferCapabilityPaths, resolveTaskCapabilities } from "../../routing/capability-resolver.js";
 import {
@@ -12,7 +11,6 @@ import { apiGet } from "../api-client.js";
 import {
   buildIntegrationGuide,
   buildStateSummary,
-  WORKFLOW_PATH,
   README_PATH,
   FIFONY_GUIDE_PATH,
 } from "./resource-builder.js";
@@ -28,10 +26,6 @@ export async function listResourcesMcp(): Promise<Array<Record<string, unknown>>
     { uri: "fifony://integrations", name: "Fifony integrations", description: "Discovered local integrations such as agency-agents and impeccable skills.", mimeType: "application/json" },
     { uri: "fifony://capabilities", name: "Fifony capability routing", description: "How Fifony would route current issues to providers, profiles, and overlays.", mimeType: "application/json" },
   ];
-
-  if (existsSync(WORKFLOW_PATH)) {
-    resources.push({ uri: "fifony://workspace/workflow", name: "Workspace workflow", description: "The active WORKFLOW.md from the target workspace.", mimeType: "text/markdown" });
-  }
 
   resources.push(
     { uri: "fifony://analytics", name: "Token usage analytics", description: "Token usage analytics snapshot including totals, cost estimates, and per-model breakdown.", mimeType: "application/json" },
@@ -89,8 +83,6 @@ export async function readResource(uri: string): Promise<Array<Record<string, un
       ),
     }];
   }
-
-  if (uri === "fifony://workspace/workflow") return [{ uri, mimeType: "text/markdown", text: safeRead(WORKFLOW_PATH) }];
 
   if (uri === "fifony://analytics") {
     try {

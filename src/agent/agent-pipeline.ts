@@ -8,7 +8,6 @@ import type {
   IssueEntry,
   RuntimeState,
   WorkflowConfig,
-  WorkflowDefinition,
 } from "./types.ts";
 import { now, clamp } from "./helpers.ts";
 import { logger } from "./logger.ts";
@@ -62,7 +61,11 @@ export async function runAgentSession(
     return { success: false, blocked: true, continueRequested: false, code: lastCode, output: session.lastOutput, turns: session.turns.length };
   }
 
-  const turnPrompt = await buildTurnPrompt(issue, basePromptText, previousOutput, turnIndex, maxTurns, nextPrompt);
+  const maxOutputChars = state.config.maxPreviousOutputChars;
+  const compactedOutput = previousOutput.length > maxOutputChars
+    ? `[...${previousOutput.length - maxOutputChars} chars truncated...]\n${previousOutput.slice(-maxOutputChars)}`
+    : previousOutput;
+  const turnPrompt = await buildTurnPrompt(issue, basePromptText, compactedOutput, turnIndex, maxTurns, nextPrompt);
   const turnPromptFile = turnIndex === 1
     ? basePromptFile
     : join(workspacePath, `turn-${String(turnIndex).padStart(2, "0")}.md`);
@@ -88,24 +91,23 @@ export async function runAgentSession(
     FIFONY_TURN_PROMPT: turnPrompt,
     FIFONY_TURN_PROMPT_FILE: turnPromptFile,
     FIFONY_CONTINUE: turnIndex > 1 ? "1" : "0",
-    FIFONY_PREVIOUS_OUTPUT: previousOutput,
+    FIFONY_PREVIOUS_OUTPUT: compactedOutput,
     FIFONY_RESULT_FILE: resultFile,
     FIFONY_AGENT_PROFILE: provider.profile,
     FIFONY_AGENT_PROFILE_FILE: provider.profilePath,
     FIFONY_AGENT_PROFILE_INSTRUCTIONS: provider.profileInstructions,
   };
 
-  const workflowDefinition = state._workflowDefinition as WorkflowDefinition | null | undefined;
-  if (workflowDefinition?.beforeRunHook) {
-    await runHook(workflowDefinition.beforeRunHook, workspacePath, issue, "before_run", turnEnv);
+  if (state.config.beforeRunHook) {
+    await runHook(state.config.beforeRunHook, workspacePath, issue, "before_run", turnEnv);
   }
 
   addEvent(state, issue.id, "runner", `Turn ${turnIndex}/${maxTurns} started for ${issue.identifier}.`);
 
   const turnResult = await runCommandWithTimeout(provider.command, workspacePath, issue, state.config, turnPrompt, turnPromptFile, turnEnv);
 
-  if (workflowDefinition?.afterRunHook) {
-    await runHook(workflowDefinition.afterRunHook, workspacePath, issue, "after_run", {
+  if (state.config.afterRunHook) {
+    await runHook(state.config.afterRunHook, workspacePath, issue, "after_run", {
       ...turnEnv,
       FIFONY_LAST_EXIT_CODE: String(turnResult.code ?? ""),
       FIFONY_LAST_OUTPUT: turnResult.output,
@@ -199,10 +201,9 @@ export async function runAgentPipeline(
   workspacePath: string,
   basePromptText: string,
   basePromptFile: string,
-  workflowDefinition: WorkflowDefinition | null,
   workflowConfig?: WorkflowConfig | null,
 ): Promise<AgentSessionResult> {
-  const providers = getEffectiveAgentProviders(state, issue, workflowDefinition, workflowConfig);
+  const providers = getEffectiveAgentProviders(state, issue, null, workflowConfig);
   const attempt = issue.attempts + 1;
   logger.debug({ issueId: issue.id, identifier: issue.identifier, attempt, providers: providers.map((p) => `${p.role}:${p.provider}`) }, "[Agent] Starting pipeline");
   const { pipeline, key: pipelineFile } = await loadAgentPipelineState(issue, attempt, providers);
@@ -246,9 +247,6 @@ export async function runAgentPipeline(
 
   pipeline.history.push(`[${now()}] Running ${effectiveProvider.role}:${effectiveProvider.provider} in cycle ${pipeline.cycle}${compiled ? ` [${compiled.meta.adapter} adapter]` : ""}.`);
   await persistAgentPipelineState(pipelineFile, pipeline);
-
-  // Attach workflowDefinition to state for session hooks
-  (state as any)._workflowDefinition = workflowDefinition;
 
   const result = await runAgentSession(state, issue, effectiveProvider, pipeline.cycle, workspacePath, providerPrompt, basePromptFile);
 

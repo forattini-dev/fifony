@@ -1,5 +1,6 @@
 import { env } from "node:process";
 import { markIssueDirty, markEventDirty } from "./dirty-tracker.ts";
+import { recordEvent as recordLedgerEvent } from "./token-ledger.ts";
 import { invalidateMetrics } from "./metrics-cache.ts";
 import type {
   EffortConfig,
@@ -12,7 +13,6 @@ import type {
   RuntimeEventType,
   RuntimeMetrics,
   RuntimeState,
-  WorkflowDefinition,
 } from "./types.ts";
 import {
   ISSUE_STATE_MACHINE_ID,
@@ -28,7 +28,6 @@ import {
   TERMINAL_STATES,
   STATE_ROOT,
   TARGET_ROOT,
-  WORKFLOW_RENDERED,
 } from "./constants.ts";
 import {
   now,
@@ -149,6 +148,7 @@ export function nextLocalIssueId(issues: IssueEntry[]): string {
 export function createIssueFromPayload(
   payload: JsonRecord,
   issues: IssueEntry[],
+  defaultBranch?: string,
 ): IssueEntry {
   const identifier = toStringValue(payload.identifier, nextLocalIssueId(issues));
   const id = toStringValue(payload.id, identifier.replace(/^#/, "issue-"));
@@ -167,6 +167,7 @@ export function createIssueFromPayload(
     priority: clamp(toNumberValue(payload.priority, 1), 1, 10),
     state: initialState,
     branchName: toStringValue(payload.branchName),
+    baseBranch: toStringValue(payload.baseBranch) || defaultBranch,
     url: toStringValue(payload.url),
     assigneeId: toStringValue(payload.assigneeId),
     labels: toStringArray(payload.labels),
@@ -258,6 +259,7 @@ export function deriveConfig(args: string[]): RuntimeConfig {
     retryDelayMs: parseEnvNumber("FIFONY_RETRY_DELAY_MS", 3_000),
     staleInProgressTimeoutMs: parseEnvNumber("FIFONY_STALE_IN_PROGRESS_MS", 2_400_000),
     logLinesTail: parseEnvNumber("FIFONY_LOG_TAIL_CHARS", 12_000),
+    maxPreviousOutputChars: parseEnvNumber("FIFONY_PREVIOUS_OUTPUT_CHARS", 20_000),
     agentProvider: normalizeAgentProvider(env.FIFONY_AGENT_PROVIDER ?? "codex"),
     agentCommand: toStringValue(env.FIFONY_AGENT_COMMAND, ""),
     defaultEffort: {
@@ -268,6 +270,10 @@ export function deriveConfig(args: string[]): RuntimeConfig {
     },
     maxConcurrentByState: {},
     runMode: "filesystem",
+    afterCreateHook: env.FIFONY_AFTER_CREATE_HOOK ?? "",
+    beforeRunHook: env.FIFONY_BEFORE_RUN_HOOK ?? "",
+    afterRunHook: env.FIFONY_AFTER_RUN_HOOK ?? "",
+    beforeRemoveHook: env.FIFONY_BEFORE_REMOVE_HOOK ?? "",
   };
 }
 
@@ -310,7 +316,6 @@ export function dedupHistoryEntries(issues: IssueEntry[]): void {
 export function buildRuntimeState(
   previous: RuntimeState | null,
   config: RuntimeConfig,
-  definition: WorkflowDefinition,
 ): RuntimeState {
   const mergedIssues = (previous?.issues ?? [])
     .map((rawIssue) => {
@@ -366,7 +371,6 @@ export function buildRuntimeState(
     trackerKind: "filesystem",
     sourceRepoUrl: TARGET_ROOT,
     sourceRef: "workspace",
-    workflowPath: WORKFLOW_RENDERED,
     config: {
       ...config,
       dashboardPort: previous?.config.dashboardPort,
@@ -376,7 +380,6 @@ export function buildRuntimeState(
     metrics,
     notes: previous?.notes ?? [
       "Local TypeScript runtime bootstrapped.",
-      `Workflow loaded from ${definition.workflowPath}.`,
       "Codex-only execution path enabled.",
       "No external tracker dependency (filesystem-backed local mode).",
     ],
@@ -490,6 +493,9 @@ export function addEvent(
 
   state.events = [event, ...state.events].slice(0, PERSIST_EVENTS_MAX);
   markEventDirty(event.id);
+
+  // Track event in daily ledger for analytics sparkline
+  try { recordLedgerEvent(); } catch { /* non-critical */ }
 
   // Increment per-issue event counter (tracked by EventualConsistency plugin for daily analytics)
   if (issueId) {

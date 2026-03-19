@@ -14,6 +14,5 @@ Description:
 {{description}}
 
 Use fifony as the source of truth:
-- Read the workflow contract from WORKFLOW.md if available.
 - Persist transitions through the fifony tools instead of inventing local state.
 - Keep outputs actionable and aligned with the tracked issue lifecycle.

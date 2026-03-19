@@ -50,7 +50,7 @@ function makeIssue(title: string, description: string, extra: Partial<IssueEntry
     title,
     description,
     priority: 2,
-    state: "Todo",
+    state: "Planned",
     labels: [],
     paths: [],
     blockedBy: [],

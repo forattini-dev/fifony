@@ -1,14 +1,14 @@
-import { appendFileTail, getNestedRecord, getNestedString, extractJsonObjects } from "./helpers.ts";
+import { appendFileTail, extractJsonObjects } from "./helpers.ts";
 import { logger } from "./logger.ts";
 import { detectAvailableProviders, normalizeAgentProvider, resolveAgentCommand } from "./providers.ts";
-import type { RuntimeConfig, WorkflowDefinition } from "./types.ts";
+import type { RuntimeConfig } from "./types.ts";
 import { renderPrompt } from "../prompting.ts";
 import { env } from "node:process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { callOpenAI } from "./openai-adapter.ts";
+
 
 export type EnhancementField = "title" | "description";
 
@@ -31,12 +31,8 @@ type EnhanceResult = {
 function getProviderCommand(
   provider: string,
   config: RuntimeConfig,
-  workflowDefinition: WorkflowDefinition | null,
 ): string {
-  const workflowConfig = workflowDefinition ? workflowDefinition.config : {};
-  const codexCommand = getNestedString(getNestedRecord(workflowConfig, "codex"), "command");
-  const claudeCommand = getNestedString(getNestedRecord(workflowConfig, "claude"), "command");
-  return resolveAgentCommand(provider, config.agentCommand || "", codexCommand, claudeCommand);
+  return resolveAgentCommand(provider, config.agentCommand || "", "", "");
 }
 
 async function buildPrompt(field: EnhancementField, title: string, description: string, issueType?: string, images?: string[]): Promise<string> {
@@ -228,7 +224,7 @@ async function runProviderCommand(
 export async function enhanceIssueField(
   payload: EnhanceIssuePayload,
   config: RuntimeConfig,
-  workflowDefinition: WorkflowDefinition | null,
+  _workflowDefinition: null,
 ): Promise<EnhanceResult> {
   const field: EnhancementField = payload.field === "description" ? "description" : "title";
   const title = typeof payload.title === "string" ? payload.title.trim() : "";
@@ -271,45 +267,8 @@ export async function enhanceIssueField(
   };
 
   for (const selectedProvider of orderedProviders) {
-    // ── Codex provider: call OpenAI API directly (structured output support) ──
-    if (selectedProvider === "codex") {
-      try {
-        logger.debug({ provider: selectedProvider, field }, "[Enhancer] Using OpenAI API path for Codex provider");
-        const result = await callOpenAI({
-          prompt,
-          jsonSchema: { name: "issue_enhancement", schema: enhanceSchema },
-          timeoutMs: config.commandTimeoutMs || 120_000,
-        });
-
-        logger.info({ provider: selectedProvider, field, rawOutput: result.content.slice(0, 2000) }, "Enhance raw output (API)");
-
-        // Parse the structured response — should be clean JSON with { field, value }
-        let value: string | undefined;
-        try {
-          const parsed = JSON.parse(result.content) as { field?: string; value?: string };
-          if (parsed.value && typeof parsed.value === "string") {
-            value = parsed.value.trim();
-          }
-        } catch {
-          // If JSON parse fails, fall through to the standard parser
-        }
-
-        if (!value) {
-          value = parseEnhancerOutput(result.content, field);
-        }
-
-        logger.info({ provider: selectedProvider, field, parsedValue: value }, "Enhance parsed value (API)");
-        return { field, value, provider: selectedProvider };
-      } catch (error) {
-        errors.push(
-          `Provider "${selectedProvider}" (API) failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-        continue;
-      }
-    }
-
-    // ── Claude/other providers: spawn CLI process ──
-    const command = getProviderCommand(selectedProvider, config, workflowDefinition);
+    // ── All providers: spawn CLI process ──
+    const command = getProviderCommand(selectedProvider, config);
     if (!command) {
       errors.push(`Provider "${selectedProvider}" has no command.`);
       continue;

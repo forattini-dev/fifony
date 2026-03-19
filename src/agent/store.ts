@@ -272,7 +272,6 @@ async function recoverStateFromIssueResource(): Promise<RuntimeState | null> {
       trackerKind: "filesystem",
       sourceRepoUrl: "",
       sourceRef: "workspace",
-      workflowPath: "",
       config: {} as any,
       issues,
       events: [],

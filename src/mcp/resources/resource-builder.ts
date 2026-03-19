@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { renderPrompt } from "../../prompting.js";
@@ -18,7 +17,6 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 export const PACKAGE_ROOT = resolve(__dirname, "../../..");
-export const WORKFLOW_PATH = join(WORKSPACE_ROOT, "WORKFLOW.md");
 export const README_PATH = join(PACKAGE_ROOT, "README.md");
 export const FIFONY_GUIDE_PATH = join(PACKAGE_ROOT, "FIFONY.md");
 
@@ -59,7 +57,6 @@ export async function buildStateSummary(): Promise<string> {
     workspaceRoot: WORKSPACE_ROOT,
     persistenceRoot: PERSISTENCE_ROOT,
     stateRoot: STATE_ROOT,
-    workflowPresent: existsSync(WORKFLOW_PATH),
     runtimeUpdatedAt: runtime.updatedAt ?? null,
     issueCount: issues.length,
     issuesByState: byState,
@@ -84,7 +81,7 @@ export async function buildIssuePrompt(issue: IssueRecord, provider: string, rol
     provider,
     id: issue.id,
     title: issue.title,
-    state: issue.state ?? "Todo",
+    state: issue.state ?? "Planning",
     capabilityCategory: resolution.category,
     overlays: resolution.overlays,
     paths: Array.isArray(issue.paths) ? issue.paths.filter((value): value is string => typeof value === "string") : [],

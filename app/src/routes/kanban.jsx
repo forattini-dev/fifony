@@ -17,7 +17,7 @@ function KanbanPage() {
   return (
     <div className="flex-1 flex flex-col min-h-0 px-3 pb-2 gap-2">
       {hasData && (
-        <StatsBar metrics={ctx.metrics} total={ctx.issues.length} issues={ctx.issues} compact />
+        <StatsBar metrics={ctx.metrics} total={ctx.issues.length} issues={ctx.issues} compact defaultBranch={ctx.data?.config?.defaultBranch} />
       )}
       <BoardView
         issues={ctx.filtered}

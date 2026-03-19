@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { IssuePlan, RuntimeConfig, WorkflowDefinition, IssueEntry, AgentTokenUsage } from "./types.ts";
+import type { IssuePlan, RuntimeConfig, IssueEntry, AgentTokenUsage } from "./types.ts";
 import { appendFileTail, now } from "./helpers.ts";
 import { detectAvailableProviders } from "./providers.ts";
 import { getWorkflowConfig, loadRuntimeSettings } from "./settings.ts";
@@ -11,7 +11,7 @@ import { record as recordTokens } from "./token-ledger.ts";
 import { STATE_ROOT } from "./constants.ts";
 import { persistSession, type PlanningSession, type PlanningSessionUsage } from "./planning-session.ts";
 import { parsePlanOutput, tryBuildPlan, extractPlanTokenUsage } from "./planning-parser.ts";
-import { buildPlanPrompt, getPlanCommand, generatePlanViaOpenAI } from "./planning-prompts.ts";
+import { buildPlanPrompt, getPlanCommand } from "./planning-prompts.ts";
 
 // ── Debug helpers ─────────────────────────────────────────────────────────────
 
@@ -54,7 +54,7 @@ export async function generatePlan(
   title: string,
   description: string,
   config: RuntimeConfig,
-  workflowDefinition: WorkflowDefinition | null,
+  _workflowDefinition: null,
   options?: { fast?: boolean; persistSession?: boolean; images?: string[] },
 ): Promise<GeneratePlanResult> {
   const fast = options?.fast ?? false;
@@ -80,11 +80,19 @@ export async function generatePlan(
     // Fall through to default provider selection
   }
 
-  // Use configured plan provider if available, otherwise fall back to detection
-  const preferred = planStageProvider && available.includes(planStageProvider)
-    ? planStageProvider
-    : available.includes("claude") ? "claude" : available[0];
+  // Provider selection: claude is always preferred for planning because it supports
+  // --json-schema for guaranteed structured output. Codex CLI is an execution agent
+  // and does not produce reliably parseable JSON via CLI for planning tasks.
+  const configuredProvider = planStageProvider && available.includes(planStageProvider) ? planStageProvider : null;
+  const preferred = (configuredProvider && configuredProvider !== "codex")
+    ? configuredProvider
+    : available.includes("claude") ? "claude"
+    : available[0]; // last resort: whatever's available
   if (!preferred) throw new Error("No AI provider available for planning.");
+
+  // If we switched provider (e.g. codex → claude), the configured model belongs to the
+  // original provider and must not be forwarded — it would be rejected by the new CLI.
+  if (preferred !== configuredProvider) planStageModel = undefined;
 
   // Fast mode: same model, effort low (embedded in prompt since CLIs don't support effort flags)
   const effectiveEffort = fast ? "low" : (planStageEffort || "medium");
@@ -104,43 +112,8 @@ export async function generatePlan(
   let plan: IssuePlan | null = null;
   let planUsage: PlanningSessionUsage;
 
-  // ── Codex provider: call OpenAI API directly (structured output support) ──
-  if (preferred === "codex") {
-    logger.debug({ provider: preferred, model: planStageModel, effort: effectiveEffort }, "[Planner] Using OpenAI API path for Codex provider");
-
-    try {
-      const apiResult = await generatePlanViaOpenAI(prompt, planStageModel, effectiveEffort);
-      const durationMs = Date.now() - planStartMs;
-      apiResult.usage.durationMs = durationMs;
-
-      logger.info({ rawOutput: apiResult.content.slice(0, 2000) }, `Plan raw output from ${preferred} (API)`);
-      savePlanDebugFiles("api", prompt, apiResult.content);
-
-      plan = parsePlanOutput(apiResult.content);
-      if (!plan) {
-        // The API enforces JSON schema, so content should be clean JSON — try direct parse
-        try {
-          const directParsed = JSON.parse(apiResult.content);
-          plan = tryBuildPlan(directParsed);
-        } catch {
-          // Fall through to error handling below
-        }
-      }
-
-      planUsage = apiResult.usage;
-      planUsage.model = apiResult.model;
-    } catch (err) {
-      const durationMs = Date.now() - planStartMs;
-      session.status = "error";
-      session.error = `OpenAI API call failed: ${err instanceof Error ? err.message : String(err)}`;
-      session.pid = null;
-      if (shouldPersistSession) await persistSession(session);
-      logger.error({ err, durationMs }, "[Planner] OpenAI API call failed for plan generation");
-      throw new Error(session.error);
-    }
-  }
-  // ── Claude/other providers: spawn CLI process ──
-  else {
+  // ── All providers: spawn CLI process ──
+  {
     const command = getPlanCommand(preferred, planStageModel, images);
     if (!command) throw new Error(`No command configured for provider ${preferred}.`);
 

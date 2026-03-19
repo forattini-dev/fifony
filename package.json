@@ -5,7 +5,8 @@
   "type": "module",
   "description": "Filesystem-backed local fifony orchestrator with a TypeScript CLI, MCP mode, and multi-agent Codex or Claude workflows.",
   "bin": {
-    "fifony": "./bin/fifony.js"
+    "fifony": "./bin/fifony.js",
+    "fifony-wrap": "./bin/fifony-wrap.js"
   },
   "scripts": {
     "prompts:generate": "tsx ./scripts/generate-prompts.ts",

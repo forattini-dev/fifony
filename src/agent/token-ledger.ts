@@ -69,6 +69,9 @@ const dailyByModel = new Map<string, TokenBucket>();
 /** Per-issue totals (for top-N) */
 const byIssue = new Map<string, { identifier: string; title: string; totalTokens: number }>();
 
+/** Daily event counts: date → count */
+const dailyEvents = new Map<string, number>();
+
 /** Hourly token buckets: "2026-03-16T14" → bucket */
 const hourly = new Map<string, TokenBucket>();
 
@@ -170,6 +173,15 @@ export function record(
 }
 
 /**
+ * Record a single event occurrence for daily analytics.
+ * Called from addEvent() in issues.ts.
+ */
+export function recordEvent(): void {
+  const date = todayDate();
+  dailyEvents.set(date, (dailyEvents.get(date) || 0) + 1);
+}
+
+/**
  * Get hourly snapshot for sparkline display.
  * Returns last N hours of token usage.
  */
@@ -204,6 +216,7 @@ export function hydrate(issues: IssueEntry[]): void {
   dailyByPhase.clear();
   dailyByModel.clear();
   byIssue.clear();
+  dailyEvents.clear();
 
   for (const issue of issues) {
     // Per-issue totals
@@ -253,10 +266,13 @@ export function hydrate(issues: IssueEntry[]): void {
  * Note: daily[].events is populated by the API layer from EventualConsistency.
  */
 export function getAnalytics(topN = 20): TokenAnalytics {
-  // Daily overall
+  // Daily overall (merge token buckets with event counts)
+  const allDates = new Set([...daily.keys(), ...dailyEvents.keys()]);
   const dailyArray: DailyBucket[] = [];
-  for (const [date, bucket] of daily) {
-    dailyArray.push({ ...bucket, date });
+  for (const date of allDates) {
+    const bucket = daily.get(date) ?? { ...EMPTY };
+    const events = dailyEvents.get(date) || 0;
+    dailyArray.push({ ...bucket, date, ...(events > 0 ? { events } : {}) });
   }
   dailyArray.sort((a, b) => a.date.localeCompare(b.date));
 

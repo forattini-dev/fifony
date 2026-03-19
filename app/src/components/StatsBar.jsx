@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from "react";
-import { Zap, TrendingUp, Activity, ChevronDown } from "lucide-react";
+import { Zap, TrendingUp, Activity, ChevronDown, GitBranch } from "lucide-react";
 import { useTokenAnalytics } from "../hooks.js";
 import { fillDailyGaps } from "../utils.js";
 
@@ -140,7 +140,7 @@ function MobileStatsBar({ monthlyTokens, monthlyEvents, dailyData, hasDailyData,
   );
 }
 
-export function StatsBar({ issues = [] }) {
+export function StatsBar({ issues = [], defaultBranch }) {
   const { data: analytics } = useTokenAnalytics();
   const isMobile = useIsMobile();
 
@@ -211,6 +211,17 @@ export function StatsBar({ issues = [] }) {
             <Activity className="size-2.5" /> Events / day
           </span>
           <DailyColumnSparkline data={dailyData} height={28} cols={14} valueKey="events" colorClass="text-secondary" />
+        </div>
+      )}
+
+      {/* Default branch */}
+      {defaultBranch && (
+        <div className="flex flex-col justify-center px-3 border-l border-base-300">
+          <span className="text-[10px] uppercase tracking-wide opacity-40">Branch</span>
+          <span className="text-xs font-mono font-medium flex items-center gap-1 mt-0.5">
+            <GitBranch className="size-3 text-primary shrink-0" />
+            {defaultBranch}
+          </span>
         </div>
       )}
 

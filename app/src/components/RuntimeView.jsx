@@ -1,11 +1,12 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { Cpu, Circle, Clock, Terminal, CheckCircle2, XCircle, AlertTriangle, Eye, ListOrdered, Zap, Gauge, Users } from "lucide-react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { Cpu, Circle, Clock, Terminal, CheckCircle2, XCircle, AlertTriangle, Eye, ListOrdered, Zap, Gauge, Users, Loader } from "lucide-react";
 import { timeAgo, formatDuration } from "../utils.js";
 import { api } from "../api.js";
 
 const STATE_BADGE = {
   Queued: "badge-info", Running: "badge-primary", Reviewing: "badge-secondary",
   Reviewed: "badge-success", Blocked: "badge-error", Done: "badge-success", Cancelled: "badge-neutral",
+  Planning: "badge-info",
 };
 
 const STATE_ICON = {
@@ -22,40 +23,86 @@ function formatTokens(n) {
 
 // ── Slot live output ────────────────────────────────────────────────────────
 
-function SlotLiveInfo({ issueId }) {
-  const [live, setLive] = useState(null);
+function SlotLiveInfo({ issueId, issueState }) {
+  const [meta, setMeta] = useState(null);
+  const [logText, setLogText] = useState("");
+  const [logSize, setLogSize] = useState(0);
+  const logRef = useRef(null);
+  const esRef = useRef(null);
 
-  const fetchLive = useCallback(async () => {
+  // Poll metadata (elapsed, pid, etc) every 3s
+  const fetchMeta = useCallback(async () => {
     try {
       const res = await api.get(`/live/${encodeURIComponent(issueId)}`);
-      setLive(res);
+      setMeta(res);
     } catch { /* ignore */ }
   }, [issueId]);
 
   useEffect(() => {
-    fetchLive();
-    const interval = setInterval(fetchLive, 4000);
+    fetchMeta();
+    const interval = setInterval(fetchMeta, 3000);
     return () => clearInterval(interval);
-  }, [fetchLive]);
+  }, [fetchMeta]);
 
-  if (!live) return null;
+  // Stream log output via SSE
+  useEffect(() => {
+    if (esRef.current) { esRef.current.close(); esRef.current = null; }
+    setLogText("");
+    setLogSize(0);
 
-  const elapsed = Number.isFinite(Number(live.elapsed))
-    ? Number(live.elapsed)
-    : live.startedAt ? Math.max(Date.now() - new Date(live.startedAt).getTime(), 0) : 0;
-  const logKb = live.logSize ? (live.logSize / 1024).toFixed(1) : "0";
+    const es = new EventSource(`/api/live/${encodeURIComponent(issueId)}/stream`);
+    esRef.current = es;
+
+    es.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === "init") {
+          setLogText(msg.text || "");
+          setLogSize(msg.size || 0);
+        } else if (msg.type === "chunk") {
+          setLogText((prev) => {
+            const combined = prev + (msg.text || "");
+            // Keep last 24KB to avoid memory bloat
+            return combined.length > 24_000 ? combined.slice(-24_000) : combined;
+          });
+          setLogSize(msg.size || 0);
+        } else if (msg.type === "done") {
+          es.close();
+        }
+      } catch {}
+    };
+
+    es.onerror = () => { es.close(); esRef.current = null; };
+
+    return () => { es.close(); esRef.current = null; };
+  }, [issueId]);
+
+  // Auto-scroll to bottom when new content arrives
+  useEffect(() => {
+    if (logRef.current) {
+      logRef.current.scrollTop = logRef.current.scrollHeight;
+    }
+  }, [logText]);
+
+  const elapsed = meta && Number.isFinite(Number(meta.elapsed))
+    ? Number(meta.elapsed)
+    : meta?.startedAt ? Math.max(Date.now() - new Date(meta.startedAt).getTime(), 0) : 0;
+  const logKb = (logSize / 1024).toFixed(1);
 
   return (
     <div className="mt-2 space-y-1.5">
       <div className="flex items-center gap-3 text-xs opacity-60">
-        <span className="flex items-center gap-1"><Clock className="size-3" />{formatDuration(elapsed)}</span>
+        {meta && <><span className="flex items-center gap-1"><Clock className="size-3" />{formatDuration(elapsed)}</span>
         <span>Log: {logKb} KB</span>
-        {live.agentPid && <span>PID {live.agentPid}</span>}
-        {live.agentAlive === false && live.agentPid && <span className="text-error">dead</span>}
+        {meta.agentPid && <span>PID {meta.agentPid}</span>}
+        {meta.agentAlive === false && meta.agentPid && <span className="text-error">dead</span>}</>}
       </div>
-      {live.logTail && (
-        <pre className="text-[11px] bg-base-300 rounded-box p-3 overflow-x-auto whitespace-pre-wrap max-h-48 overflow-y-auto font-mono opacity-80 leading-relaxed break-all w-full max-w-full">
-          {live.logTail.slice(-2000)}
+      {logText && (
+        <pre
+          ref={logRef}
+          className="text-[11px] bg-base-300 rounded-box p-3 overflow-x-auto whitespace-pre-wrap max-h-56 overflow-y-auto font-mono opacity-80 leading-relaxed break-all w-full max-w-full"
+        >
+          {logText}
         </pre>
       )}
     </div>
@@ -77,15 +124,21 @@ function AgentSlot({ index, issue, total }) {
   }
 
   const isRunning = issue.state === "Running";
+  const isPlanning = issue.state === "Planning";
   const borderClass = issue.state === "Reviewing" || issue.state === "Reviewed"
     ? "border-secondary bg-secondary/5"
+    : isPlanning
+    ? "border-info bg-info/5"
     : "border-primary bg-primary/5";
 
   return (
     <div className={`border-2 rounded-box p-5 space-y-2 animate-fade-in-scale overflow-hidden min-w-0 ${borderClass} ${isRunning ? "slot-active" : ""}`}>
       <div className="flex items-center justify-between min-w-0">
         <div className="flex items-center gap-2 min-w-0">
-          <span className="loading loading-spinner loading-sm text-primary shrink-0" />
+          {isPlanning
+          ? <Loader className="size-4 animate-spin text-info shrink-0" />
+          : <span className="loading loading-spinner loading-sm text-primary shrink-0" />
+        }
           <span className="font-mono text-base font-bold truncate">{issue.identifier}</span>
           <span className={`badge badge-sm ${STATE_BADGE[issue.state] || "badge-ghost"} shrink-0`}>{issue.state}</span>
         </div>
@@ -101,7 +154,7 @@ function AgentSlot({ index, issue, total }) {
         {issue.startedAt && <span>started {timeAgo(issue.startedAt)}</span>}
       </div>
 
-      <SlotLiveInfo issueId={issue.id} />
+      <SlotLiveInfo issueId={issue.id} issueState={issue.state} />
     </div>
   );
 }
@@ -190,10 +243,15 @@ export function RuntimeView({ state, providers, parallelism, onRefresh, issues: 
   const stateIssues = Array.isArray(state.issues) ? state.issues : [];
   const concurrency = Number(state.config?.workerConcurrency) || 3;
 
-  const running = stateIssues.filter((i) => i.state === "Running" || i.state === "Reviewing");
+  const activePlanning = stateIssues.filter((i) => i.state === "Planning" && i.planningStatus === "planning");
+  const running = [
+    ...stateIssues.filter((i) => i.state === "Running" || i.state === "Reviewing"),
+    ...activePlanning,
+  ];
   const queued = stateIssues.filter((i) =>
     i.state === "Planned" || i.state === "Queued"
-    || (i.state === "Blocked" && i.nextRetryAt),
+    || (i.state === "Blocked" && i.nextRetryAt)
+    || (i.state === "Planning" && i.planningStatus !== "planning"),
   );
   const completed = stateIssues
     .filter((i) => i.state === "Done" || i.state === "Cancelled")

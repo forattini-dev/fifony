@@ -4,6 +4,7 @@ export default defineConfig({
   entry: {
     cli: "src/cli.ts",
     "agent/run-local": "src/agent/run-local.ts",
+    "agent/cli-wrapper": "src/agent/cli-wrapper.ts",
     "mcp/server": "src/mcp/server.ts",
   },
   format: "esm",

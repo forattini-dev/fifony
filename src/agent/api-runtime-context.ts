@@ -1,14 +1,13 @@
-import type { RuntimeState, WorkflowDefinition } from "./types.ts";
+import type { RuntimeState } from "./types.ts";
 
 type RuntimeApiContext = {
   state: RuntimeState;
-  workflowDefinition: WorkflowDefinition | null;
 };
 
 let context: RuntimeApiContext | null = null;
 
-export function setApiRuntimeContext(state: RuntimeState, workflowDefinition: WorkflowDefinition | null): void {
-  context = { state, workflowDefinition };
+export function setApiRuntimeContext(state: RuntimeState): void {
+  context = { state };
 }
 
 export function clearApiRuntimeContext(): void {

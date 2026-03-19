@@ -1,60 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   FolderSearch, Loader2, FileText, CircleCheck, CircleX,
-  Sparkles, Bot, Boxes, ShieldCheck, GitBranch, Eye,
+  Sparkles, Bot, Boxes, Eye,
 } from "lucide-react";
 import { api } from "../../../api";
 
-function GitignoreBanner() {
-  const [status, setStatus] = useState(null); // null = loading, { exists, hasFifony }
-  const [adding, setAdding] = useState(false);
-  const [added, setAdded] = useState(false);
-
-  useEffect(() => {
-    api.get("/gitignore/status").then(setStatus).catch(() => setStatus({ exists: false, hasFifony: false }));
-  }, []);
-
-  if (status === null || status.hasFifony || added) {
-    if (added) {
-      return (
-        <div className="alert alert-success text-sm max-w-md animate-fade-in">
-          <ShieldCheck className="size-4 shrink-0" />
-          <span><code>.fifony/</code> added to <code>.gitignore</code></span>
-        </div>
-      );
-    }
-    return null;
-  }
-
-  const handleAdd = async () => {
-    setAdding(true);
-    try {
-      await api.post("/gitignore/add");
-      setAdded(true);
-    } catch {
-      // silently fail — not critical
-    } finally {
-      setAdding(false);
-    }
-  };
-
-  return (
-    <div className="alert alert-warning text-sm max-w-md">
-      <GitBranch className="size-4 shrink-0" />
-      <div className="flex-1">
-        <span><code>.fifony/</code> is not in your <code>.gitignore</code>.</span>
-        <span className="text-base-content/50 block text-xs mt-0.5">fifony stores local state there — it shouldn't be committed.</span>
-      </div>
-      <button
-        className="btn btn-xs btn-warning"
-        onClick={handleAdd}
-        disabled={adding}
-      >
-        {adding ? <Loader2 className="size-3 animate-spin" /> : "Add it"}
-      </button>
-    </div>
-  );
-}
 
 const FILE_LABELS = {
   claudeMd: "CLAUDE.md", claudeDir: ".claude/", codexDir: ".codex/",
@@ -257,9 +207,6 @@ function ScanProjectStep({
             </p>
           </div>
         </label>
-      </div>
-      <div className="w-full max-w-lg">
-        <GitignoreBanner />
       </div>
     </div>
   );

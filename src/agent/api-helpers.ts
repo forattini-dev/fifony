@@ -1,4 +1,4 @@
-import type { IssueEntry, RuntimeEvent, RuntimeState, WorkflowDefinition } from "./types.ts";
+import type { IssueEntry, RuntimeEvent, RuntimeState } from "./types.ts";
 import type { PlanningSessionUsage } from "./issue-planner.ts";
 import { logger } from "./logger.ts";
 import { now } from "./helpers.ts";

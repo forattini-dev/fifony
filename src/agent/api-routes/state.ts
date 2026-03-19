@@ -1,4 +1,4 @@
-import type { RuntimeState, WorkflowDefinition } from "../types.ts";
+import type { RuntimeState } from "../types.ts";
 import { isoWeek, now } from "../helpers.ts";
 import { logger } from "../logger.ts";
 import { persistState } from "../store.ts";
@@ -26,7 +26,6 @@ import { basename, extname, join } from "node:path";
 export function registerStateRoutes(
   app: any,
   state: RuntimeState,
-  workflowDefinition: WorkflowDefinition | null,
 ): void {
   app.get("/api/state", async (c: any) => {
     const showAll = c.req.query("all") === "1";
@@ -88,7 +87,7 @@ export function registerStateRoutes(
     try {
       const payload = await c.req.json();
       logger.info({ title: (payload.title ?? "").toString().slice(0, 80) }, "[API] POST /api/issues/create");
-      const issue = createIssueFromPayload(payload, state.issues);
+      const issue = createIssueFromPayload(payload, state.issues, state.config.defaultBranch);
 
       // Move temp attachment files to permanent issue directory
       const tempImages = Array.isArray(payload.images) ? payload.images as string[] : [];

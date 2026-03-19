@@ -14,6 +14,7 @@ import StepIndicator from "./steps/StepIndicator";
 import StepContent from "./steps/StepContent";
 import WizardNavFooter from "./steps/WizardNavFooter";
 import WelcomeStep from "./steps/WelcomeStep";
+import BranchStep from "./steps/BranchStep";
 import PipelineStep from "./steps/PipelineStep";
 import ScanProjectStep from "./steps/ScanProjectStep";
 import DomainsStep from "./steps/DomainsStep";
@@ -37,7 +38,6 @@ export default function OnboardingWizard({ onComplete }) {
   const hydratedRef = useRef(false);
 
   // Config state
-  const [selectedProvider, setSelectedProvider] = useState(""); // legacy, kept for scan/analyze
   const [pipeline, setPipeline] = useState({ planner: "", executor: "", reviewer: "" });
   const [efforts, setEfforts] = useState(() => normalizeRoleEfforts(null));
   const [concurrency, setConcurrency] = useState(3);
@@ -65,14 +65,16 @@ export default function OnboardingWizard({ onComplete }) {
   const [modelsByProvider, setModelsByProvider] = useState({});
   const [models, setModels] = useState({ plan: "", execute: "", review: "" });
 
-  // Workspace path from runtime state
+  // Workspace path and default branch from runtime state
   const [workspacePath, setWorkspacePath] = useState("");
+  const [defaultBranch, setDefaultBranch] = useState("");
 
-  // Load workspace path on mount
+  // Load workspace path and branch on mount
   useEffect(() => {
     api.get("/state").then((data) => {
       const path = data?.sourceRepoUrl || data?.config?.sourceRepo || "";
       setWorkspacePath(path);
+      setDefaultBranch(data?.config?.defaultBranch || "");
     }).catch(() => {});
   }, []);
 
@@ -86,7 +88,11 @@ export default function OnboardingWizard({ onComplete }) {
     const savedConcurrency = getSettingValue(settings, "runtime.workerConcurrency", 3);
 
     if (typeof savedProvider === "string" && savedProvider.trim()) {
-      setSelectedProvider(savedProvider);
+      setPipeline((prev) => ({
+        planner: prev.planner || savedProvider,
+        executor: prev.executor || savedProvider,
+        reviewer: prev.reviewer || savedProvider,
+      }));
     }
     setEfforts(normalizeRoleEfforts(savedEfforts));
     if (typeof savedTheme === "string" && savedTheme.trim()) {
@@ -117,7 +123,6 @@ export default function OnboardingWizard({ onComplete }) {
         // Auto-select first available + set default pipeline
         const available = list.filter((p) => p.available !== false);
         const firstName = available[0]?.id || available[0]?.name || "";
-        if (firstName && !selectedProvider) setSelectedProvider(firstName);
 
         // Default pipeline: claude plans + reviews, first available executes
         const claudeAvailable = available.find((p) => (p.id || p.name) === "claude");
@@ -155,13 +160,6 @@ export default function OnboardingWizard({ onComplete }) {
       : selectedTheme;
     document.documentElement.setAttribute("data-theme", resolved);
   }, [selectedTheme]);
-
-  // Derive selectedProvider from pipeline (executor is the "main" provider)
-  useEffect(() => {
-    if (pipeline.executor && pipeline.executor !== selectedProvider) {
-      setSelectedProvider(pipeline.executor);
-    }
-  }, [pipeline.executor]);
 
   // Save settings progressively as user advances
   const saveStepSettings = useCallback((currentStepName) => {
@@ -262,11 +260,12 @@ export default function OnboardingWizard({ onComplete }) {
       qc.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
       onComplete?.();
     }
-  }, [pipeline, selectedProvider, efforts, models, concurrency, selectedTheme, selectedAgents, selectedSkills, qc, onComplete]);
+  }, [pipeline, efforts, models, concurrency, selectedTheme, selectedAgents, selectedSkills, qc, onComplete]);
 
   // Can proceed from step
   const canProceed =
     stepName === "Welcome" ||
+    stepName === "Branch" ||
     (stepName === "Providers" && (pipeline.executor || providersLoading)) ||
     stepName === "Scan Project" ||
     stepName === "Discover Issues" ||
@@ -306,8 +305,14 @@ export default function OnboardingWizard({ onComplete }) {
 
       {/* Step content area */}
       <div className="relative z-10 flex-1 flex flex-col items-center justify-start px-4 py-6 overflow-y-auto">
-        <StepContent direction={direction} stepKey={step} center={stepName === "Welcome" || stepName === "Providers" || stepName === "Launch"}>
+        <StepContent direction={direction} stepKey={step} center={stepName === "Welcome" || stepName === "Branch" || stepName === "Providers" || stepName === "Launch"}>
           {stepName === "Welcome" && <WelcomeStep workspacePath={workspacePath} onGetStarted={goNext} />}
+          {stepName === "Branch" && (
+            <BranchStep
+              currentBranch={defaultBranch}
+              onBranchCreated={(branch) => setDefaultBranch(branch)}
+            />
+          )}
           {stepName === "Providers" && (
             <PipelineStep
               providers={providers || []}
@@ -324,7 +329,7 @@ export default function OnboardingWizard({ onComplete }) {
               setProjectDescription={setProjectDescription}
               analysisResult={analysisResult}
               setAnalysisResult={setAnalysisResult}
-              selectedProvider={selectedProvider}
+              selectedProvider={pipeline.executor}
               analyzing={analyzing}
               setAnalyzing={setAnalyzing}
               wantsDiscovery={wantsDiscovery}

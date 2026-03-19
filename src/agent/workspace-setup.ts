@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { execSync } from "node:child_process";
-import type { IssueEntry, WorkflowDefinition } from "./types.ts";
+import type { IssueEntry, RuntimeState } from "./types.ts";
 import { SOURCE_ROOT, TARGET_ROOT, WORKSPACE_ROOT } from "./constants.ts";
 import { now, idToSafePath } from "./helpers.ts";
 import { logger } from "./logger.ts";
@@ -26,12 +26,24 @@ function isGitRepo(dir: string): boolean {
   }
 }
 
-/** Create a git worktree for the issue at the given path. */
-export async function createGitWorktree(issue: IssueEntry, worktreePath: string): Promise<void> {
-  let baseBranch = "main";
-  let headCommitAtStart = "";
+/** Detect the default branch for a git repo using multiple fallback strategies. */
+export function detectDefaultBranch(dir: string): string {
   try {
-    baseBranch = execSync("git rev-parse --abbrev-ref HEAD", { cwd: TARGET_ROOT, encoding: "utf8" }).trim();
+    const current = execSync("git rev-parse --abbrev-ref HEAD", { cwd: dir, encoding: "utf8" }).trim();
+    if (current && current !== "HEAD") return current;
+    // HEAD = detached state, fall through to remote detection
+    const remote = execSync("git symbolic-ref refs/remotes/origin/HEAD", { cwd: dir, encoding: "utf8" }).trim();
+    return remote.replace("refs/remotes/origin/", "");
+  } catch {
+    return "main";
+  }
+}
+
+/** Create a git worktree for the issue at the given path. */
+export async function createGitWorktree(issue: IssueEntry, worktreePath: string, baseBranch?: string): Promise<void> {
+  let headCommitAtStart = "";
+  const resolvedBaseBranch = baseBranch ?? detectDefaultBranch(TARGET_ROOT);
+  try {
     headCommitAtStart = execSync("git rev-parse HEAD", { cwd: TARGET_ROOT, encoding: "utf8" }).trim();
   } catch {}
 
@@ -55,16 +67,17 @@ export async function createGitWorktree(issue: IssueEntry, worktreePath: string)
   }
 
   issue.branchName = branchName;
-  issue.baseBranch = baseBranch;
+  issue.baseBranch = resolvedBaseBranch;
   issue.headCommitAtStart = headCommitAtStart;
   issue.worktreePath = worktreePath;
 
-  logger.debug({ issueId: issue.id, branchName, baseBranch, worktreePath }, "[Agent] Git worktree created");
+  logger.debug({ issueId: issue.id, branchName, baseBranch: resolvedBaseBranch, worktreePath }, "[Agent] Git worktree created");
 }
 
 export async function prepareWorkspace(
   issue: IssueEntry,
-  workflowDefinition: WorkflowDefinition | null,
+  state: RuntimeState,
+  defaultBranch?: string,
 ): Promise<{ workspacePath: string; promptText: string; promptFile: string }> {
   const safeId = idToSafePath(issue.id);
   const workspaceRoot = join(WORKSPACE_ROOT, safeId);    // management dir
@@ -75,11 +88,11 @@ export async function prepareWorkspace(
     mkdirSync(workspaceRoot, { recursive: true });
     logger.debug({ issueId: issue.id, identifier: issue.identifier, workspacePath: workspaceRoot }, "[Agent] Creating workspace");
 
-    if (workflowDefinition?.afterCreateHook) {
+    if (state.config.afterCreateHook) {
       mkdirSync(worktreePath, { recursive: true });
-      await runHook(workflowDefinition.afterCreateHook, worktreePath, issue, "after_create");
+      await runHook(state.config.afterCreateHook, worktreePath, issue, "after_create");
     } else if (isGitRepo(TARGET_ROOT)) {
-      await createGitWorktree(issue, worktreePath);
+      await createGitWorktree(issue, worktreePath, defaultBranch);
     } else {
       // Fallback: copy SOURCE_ROOT snapshot
       await ensureSourceReady();
@@ -97,7 +110,7 @@ export async function prepareWorkspace(
   }
 
   const metaPath = join(workspaceRoot, "issue.json");
-  const promptText = await buildPrompt(issue, workflowDefinition);
+  const promptText = await buildPrompt(issue, null);
   const promptFile = join(workspaceRoot, "prompt.md");
   writeFileSync(metaPath, JSON.stringify({ ...issue, runtimeSource: SOURCE_ROOT, bootstrapAt: now() }, null, 2), "utf8");
   writeFileSync(promptFile, `${promptText}\n`, "utf8");
@@ -112,17 +125,17 @@ export async function prepareWorkspace(
 export async function cleanWorkspace(
   issueId: string,
   issue: IssueEntry | null,
-  workflowDefinition: WorkflowDefinition | null,
+  state: RuntimeState,
 ): Promise<void> {
   const safeId = idToSafePath(issueId);
   const workspacePath = issue?.workspacePath ?? join(WORKSPACE_ROOT, safeId);
   if (!existsSync(workspacePath)) return;
 
   // Run before_remove hook (failure is logged but ignored)
-  if (workflowDefinition?.beforeRemoveHook) {
+  if (state.config.beforeRemoveHook) {
     try {
       const dummyIssue = issue ?? { id: issueId, identifier: issueId } as IssueEntry;
-      await runHook(workflowDefinition.beforeRemoveHook, workspacePath, dummyIssue, "before_remove");
+      await runHook(state.config.beforeRemoveHook, workspacePath, dummyIssue, "before_remove");
     } catch (error) {
       logger.warn(`before_remove hook failed for ${issueId}: ${String(error)}`);
     }

@@ -25,7 +25,7 @@ export type { AgentPidInfo } from "./pid-manager.ts";
 export { computeDiffStats, inferChangedWorkspacePaths, parseDiffStats } from "./workspace-diff.ts";
 
 // ── Re-exports from workspace-merge ───────────────────────────────────────
-export { mergeWorkspace, hydrateIssuePathsFromWorkspace, describeRoutingSignals, shouldSkipMergePath, ensureWorktreeCommitted } from "./workspace-merge.ts";
+export { mergeWorkspace, pushWorktreeBranch, hydrateIssuePathsFromWorkspace, describeRoutingSignals, shouldSkipMergePath, ensureWorktreeCommitted } from "./workspace-merge.ts";
 export type { MergeResult } from "./workspace-merge.ts";
 
 // ── Re-exports from session-state ─────────────────────────────────────────
@@ -56,7 +56,6 @@ import type { IssueEntry, RuntimeState } from "./types.ts";
 import { TERMINAL_STATES } from "./constants.ts";
 import { logger } from "./logger.ts";
 import { isAgentStillRunning } from "./pid-manager.ts";
-import type { WorkflowDefinition } from "./types.ts";
 
 export { isAgentStillRunning };
 export { runIssueOnce } from "./issue-runner.ts";
@@ -79,8 +78,9 @@ export function canRunIssue(issue: IssueEntry, running: Set<string>, state: Runt
   if (running.has(issue.id)) return false;
   if (TERMINAL_STATES.has(issue.state)) return false;
 
-  // Planning state: enter the worker pool only when no plan job is active
+  // Planning state: only dispatch when no plan exists yet and no job is active
   if (issue.state === "Planning") {
+    if (issue.plan) return false; // plan already generated — waiting for user approval
     return issue.planningStatus === "idle" || !issue.planningStatus;
   }
 

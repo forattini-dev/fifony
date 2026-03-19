@@ -3,7 +3,6 @@ import type {
   JsonRecord,
   ParallelismAnalysis,
   RuntimeState,
-  WorkflowDefinition,
 } from "./types.ts";
 import { EXECUTING_STATES, TERMINAL_STATES } from "./constants.ts";
 import { now, sleep, normalizeState, toStringValue } from "./helpers.ts";
@@ -55,7 +54,7 @@ export function installGracefulShutdown(
     logger.info(`Received ${signal}, shutting down gracefully...`);
     addEvent(state, undefined, "info", `Graceful shutdown initiated (${signal}).`);
 
-    // Mark running issues as Interrupted so they resume on next boot
+    // Mark running/reviewing issues as Queued so they resume on next boot
     for (const issue of state.issues) {
       if (running.has(issue.id) && (issue.state === "Running" || issue.state === "Reviewing")) {
         try {
@@ -68,7 +67,8 @@ export function installGracefulShutdown(
       }
 
       // Planning jobs have no external process — just reset the status so the scheduler picks them up again
-      if (running.has(issue.id) && issue.state === "Planning" && issue.planningStatus === "planning") {
+      // Note: planning issues no longer occupy the running Set, so check planningStatus directly.
+      if (issue.state === "Planning" && issue.planningStatus === "planning") {
         issue.planningStatus = "idle";
         issue.planningError = `Interrupted by ${signal} — will resume.`;
         issue.planningStartedAt = undefined;
@@ -235,7 +235,6 @@ function isPerStateFull(issue: IssueEntry, state: RuntimeState, running: Set<str
 export function pickNextIssues(
   state: RuntimeState,
   running: Set<string>,
-  workflowDefinition: WorkflowDefinition | null,
 ): IssueEntry[] {
   const candidates = state.issues
     .filter((issue) => canRunIssue(issue, running, state) && !isPerStateFull(issue, state, running));
@@ -252,7 +251,7 @@ export function pickNextIssues(
       const weightDiff = stateWeight(a) - stateWeight(b);
       if (weightDiff !== 0) return weightDiff;
       if (a.priority !== b.priority) return a.priority - b.priority;
-      const capabilityDiff = getIssueCapabilityPriority(a, workflowDefinition) - getIssueCapabilityPriority(b, workflowDefinition);
+      const capabilityDiff = getIssueCapabilityPriority(a, null) - getIssueCapabilityPriority(b, null);
       if (capabilityDiff !== 0) return capabilityDiff;
       return Date.parse(a.createdAt) - Date.parse(b.createdAt);
     });
@@ -299,7 +298,6 @@ export async function scheduler(
   state: RuntimeState,
   running: Set<string>,
   runForever: boolean,
-  workflowDefinition: WorkflowDefinition | null,
 ): Promise<void> {
   if (runForever) {
     while (!shuttingDown) {
@@ -310,12 +308,12 @@ export async function scheduler(
       if (validationError) {
         warnOncePerMessage(validationError);
       } else {
-        const ready = pickNextIssues(state, running, workflowDefinition);
+        const ready = pickNextIssues(state, running);
         const slots = state.config.workerConcurrency - running.size;
         if (slots > 0 && ready.length > 0) {
           const next = ready.slice(0, Math.max(0, slots));
           logger.debug({ slots, readyCount: ready.length, dispatching: next.map((i) => i.identifier) }, "[Scheduler] Dispatching issues");
-          await Promise.all(next.map((issue) => runIssueOnce(state, issue, running, workflowDefinition)));
+          await Promise.all(next.map((issue) => runIssueOnce(state, issue, running)));
         } else if (ready.length > 0 && slots <= 0) {
           logger.debug({ runningCount: running.size, readyCount: ready.length, concurrency: state.config.workerConcurrency }, "[Scheduler] No slots available, waiting");
         }
@@ -347,7 +345,7 @@ export async function scheduler(
       continue;
     }
 
-    const ready = pickNextIssues(state, running, workflowDefinition);
+    const ready = pickNextIssues(state, running);
     const slots = state.config.workerConcurrency - running.size;
     const next = ready.slice(0, Math.max(0, slots));
 
@@ -364,7 +362,7 @@ export async function scheduler(
     if (next.length > 0) {
       logger.debug({ slots, dispatching: next.map((i) => i.identifier) }, "[Scheduler] Batch mode: dispatching issues");
     }
-    await Promise.all(next.map((issue) => runIssueOnce(state, issue, running, workflowDefinition)));
+    await Promise.all(next.map((issue) => runIssueOnce(state, issue, running)));
     state.updatedAt = now();
     await persistState(state);
 

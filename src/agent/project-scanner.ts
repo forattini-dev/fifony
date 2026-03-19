@@ -25,7 +25,6 @@ export type ProjectScanResult = {
     codexDir: boolean;
     readmeMd: boolean;
     packageJson: boolean;
-    workflowMd: boolean;
     agentsMd: boolean;
     claudeAgentsDir: boolean;
     claudeSkillsDir: boolean;
@@ -65,7 +64,6 @@ export function scanProjectFiles(targetRoot: string): ProjectScanResult {
     buildGradle: check("build.gradle") || check("build.gradle.kts"),
     gemfile: check("Gemfile"),
     dockerfile: check("Dockerfile"),
-    workflowMd: check("WORKFLOW.md"),
     agentsMd: check("AGENTS.md"),
     claudeAgentsDir: check(".claude/agents"),
     claudeSkillsDir: check(".claude/skills"),

@@ -35,7 +35,7 @@ async function getIssuePipeline(c: unknown) {
     return { status: 404, body: { ok: false, error: "Issue not found" } };
   }
 
-  const providers = getEffectiveAgentProviders(context.state, issue, context.workflowDefinition);
+  const providers = getEffectiveAgentProviders(context.state, issue, null);
   const pipeline = await loadAgentPipelineSnapshotForIssue(issue, providers);
   return { body: { ok: true, issueId: issue.id, pipeline } };
 }
@@ -52,9 +52,9 @@ async function getIssueSessions(c: unknown) {
     return { status: 404, body: { ok: false, error: "Issue not found" } };
   }
 
-  const providers = getEffectiveAgentProviders(context.state, issue, context.workflowDefinition);
+  const providers = getEffectiveAgentProviders(context.state, issue, null);
   const pipeline = await loadAgentPipelineSnapshotForIssue(issue, providers);
-  const sessions = await loadAgentSessionSnapshotsForIssue(issue, providers, pipeline, context.workflowDefinition);
+  const sessions = await loadAgentSessionSnapshotsForIssue(issue, providers, pipeline, null);
   return { body: { ok: true, issueId: issue.id, pipeline, sessions } };
 }
 
@@ -111,7 +111,7 @@ async function createIssue(c: unknown) {
   const context = getApiRuntimeContextOrThrow();
   try {
     const payload = await (c as { req: { json: () => Promise<unknown> } }).req.json() as JsonRecord;
-    const issue = createIssueFromPayload(payload, context.state.issues);
+    const issue = createIssueFromPayload(payload, context.state.issues, context.state.config.defaultBranch);
     context.state.issues.push(issue);
     addEvent(context.state, issue.id, "info", `Issue ${issue.identifier} created via API.`);
     await persistState(context.state);

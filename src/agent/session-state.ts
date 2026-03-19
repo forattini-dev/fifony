@@ -6,15 +6,12 @@ import type {
   AgentSessionState,
   AgentSessionTurn,
   IssueEntry,
-  WorkflowDefinition,
 } from "./types.ts";
 import {
   now,
   clamp,
   idToSafePath,
   toNumberValue,
-  getNestedRecord,
-  getNestedNumber,
 } from "./helpers.ts";
 import { logger } from "./logger.ts";
 import {
@@ -124,9 +121,8 @@ export function getLatestPipelineAttempt(issue: IssueEntry): number {
   return Math.max(1, issue.attempts + 1);
 }
 
-export function stateConfigMaxTurnsFallback(workflowDefinition: WorkflowDefinition | null): number {
-  if (!workflowDefinition) return 4;
-  return clamp(getNestedNumber(getNestedRecord(workflowDefinition.config, "agent"), "max_turns", 4), 1, 16);
+export function stateConfigMaxTurnsFallback(): number {
+  return 4;
 }
 
 export async function loadAgentPipelineState(
@@ -235,14 +231,14 @@ export async function loadAgentSessionSnapshotsForIssue(
   issue: IssueEntry,
   providers: AgentProviderDefinition[],
   pipeline: AgentPipelineState | null,
-  workflowDefinition: WorkflowDefinition | null,
+  _workflowDefinition: null,
 ): Promise<Array<{ key: string; session: AgentSessionState; provider: string; role: string; cycle: number }>> {
   if (!pipeline) return [];
 
   const sessions: Array<{ key: string; session: AgentSessionState; provider: string; role: string; cycle: number }> = [];
   const attempt = pipeline.attempt;
   const agentSessionResource = getAgentSessionResource();
-  const maxTurns = stateConfigMaxTurnsFallback(workflowDefinition);
+  const maxTurns = stateConfigMaxTurnsFallback();
 
   if (agentSessionResource?.list) {
     try {

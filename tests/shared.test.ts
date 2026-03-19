@@ -44,7 +44,7 @@ function makeIssue(overrides: Partial<IssueEntry> = {}): IssueEntry {
     title: "Add JWT authentication",
     description: "Implement JWT-based auth in the API",
     priority: 2,
-    state: "Todo",
+    state: "Planned",
     labels: ["auth", "backend"],
     paths: ["src/auth.ts"],
     blockedBy: [],

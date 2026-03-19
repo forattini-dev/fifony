@@ -1,10 +1,9 @@
-import { existsSync } from "node:fs";
 import { renderPrompt } from "../../prompting.js";
 import { buildIntegrationSnippet } from "../../integrations/catalog.js";
 import { resolveTaskCapabilities } from "../../routing/capability-resolver.js";
 import { getIssue, getIssues, listEvents, WORKSPACE_ROOT } from "../database.js";
 import { apiGet, apiPost } from "../api-client.js";
-import { buildIntegrationGuide, buildIssuePrompt, WORKFLOW_PATH } from "../resources/resource-builder.js";
+import { buildIntegrationGuide, buildIssuePrompt } from "../resources/resource-builder.js";
 
 export async function getPrompt(name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
   if (name === "fifony-integrate-client") {
@@ -37,23 +36,6 @@ export async function getPrompt(name: string, args: Record<string, unknown> = {}
     };
   }
 
-  if (name === "fifony-review-workflow") {
-    const provider = typeof args.provider === "string" && args.provider.trim() ? args.provider.trim() : "claude";
-    return {
-      description: "Workflow review prompt for Fifony orchestration.",
-      messages: [{
-        role: "user",
-        content: {
-          type: "text",
-          text: await renderPrompt("mcp-review-workflow", {
-            provider,
-            workspaceRoot: WORKSPACE_ROOT,
-            workflowPresent: existsSync(WORKFLOW_PATH) ? "yes" : "no",
-          }),
-        },
-      }],
-    };
-  }
 
   if (name === "fifony-use-integration") {
     const integration = typeof args.integration === "string" ? args.integration : "";
@@ -159,8 +141,8 @@ export async function getPrompt(name: string, args: Record<string, unknown> = {}
     const totalIssues = issues.length;
     const completed = byState["Done"] ?? 0;
     const blocked = (byState["Blocked"] ?? 0) + (byState["Failed"] ?? 0);
-    const inProgress = (byState["Running"] ?? 0) + (byState["In Review"] ?? 0) + (byState["Queued"] ?? 0);
-    const todo = byState["Todo"] ?? 0;
+    const inProgress = (byState["Running"] ?? 0) + (byState["Reviewing"] ?? 0) + (byState["Reviewed"] ?? 0) + (byState["Queued"] ?? 0);
+    const planned = byState["Planned"] ?? 0;
     const planning = byState["Planning"] ?? 0;
     const cancelled = byState["Cancelled"] ?? 0;
     const inputTokens = typeof overall.inputTokens === "number" ? overall.inputTokens : 0;
@@ -177,7 +159,7 @@ export async function getPrompt(name: string, args: Record<string, unknown> = {}
       `| Total Issues | ${totalIssues} |`,
       `| Completed (Done) | ${completed} |`,
       `| In Progress | ${inProgress} |`,
-      `| Todo | ${todo} |`,
+      `| Planned | ${planned} |`,
       `| Planning | ${planning} |`,
       `| Blocked/Failed | ${blocked} |`,
       `| Cancelled | ${cancelled} |`,

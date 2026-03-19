@@ -1,8 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { copyFile, mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import { extname, join } from "node:path";
-import { env, argv, exit } from "node:process";
-import type { WorkflowDefinition } from "./types.ts";
+import { argv, exit } from "node:process";
 import {
   SOURCE_ROOT,
   SOURCE_MARKER,
@@ -14,7 +13,6 @@ import {
   parseIntArg,
 } from "./helpers.ts";
 import { logger } from "./logger.ts";
-import { PROMPT_TEMPLATES } from "../generated/prompts.ts";
 
 const SKIP_DIRS = new Set([
   ".git", ".fifony", "node_modules", ".venv", "data",
@@ -149,30 +147,6 @@ export async function ensureSourceReady(
   return sourceReadyPromise;
 }
 
-/**
- * Returns an empty WorkflowDefinition.
- * WORKFLOW.md is no longer supported — all configuration lives in s3db settings
- * (Settings → Workflow in the dashboard).
- */
-export function loadWorkflowDefinition(): WorkflowDefinition {
-  const defaultPrompt = PROMPT_TEMPLATES["workflow-default"];
-
-  return {
-    workflowPath: "",
-    rendered: "",
-    config: {},
-    promptTemplate: defaultPrompt,
-    agentProvider: "codex",
-    agentProfile: "",
-    agentProfilePath: "",
-    agentProfileInstructions: "",
-    agentProviders: [],
-    afterCreateHook: "",
-    beforeRunHook: "",
-    afterRunHook: "",
-    beforeRemoveHook: "",
-  };
-}
 
 export function parsePort(args: string[]): number | undefined {
   for (let i = 0; i < args.length; i += 1) {

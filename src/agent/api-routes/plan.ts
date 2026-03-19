@@ -1,4 +1,4 @@
-import type { RuntimeState, WorkflowDefinition } from "../types.ts";
+import type { RuntimeState } from "../types.ts";
 import { logger } from "../logger.ts";
 import { toStringValue } from "../helpers.ts";
 import { addEvent } from "../issues.ts";
@@ -19,7 +19,6 @@ import { enhanceIssueField } from "../issue-enhancer.ts";
 export function registerPlanRoutes(
   app: any,
   state: RuntimeState,
-  workflowDefinition: WorkflowDefinition | null,
 ): void {
   app.get("/api/planning/session", async (c: any) => {
     const session = await loadPlanningSession();
@@ -45,7 +44,7 @@ export function registerPlanRoutes(
       const description = toStringValue(payload.description);
       if (!title) return c.json({ ok: false, error: "Title is required." }, 400);
       logger.info({ title: title.slice(0, 80) }, "[API] POST /api/planning/generate");
-      const result = await generatePlan(title, description, state.config, workflowDefinition);
+      const result = await generatePlan(title, description, state.config, null);
       return c.json({ ok: true, plan: result.plan, usage: result.usage });
     } catch (error) {
       logger.error({ err: error }, `Plan generation failed: ${String(error)}`);
@@ -65,7 +64,7 @@ export function registerPlanRoutes(
       const title = toStringValue(payload.title);
       const description = toStringValue(payload.description);
       if (!title) return c.json({ ok: false, error: "Title is required." }, 400);
-      const result = await generatePlan(title, description, state.config, workflowDefinition);
+      const result = await generatePlan(title, description, state.config, null);
       return c.json({ ok: true, plan: result.plan, usage: result.usage });
     } catch (error) {
       logger.error({ err: error }, `Plan generation failed: ${String(error)}`);
@@ -85,7 +84,7 @@ export function registerPlanRoutes(
       const fast = body.fast === true;
 
       // Fire-and-forget — plan runs in background, updates via WS
-      generatePlanInBackground(issue, state.config, workflowDefinition, {
+      generatePlanInBackground(issue, state.config, null, {
         addEvent: (issueId, kind, message) => addEvent(state, issueId, kind as any, message),
         persistState: () => persistState(state),
         applyUsage: (iss, usage) => applyPlanUsage(iss, usage),
@@ -114,7 +113,7 @@ export function registerPlanRoutes(
       }
 
       // Fire-and-forget — refinement runs in background, updates via WS
-      refinePlanInBackground(issue, feedback, state.config, workflowDefinition, {
+      refinePlanInBackground(issue, feedback, state.config, null, {
         addEvent: (issueId, kind, message) => addEvent(state, issueId, kind as any, message),
         persistState: () => persistState(state),
         applyUsage: (iss, usage) => applyPlanUsage(iss, usage),
@@ -146,7 +145,7 @@ export function registerPlanRoutes(
       const result = await enhanceIssueField(
         { field, title, description, issueType, images, provider },
         state.config,
-        workflowDefinition,
+        null,
       );
 
       return c.json({ ok: true, field: result.field, value: result.value, provider: result.provider });

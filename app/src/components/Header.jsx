@@ -3,7 +3,6 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import { Kanban, ListTodo, Activity, Bot, TrendingUp, Sliders } from "lucide-react";
 import { timeAgo } from "../utils.js";
 import NotificationCenter from "./NotificationCenter.jsx";
-import { GlobalActivityBar } from "./GlobalActivityBar.jsx";
 
 const NAV_ITEMS = [
   { to: "/kanban", label: "Kanban", icon: Kanban },
@@ -93,9 +92,6 @@ export function Header({ issueCount, sourceRepo, updatedAt, onToggleEvents, even
       <div className="flex-1 gap-2">
         <Link to="/" className="btn btn-ghost text-xl font-bold tracking-tight" style={{ fontFamily: "'Space Grotesk', system-ui, sans-serif", letterSpacing: '-0.02em', fontWeight: 800 }}>fifony</Link>
         {repoDisplay && <span className="text-xs opacity-40 hidden lg:inline">{repoDisplay}</span>}
-        <div className="hidden md:flex ml-2">
-          <GlobalActivityBar issues={issues} />
-        </div>
       </div>
 
       <div className="flex-none hidden md:flex">

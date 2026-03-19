@@ -13,7 +13,6 @@ import type {
   ReasoningEffort,
   RuntimeState,
   WorkflowConfig,
-  WorkflowDefinition,
 } from "./types.ts";
 import { TARGET_ROOT } from "./constants.ts";
 import {
@@ -227,67 +226,27 @@ async function fetchCodexModels(): Promise<DiscoveredModel[]> {
           .map((m) => ({
             id: m.slug,
             provider: "codex",
-            label: m.display_name || m.slug,
+            label: m.slug,
             tier: m.description || (m.visibility === "list" ? "Supported" : "Legacy"),
           }));
       }
     }
   } catch {
-    // Cache unreadable — fall through to API
+    // Cache unreadable
   }
 
-  // 2. Fallback: OpenAI API filtered to gpt-5.*
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return [];
-
-  try {
-    const res = await fetch("https://api.openai.com/v1/models", {
-      headers: { Authorization: `Bearer ${apiKey}` },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) return [];
-    const data = (await res.json()) as { data?: Array<{ id: string }> };
-    if (!Array.isArray(data.data)) return [];
-
-    return data.data
-      .map((m) => m.id)
-      .filter((id) => /^gpt-5/i.test(id))
-      .filter((id) => !/(chat-latest|search-api|-\d{4}-\d{2}-\d{2}|-pro)/i.test(id))
-      .sort()
-      .map((id) => ({ id, provider: "codex", label: id, tier: "OpenAI model" }));
-  } catch {
-    return [];
-  }
+  return [];
 }
 
 /**
- * Discover Claude models from multiple sources (no hardcoding):
+ * Discover Claude models from the CLI binary (no API calls):
  *
- * 1. Anthropic API /v1/models (if ANTHROPIC_API_KEY is set)
- * 2. Extract model IDs embedded in the Claude CLI binary via `strings`
+ * 1. Extract model IDs embedded in the Claude CLI binary via `strings`
  *    — the binary contains all supported model IDs as string literals
- * 3. Parallel CLI probe as last resort (slow but works with OAuth)
+ * 2. Parallel CLI probe as last resort (slow but works with OAuth)
  */
 async function fetchAnthropicModels(): Promise<DiscoveredModel[]> {
-  // 1. Try Anthropic API (fast, authoritative — but requires API key)
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (apiKey) {
-    try {
-      const res = await fetch("https://api.anthropic.com/v1/models", {
-        headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (res.ok) {
-        const data = (await res.json()) as { data?: Array<{ id: string }> };
-        if (Array.isArray(data.data) && data.data.length > 0) {
-          const models = extractClaudeModels(data.data.map((m) => m.id));
-          if (models.length > 0) return models;
-        }
-      }
-    } catch { /* fall through */ }
-  }
-
-  // 2. Extract from Claude CLI binary (fast, no network, no tokens)
+  // 1. Extract from Claude CLI binary (fast, no network, no tokens)
   //    The compiled binary embeds model IDs as string literals.
   //    `strings <binary> | grep claude-` extracts them.
   try {
@@ -536,35 +495,27 @@ export function resolveWorkflowAgentProviders(
 
 export function getBaseAgentProviders(
   state: RuntimeState,
-  workflowDefinition: WorkflowDefinition | null,
 ): AgentProviderDefinition[] {
-  if (workflowDefinition?.agentProviders?.length) {
-    return workflowDefinition.agentProviders;
-  }
-
   return [
     {
       provider: state.config.agentProvider,
       role: "executor",
       command: state.config.agentCommand,
-      profile: workflowDefinition?.agentProfile ?? "",
-      profilePath: workflowDefinition?.agentProfilePath ?? "",
-      profileInstructions: workflowDefinition?.agentProfileInstructions ?? "",
+      profile: "",
+      profilePath: "",
+      profileInstructions: "",
     },
   ];
 }
 
 export function getCapabilityRoutingOptions(): CapabilityResolverOptions {
-  // WORKFLOW.md is no longer supported — routing overrides are not user-configurable.
-  // Provider/model/effort overrides from user settings are applied later via
+  // Provider/model/effort overrides from user settings are applied via
   // applyWorkflowConfigToProviders after capability classification.
   return { enabled: true, overrides: [] };
 }
 
-export function getCapabilityPriorityMap(
-  workflowDefinition: WorkflowDefinition | null,
-): Record<string, number> {
-  const defaults: Record<string, number> = {
+export function getCapabilityPriorityMap(): Record<string, number> {
+  return {
     security: 0,
     bugfix: 1,
     backend: 2,
@@ -575,24 +526,14 @@ export function getCapabilityPriorityMap(
     default: 7,
     "workflow-disabled": 8,
   };
-
-  const routingConfig = workflowDefinition ? getNestedRecord(workflowDefinition.config, "routing") : {};
-  const customPriorities = getNestedRecord(routingConfig, "priorities");
-
-  for (const [category, value] of Object.entries(customPriorities)) {
-    if (typeof category !== "string" || !category.trim()) continue;
-    defaults[category] = toNumberValue(value, defaults[category] ?? 100);
-  }
-
-  return defaults;
 }
 
 export function getIssueCapabilityPriority(
   issue: IssueEntry,
-  workflowDefinition: WorkflowDefinition | null,
+  _workflowDefinition: null,
 ): number {
   const category = issue.capabilityCategory?.trim() || "default";
-  const priorities = getCapabilityPriorityMap(workflowDefinition);
+  const priorities = getCapabilityPriorityMap();
   return priorities[category] ?? 100;
 }
 
@@ -657,10 +598,10 @@ export function applyWorkflowConfigToProviders(
 export function getEffectiveAgentProviders(
   state: RuntimeState,
   issue: IssueEntry,
-  workflowDefinition: WorkflowDefinition | null,
+  _workflowDefinition: null,
   workflowConfig?: WorkflowConfig | null,
 ): AgentProviderDefinition[] {
-  const baseProviders = getBaseAgentProviders(state, workflowDefinition);
+  const baseProviders = getBaseAgentProviders(state);
   const resolution = resolveTaskCapabilities(
     {
       id: issue.id,

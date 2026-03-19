@@ -10,7 +10,6 @@ import type {
   IssueEntry,
   RuntimeState,
   WorkflowConfig,
-  WorkflowDefinition,
 } from "./types.ts";
 import { SOURCE_ROOT, TARGET_ROOT, WORKSPACE_ROOT } from "./constants.ts";
 import { now, idToSafePath } from "./helpers.ts";
@@ -36,7 +35,6 @@ import { getWorkflowConfig, loadRuntimeSettings } from "./settings.ts";
 export async function runPlanningJob(
   state: RuntimeState,
   issue: IssueEntry,
-  workflowDefinition: WorkflowDefinition | null,
 ): Promise<void> {
   issue.planningStatus = "planning";
   issue.planningStartedAt = now();
@@ -56,7 +54,7 @@ export async function runPlanningJob(
       issue.title,
       issue.description,
       state.config,
-      workflowDefinition,
+      null,
       { persistSession: false },
     );
 
@@ -111,7 +109,6 @@ async function handleReviewStage(
   state: RuntimeState,
   issue: IssueEntry,
   workspacePath: string,
-  workflowDefinition: WorkflowDefinition | null,
   startTs: number,
   routedProviders: ReturnType<typeof getEffectiveAgentProviders>,
 ): Promise<void> {
@@ -155,7 +152,6 @@ async function handleReviewStage(
   const effectiveReviewer = { ...reviewer, command: compiled.command || reviewer.command };
   const reviewPromptFile = join(workspacePath, "review-prompt.md");
   writeFileSync(reviewPromptFile, `${compiled.prompt}\n`, "utf8");
-  (state as any)._workflowDefinition = workflowDefinition;
   const reviewResult = await runAgentSession(state, issue, effectiveReviewer, 1, workspacePath, compiled.prompt, reviewPromptFile);
   issue.durationMs = (issue.durationMs ?? 0) + (Date.now() - startTs);
   issue.commandExitCode = reviewResult.code;
@@ -210,7 +206,6 @@ async function handleExecutionStage(
   workspacePath: string,
   promptText: string,
   promptFile: string,
-  workflowDefinition: WorkflowDefinition | null,
   workflowConfig: WorkflowConfig | null,
   workspaceDerivedPaths: string[],
   startTs: number,
@@ -227,7 +222,7 @@ async function handleExecutionStage(
     addEvent(state, issue.id, "info", `Capability routing signals: ${routingSignals}.`);
   }
 
-  const runResult = await runAgentPipeline(state, issue, workspacePath, promptText, promptFile, workflowDefinition, workflowConfig);
+  const runResult = await runAgentPipeline(state, issue, workspacePath, promptText, promptFile, workflowConfig);
 
   issue.durationMs = Date.now() - startTs;
   issue.commandExitCode = runResult.code;
@@ -297,29 +292,30 @@ export async function runIssueOnce(
   state: RuntimeState,
   issue: IssueEntry,
   running: Set<string>,
-  workflowDefinition: WorkflowDefinition | null,
 ): Promise<void> {
   const startTs = Date.now();
   const isReviewing = issue.state === "Reviewing";
   const isResuming = issue.state === "Running";
   logger.info({ issueId: issue.id, identifier: issue.identifier, state: issue.state, isReviewing, isResuming, attempt: issue.attempts + 1, maxAttempts: issue.maxAttempts }, "[Agent] Starting issue execution");
+
+  // Planning jobs run in the background without occupying a worker slot.
+  // planningStatus="planning" (set immediately by runPlanningJob) acts as the dispatch guard
+  // so canRunIssue returns false while planning is in progress, preventing double-dispatch.
+  if (issue.state === "Planning") {
+    issue.startedAt = issue.startedAt ?? now();
+    runPlanningJob(state, issue)
+      .catch((err) => logger.error({ err, issueId: issue.id, identifier: issue.identifier }, "[Agent] Unexpected error in background planning job"))
+      .finally(() => {
+        state.metrics = computeMetrics(state.issues);
+        state.updatedAt = now();
+        persistState(state).catch(() => {});
+      });
+    return;
+  }
+
   running.add(issue.id);
   state.metrics.activeWorkers += 1;
   issue.startedAt = issue.startedAt ?? now();
-
-  if (issue.state === "Planning") {
-    try {
-      await runPlanningJob(state, issue, workflowDefinition);
-    } finally {
-      running.delete(issue.id);
-      state.metrics.activeWorkers = Math.max(state.metrics.activeWorkers - 1, 0);
-      state.metrics = computeMetrics(state.issues);
-      state.metrics.activeWorkers = Math.max(state.metrics.activeWorkers, 0);
-      state.updatedAt = now();
-      await persistState(state);
-    }
-    return;
-  }
 
   let workflowConfig: WorkflowConfig | null = null;
   try {
@@ -357,17 +353,17 @@ export async function runIssueOnce(
       })])];
     }
 
-    const { workspacePath, promptText, promptFile } = await prepareWorkspace(issue, workflowDefinition);
+    const { workspacePath, promptText, promptFile } = await prepareWorkspace(issue, state, state.config.defaultBranch);
     addEvent(state, issue.id, "info", `Workspace ready at ${workspacePath}.`);
 
-    const routedProviders = getEffectiveAgentProviders(state, issue, workflowDefinition, workflowConfig);
+    const routedProviders = getEffectiveAgentProviders(state, issue, null, workflowConfig);
 
     if (isReviewing) {
-      await handleReviewStage(state, issue, workspacePath, workflowDefinition, startTs, routedProviders);
+      await handleReviewStage(state, issue, workspacePath, startTs, routedProviders);
       return;
     }
 
-    await handleExecutionStage(state, issue, workspacePath, promptText, promptFile, workflowDefinition, workflowConfig, workspaceDerivedPaths, startTs, routedProviders);
+    await handleExecutionStage(state, issue, workspacePath, promptText, promptFile, workflowConfig, workspaceDerivedPaths, startTs, routedProviders);
   } catch (error) {
     issue.attempts += 1;
     issue.lastError = String(error);

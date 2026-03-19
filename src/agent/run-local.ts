@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { mkdirSync } from "node:fs";
 import { env, exit, argv } from "node:process";
-import { CLI_ARGS, STATE_ROOT, WORKFLOW_RENDERED } from "./constants.ts";
+import { CLI_ARGS, STATE_ROOT, TARGET_ROOT } from "./constants.ts";
 import { debugBoot, fail, now } from "./helpers.ts";
 import { initLogger, logger } from "./logger.ts";
 import { initStateStore, loadPersistedState, persistState, persistStateFull, closeStateStore } from "./store.ts";
@@ -16,7 +16,7 @@ import {
   resolveDefaultProvider,
   getProviderDefaultCommand,
 } from "./providers.ts";
-import { loadWorkflowDefinition, parsePort, setSkipSource } from "./workflow.ts";
+import { parsePort, setSkipSource } from "./workflow.ts";
 import { deriveConfig, applyWorkflowConfig, buildRuntimeState, computeMetrics, addEvent, validateConfig } from "./issues.ts";
 import { startApiServer } from "./api-server.ts";
 import { scheduler, installGracefulShutdown } from "./scheduler.ts";
@@ -24,6 +24,7 @@ import { cleanWorkspace, isAgentStillRunning, cleanStalePidFile } from "./agent.
 import { startDevFrontend } from "./dev-server.ts";
 import { recoverPlanningSession } from "./issue-planner.ts";
 import { hydrate as hydrateTokenLedger } from "./token-ledger.ts";
+import { detectDefaultBranch } from "./workspace-setup.ts";
 
 function usage() {
   console.log(
@@ -73,10 +74,6 @@ async function main() {
   if (skipSource) setSkipSource(true);
 
   debugBoot("main:state-root-ready");
-  logger.debug("[Boot] Loading workflow definition");
-  const workflowDefinition = loadWorkflowDefinition();
-  logger.info({ workflowPath: workflowDefinition.workflowPath }, "[Boot] Workflow definition loaded");
-  debugBoot("main:workflow-loaded");
 
   const port = parsePort(args);
   let config = applyWorkflowConfig(deriveConfig(args), port);
@@ -111,7 +108,6 @@ async function main() {
     trackerKind: "filesystem",
     sourceRepoUrl: "",
     sourceRef: "workspace",
-    workflowPath: "",
     config,
     issues: [],
     events: [],
@@ -122,7 +118,7 @@ async function main() {
 
   let apiState = earlyState;
   if (dashboardPort) {
-    await startApiServer(apiState, dashboardPort, workflowDefinition);
+    await startApiServer(apiState, dashboardPort);
     debugBoot("main:api-server-early-start");
 
     if (devMode) {
@@ -145,13 +141,23 @@ async function main() {
 
   config = applyPersistedSettings(config, persistedSettings);
   await syncRuntimeConfigSettings(config, persistedSettings);
-  const state = buildRuntimeState(previous, config, workflowDefinition);
+  const state = buildRuntimeState(previous, config);
   debugBoot("main:state-merged");
 
   state.config.dashboardPort = dashboardPort ? String(dashboardPort) : undefined;
-  state.workflowPath = WORKFLOW_RENDERED;
   state.updatedAt = now();
   state.booting = false;
+
+  // Detect and lock the default branch once at startup
+  if (!state.config.defaultBranch) {
+    try {
+      const detectedBranch = detectDefaultBranch(TARGET_ROOT);
+      state.config.defaultBranch = detectedBranch;
+      logger.info({ defaultBranch: detectedBranch }, "[Agent] Default branch detected");
+    } catch {
+      // Not a git repo or detection failed — leave undefined
+    }
+  }
 
   if (state.config.agentCommand) {
     state.notes.push(`Using agent command: ${state.config.agentCommand}`);
@@ -164,8 +170,8 @@ async function main() {
     const available = detectedProviders.filter((p) => p.available).map((p) => p.name);
     fail(
       available.length === 0
-        ? "No agent command configured and no providers (claude, codex) found in PATH.\nInstall claude or codex, or set FIFONY_AGENT_COMMAND / configure codex.command or claude.command in WORKFLOW.md."
-        : "No agent command configured. Set FIFONY_AGENT_COMMAND or configure codex.command / claude.command in WORKFLOW.md.",
+        ? "No agent command configured and no providers (claude, codex) found in PATH.\nInstall claude or codex, or set FIFONY_AGENT_COMMAND."
+        : "No agent command configured. Set FIFONY_AGENT_COMMAND.",
     );
   }
 
@@ -181,7 +187,7 @@ async function main() {
     logger.info(`Scheduling cleanup of ${terminalIssues.length} terminal workspace(s) in background...`);
     setImmediate(async () => {
       for (const issue of terminalIssues) {
-        try { await cleanWorkspace(issue.id, issue, workflowDefinition); } catch {}
+        try { await cleanWorkspace(issue.id, issue, state); } catch {}
       }
       logger.info("Background workspace cleanup complete.");
     });
@@ -223,7 +229,7 @@ async function main() {
   const running = new Set<string>();
   installGracefulShutdown(state, running);
 
-  logger.info(`Rendered local workflow: ${WORKFLOW_RENDERED}`);
+  logger.info("[Boot] Runtime ready");
   hydrateTokenLedger(state.issues);
   logger.info(`Loaded issues: ${state.issues.length}`);
   logger.info(`Worker concurrency: ${state.config.workerConcurrency}`);
@@ -236,7 +242,7 @@ async function main() {
     addEvent(state, undefined, "info", `Runtime started in local-only mode (filesystem tracker).`);
     const runForever = !runOnce && (Boolean(dashboardPort) || interfaceMode === "mcp");
     logger.info({ runForever, runOnce, dashboardPort, interfaceMode }, "[Boot] Entering scheduler loop");
-    await scheduler(state, running, runForever, workflowDefinition);
+    await scheduler(state, running, runForever);
   } catch (error) {
     console.error("FATAL STACK TRACE:", error);
     addEvent(state, undefined, "error", `Fatal runtime error: ${String(error)}`);

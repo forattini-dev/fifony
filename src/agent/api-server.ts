@@ -1,6 +1,5 @@
 import type {
   RuntimeState,
-  WorkflowDefinition,
 } from "./types.ts";
 import {
   existsSync,
@@ -34,12 +33,25 @@ import { registerScanningRoutes } from "./api-routes/scanning.js";
 import { registerCatalogRoutes } from "./api-routes/catalog.js";
 import { registerMiscRoutes } from "./api-routes/misc.js";
 
+// ── Route collector ──────────────────────────────────────────────────────────
+// Accumulates routes before ApiPlugin construction (ApiPlugin only accepts routes
+// via constructor config, not via .get()/.post() methods after creation).
+
+class RouteCollector {
+  readonly routes: Record<string, (c: any) => any> = {};
+
+  get(path: string, handler: (c: any) => any) { this.routes[`GET ${path}`] = handler; }
+  post(path: string, handler: (c: any) => any) { this.routes[`POST ${path}`] = handler; }
+  put(path: string, handler: (c: any) => any) { this.routes[`PUT ${path}`] = handler; }
+  patch(path: string, handler: (c: any) => any) { this.routes[`PATCH ${path}`] = handler; }
+  delete(path: string, handler: (c: any) => any) { this.routes[`DELETE ${path}`] = handler; }
+}
+
 // ── API server ───────────────────────────────────────────────────────────────
 
 export async function startApiServer(
   state: RuntimeState,
   port: number,
-  workflowDefinition: WorkflowDefinition | null,
 ): Promise<void> {
   logger.info({ port }, "[API] Starting API server");
   const stateDb = getStateDb();
@@ -71,7 +83,7 @@ export async function startApiServer(
     }
   }
 
-  setApiRuntimeContext(state, workflowDefinition);
+  setApiRuntimeContext(state);
 
   const serveTextFile = (filePath: string, contentType: string, cacheControl = "no-cache") => {
     if (!existsSync(filePath)) {
@@ -99,6 +111,16 @@ export async function startApiServer(
       },
     });
   };
+
+  // Collect routes from route modules before plugin instantiation
+  const collector = new RouteCollector();
+  registerStateRoutes(collector, state);
+  registerPlanRoutes(collector, state);
+  registerSettingsRoutes(collector, state);
+  registerAnalyticsRoutes(collector);
+  registerScanningRoutes(collector, state);
+  registerCatalogRoutes(collector);
+  registerMiscRoutes(collector, state);
 
   const apiPlugin = new ApiPlugin({
     port,
@@ -133,6 +155,7 @@ export async function startApiServer(
       ...resourceConfigs,
     },
     routes: {
+      ...collector.routes,
       "GET /manifest.webmanifest": () =>
         serveTextFile(FRONTEND_MANIFEST_JSON, "application/manifest+json; charset=utf-8"),
       "GET /service-worker.js": () =>
@@ -157,16 +180,6 @@ export async function startApiServer(
         c.json({ status: state.booting ? "booting" : "ready" }),
     },
   });
-
-  // Register routes via route modules
-  const app = apiPlugin;
-  registerStateRoutes(app, state, workflowDefinition);
-  registerPlanRoutes(app, state, workflowDefinition);
-  registerSettingsRoutes(app, state);
-  registerAnalyticsRoutes(app);
-  registerScanningRoutes(app, state);
-  registerCatalogRoutes(app);
-  registerMiscRoutes(app, state);
 
   const plugin = await stateDb.usePlugin(apiPlugin, "api") as { stop?: () => Promise<void> };
   setActiveApiPlugin(plugin);

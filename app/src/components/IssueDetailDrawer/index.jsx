@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   X, AlertTriangle, Loader, RotateCcw, PlayCircle, GitMerge,
-  ThumbsUp,
+  ThumbsUp, GitPullRequest,
 } from "lucide-react";
 import { api } from "../../api.js";
 import { useSwipeToDismiss } from "../../hooks/useSwipeToDismiss.js";
@@ -19,7 +19,7 @@ import { ReviewTab } from "./tabs/ReviewTab.jsx";
 
 // ── DrawerFooter ─────────────────────────────────────────────────────────────
 
-function DrawerFooter({ issue, onStateChange, onMerge, mergeBusy, mergeError, mergeNotice }) {
+function DrawerFooter({ issue, onStateChange, onMerge, onPush, mergeBusy, mergeError, mergeNotice, mergeMode }) {
   const footerStyle = { paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 0.75rem)" };
   const [executeBusy, setExecuteBusy] = useState(false);
   const [executeError, setExecuteError] = useState(null);
@@ -100,6 +100,7 @@ function DrawerFooter({ issue, onStateChange, onMerge, mergeBusy, mergeError, me
   }
 
   if (isDone && !isMerged) {
+    const isPushPr = mergeMode === "push-pr";
     return (
       <div className="px-6 py-3 border-t border-base-300 shrink-0 space-y-2" style={footerStyle}>
         {mergeError && (
@@ -113,14 +114,29 @@ function DrawerFooter({ issue, onStateChange, onMerge, mergeBusy, mergeError, me
           </div>
         )}
         <div className="flex items-center gap-2">
-          <button
-            className={`btn btn-primary btn-sm gap-1.5 flex-1 ${mergeBusy ? "btn-disabled" : ""}`}
-            onClick={() => onMerge?.(issue.id)}
-            disabled={mergeBusy}
-          >
-            {mergeBusy ? <Loader className="size-4 animate-spin" /> : <GitMerge className="size-4" />}
-            {mergeBusy ? "Merging..." : "Merge to Project"}
-          </button>
+          {isPushPr ? (
+            <button
+              className={`btn btn-primary btn-sm gap-1.5 flex-1 ${mergeBusy ? "btn-disabled" : ""}`}
+              onClick={() => onPush?.(issue.id)}
+              disabled={mergeBusy}
+            >
+              {mergeBusy ? <Loader className="size-4 animate-spin" /> : <GitPullRequest className="size-4" />}
+              {mergeBusy ? "Pushing..." : (
+                issue.baseBranch ? <>Push PR → <span className="font-mono">{issue.baseBranch}</span></> : "Push & Open PR"
+              )}
+            </button>
+          ) : (
+            <button
+              className={`btn btn-primary btn-sm gap-1.5 flex-1 ${mergeBusy ? "btn-disabled" : ""}`}
+              onClick={() => onMerge?.(issue.id)}
+              disabled={mergeBusy}
+            >
+              {mergeBusy ? <Loader className="size-4 animate-spin" /> : <GitMerge className="size-4" />}
+              {mergeBusy ? "Merging..." : (
+                issue.baseBranch ? <>Merge → <span className="font-mono">{issue.baseBranch}</span></> : "Merge to Project"
+              )}
+            </button>
+          )}
         </div>
       </div>
     );
@@ -131,7 +147,7 @@ function DrawerFooter({ issue, onStateChange, onMerge, mergeBusy, mergeError, me
 
 // ── IssueDetailDrawer ─────────────────────────────────────────────────────────
 
-export function IssueDetailDrawer({ issue, onClose, onStateChange, onRetry, onCancel, events }) {
+export function IssueDetailDrawer({ issue, onClose, onStateChange, onRetry, onCancel, events, mergeMode }) {
   const [tab, setTab] = useState("overview");
   const [visible, setVisible] = useState(false);
   const [closing, setClosing] = useState(false);
@@ -165,7 +181,7 @@ export function IssueDetailDrawer({ issue, onClose, onStateChange, onRetry, onCa
 
   const { ref: swipeRef, handlers: swipeHandlers } = useSwipeToDismiss({ onDismiss: handleClose, direction: "right" });
 
-  // Reset tab when issue changes — auto-open Review tab when In Review
+  // Reset tab when issue changes — auto-open Review tab when Reviewing/Reviewed
   useEffect(() => {
     setTab(issue?.state === "Planning" ? "planning" : (issue?.state === "Reviewing" || issue?.state === "Reviewed") ? "review" : "overview");
     setMergeBusy(false);
@@ -186,6 +202,27 @@ export function IssueDetailDrawer({ issue, onClose, onStateChange, onRetry, onCa
       setMergeNotice(conflicts > 0
         ? `Merge completed with ${conflicts} conflict${conflicts !== 1 ? "s" : ""}.`
         : `Merged ${mergedFiles} file${mergedFiles !== 1 ? "s" : ""} into the project.`);
+    } catch (err) {
+      setMergeError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setMergeBusy(false);
+    }
+  }, [issue?.id, mergeBusy]);
+
+  const handlePush = useCallback(async () => {
+    if (!issue?.id || mergeBusy) return;
+    setMergeBusy(true);
+    setMergeError(null);
+    setMergeNotice(null);
+    try {
+      const res = await api.post(`/issues/${encodeURIComponent(issue.id)}/push`);
+      if (!res.ok) throw new Error(res.error || "Push failed.");
+      if (res.prUrl) {
+        setMergeNotice(`Branch pushed. PR: ${res.prUrl}`);
+        window.open(res.prUrl, "_blank", "noopener");
+      } else {
+        setMergeNotice("Branch pushed to origin.");
+      }
     } catch (err) {
       setMergeError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -230,6 +267,12 @@ export function IssueDetailDrawer({ issue, onClose, onStateChange, onRetry, onCa
           <div className="flex items-center justify-between mb-1">
             <div className="flex items-center gap-2 min-w-0">
               <span className="font-mono text-xs opacity-40 shrink-0">{issue.identifier}</span>
+              {issue.baseBranch && (
+                <span className="flex items-center gap-0.5 text-[10px] font-mono opacity-40 shrink-0 border border-base-300 rounded px-1 py-0.5">
+                  <GitMerge className="size-2.5" />
+                  {issue.baseBranch}
+                </span>
+              )}
               {issue.state !== "Planning" && issue.plan && !["Running", "Reviewing", "Queued"].includes(issue.state) && (
                 <button
                   className="btn btn-ghost btn-xs gap-1 opacity-50 hover:opacity-100"
@@ -332,9 +375,11 @@ export function IssueDetailDrawer({ issue, onClose, onStateChange, onRetry, onCa
           issue={issue}
           onStateChange={onStateChange}
           onMerge={handleMerge}
+          onPush={handlePush}
           mergeBusy={mergeBusy}
           mergeError={mergeError}
           mergeNotice={mergeNotice}
+          mergeMode={mergeMode}
         />
       </div>
     </div>

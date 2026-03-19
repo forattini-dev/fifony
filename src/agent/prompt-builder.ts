@@ -1,15 +1,11 @@
 import type {
   AgentProviderDefinition,
   IssueEntry,
-  WorkflowDefinition,
 } from "./types.ts";
-import { renderPrompt, renderPromptString } from "../prompting.ts";
+import { renderPrompt } from "../prompting.ts";
 
-export async function buildPrompt(issue: IssueEntry, workflowDefinition: WorkflowDefinition | null): Promise<string> {
-  const template = workflowDefinition?.promptTemplate.trim();
-  const rendered = template
-    ? await renderPromptString(template, { issue, attempt: issue.attempts || 0 })
-    : await renderPrompt("workflow-default", { issue, attempt: issue.attempts || 0 });
+export async function buildPrompt(issue: IssueEntry, _workflowDefinition: null): Promise<string> {
+  const rendered = await renderPrompt("workflow-default", { issue, attempt: issue.attempts || 0 });
 
   if (!issue.plan?.steps?.length) {
     return rendered;

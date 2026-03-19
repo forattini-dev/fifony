@@ -1,7 +1,7 @@
 import type { RuntimeState } from "../types.ts";
 import { logger } from "../logger.ts";
 import { toStringValue } from "../helpers.ts";
-import { isAgentStillRunning } from "../agent.ts";
+import { isAgentStillRunning, pushWorktreeBranch } from "../agent.ts";
 import { addEvent } from "../issues.ts";
 import { persistState } from "../store.ts";
 import { findIssue, listEvents, parseIssue } from "../api-helpers.ts";
@@ -26,6 +26,107 @@ export function registerMiscRoutes(
   app: any,
   state: RuntimeState,
 ): void {
+  app.post("/api/issues/:id/push", async (c: any) => {
+    const issueId = parseIssue(c);
+    if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
+    const issue = findIssue(state, issueId);
+    if (!issue) return c.json({ ok: false, error: "Issue not found." }, 404);
+    if (issue.state !== "Done") {
+      return c.json({ ok: false, error: `Issue ${issue.identifier} must be in Done state to push. Current state: ${issue.state}.` }, 409);
+    }
+    try {
+      const prUrl = pushWorktreeBranch(issue);
+      issue.mergedAt = new Date().toISOString();
+      addEvent(state, issue.id, "merge", `Branch ${issue.branchName} pushed to origin. PR: ${prUrl}`);
+      await persistState(state);
+      return c.json({ ok: true, prUrl });
+    } catch (error) {
+      logger.error({ err: error }, `[API] Failed to push branch for ${issueId}`);
+      return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 500);
+    }
+  });
+
+  app.get("/api/live/:id/stream", (c: any) => {
+    const issueId = parseIssue(c);
+    if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
+    const issue = findIssue(state, issueId);
+    if (!issue) return c.json({ ok: false, error: "Issue not found." }, 404);
+
+    const enc = new TextEncoder();
+    const sseMsg = (data: unknown) => enc.encode(`data: ${JSON.stringify(data)}\n\n`);
+    const sseComment = () => enc.encode(": keepalive\n\n");
+
+    let intervalId: ReturnType<typeof setInterval>;
+    let keepaliveId: ReturnType<typeof setInterval>;
+
+    const stream = new ReadableStream({
+      start(ctrl) {
+        // Send initial content
+        const wp = issue.workspacePath;
+        const liveLog = wp ? `${wp}/live-output.log` : null;
+        let lastSize = 0;
+
+        if (liveLog && existsSync(liveLog)) {
+          try {
+            const stat = statSync(liveLog);
+            lastSize = stat.size;
+            const readSize = Math.min(lastSize, 16_384);
+            const fd = openSync(liveLog, "r");
+            const buf = Buffer.alloc(readSize);
+            readSync(fd, buf, 0, readSize, Math.max(0, lastSize - readSize));
+            closeSync(fd);
+            ctrl.enqueue(sseMsg({ type: "init", text: buf.toString("utf8"), size: lastSize }));
+          } catch {}
+        } else {
+          ctrl.enqueue(sseMsg({ type: "init", text: "", size: 0 }));
+        }
+
+        // Stream new bytes every second
+        intervalId = setInterval(() => {
+          const currentIssue = findIssue(state, issueId);
+          if (!currentIssue || (currentIssue.state !== "Running" && currentIssue.state !== "Reviewing" && currentIssue.state !== "Planning")) {
+            ctrl.enqueue(sseMsg({ type: "done", state: currentIssue?.state }));
+            clearInterval(intervalId);
+            clearInterval(keepaliveId);
+            try { ctrl.close(); } catch {}
+            return;
+          }
+          const logPath = currentIssue.workspacePath ? `${currentIssue.workspacePath}/live-output.log` : null;
+          if (logPath && existsSync(logPath)) {
+            try {
+              const stat = statSync(logPath);
+              if (stat.size > lastSize) {
+                const readSize = stat.size - lastSize;
+                const fd = openSync(logPath, "r");
+                const buf = Buffer.alloc(readSize);
+                readSync(fd, buf, 0, readSize, lastSize);
+                closeSync(fd);
+                lastSize = stat.size;
+                ctrl.enqueue(sseMsg({ type: "chunk", text: buf.toString("utf8"), size: lastSize }));
+              }
+            } catch {}
+          }
+        }, 1_000);
+
+        // Keepalive every 15s to prevent proxy timeouts
+        keepaliveId = setInterval(() => {
+          try { ctrl.enqueue(sseComment()); } catch {}
+        }, 15_000);
+      },
+      cancel() {
+        clearInterval(intervalId);
+        clearInterval(keepaliveId);
+      },
+    });
+
+    return c.body(stream, 200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+  });
+
   app.get("/api/live/:id", async (c: any) => {
     try {
       const issueId = parseIssue(c);
@@ -166,6 +267,21 @@ export function registerMiscRoutes(
       const issueId = parseIssue(c);
       logger.error(`Failed to load issue diff for ${issueId || "<unknown>"}: ${String(error)}`);
       return c.json({ ok: false, error: "Failed to load issue diff." }, 500);
+    }
+  });
+
+  app.post("/api/git/branch", async (c: any) => {
+    try {
+      const { branchName } = await c.req.json() as { branchName?: string };
+      if (!branchName || !/^[a-zA-Z0-9/_.-]+$/.test(branchName)) {
+        return c.json({ ok: false, error: "Invalid branch name." }, 400);
+      }
+      execSync(`git checkout -b "${branchName}"`, { cwd: TARGET_ROOT, stdio: "pipe" });
+      state.config.defaultBranch = branchName;
+      await persistState(state);
+      return c.json({ ok: true, defaultBranch: branchName });
+    } catch (error) {
+      return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 500);
     }
   });
 

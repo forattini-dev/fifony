@@ -115,6 +115,7 @@ function RootLayout() {
         onStateChange={ctx.updateState}
         onRetry={ctx.retryIssue}
         onCancel={ctx.cancelIssue}
+        mergeMode={ctx.data?.config?.mergeMode ?? "local"}
       />
       {shortcutsHelpOpen && (
         <Suspense fallback={null}>

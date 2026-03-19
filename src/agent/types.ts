@@ -134,7 +134,7 @@ export type IssuePlan = {
 
   // Structured plan (new format with phases)
   phases?: IssuePlanPhase[];
-  // Simple steps (legacy/simple format)
+  // Simple steps (flat list, used alongside phases)
   steps: IssuePlanStep[];
 
   // Context
@@ -173,11 +173,18 @@ export type RuntimeConfig = {
   retryDelayMs: number;
   staleInProgressTimeoutMs: number;
   logLinesTail: number;
+  maxPreviousOutputChars: number;
   agentProvider: string;
   agentCommand: string;
   defaultEffort: EffortConfig;
   dashboardPort?: string;
   runMode: "filesystem";
+  defaultBranch?: string;
+  mergeMode?: "local" | "push-pr";
+  afterCreateHook: string;
+  beforeRunHook: string;
+  afterRunHook: string;
+  beforeRemoveHook: string;
 };
 
 export type RuntimeMetrics = {
@@ -201,7 +208,6 @@ export type RuntimeState = {
   trackerKind: "filesystem";
   sourceRepoUrl: string;
   sourceRef: string;
-  workflowPath: string;
   dashboardPort?: string;
   booting?: boolean;
   config: RuntimeConfig;
@@ -360,21 +366,6 @@ export type RuntimeSettingRecord = {
   updatedAt: string;
 };
 
-export type WorkflowDefinition = {
-  workflowPath: string;
-  rendered: string;
-  config: JsonRecord;
-  promptTemplate: string;
-  agentProvider: string;
-  agentProfile: string;
-  agentProfilePath: string;
-  agentProfileInstructions: string;
-  agentProviders: AgentProviderDefinition[];
-  afterCreateHook: string;
-  beforeRunHook: string;
-  afterRunHook: string;
-  beforeRemoveHook: string;
-};
 
 export type FileSystemClientOptions = {
   basePath: string;

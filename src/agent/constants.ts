@@ -53,8 +53,6 @@ export const SOURCE_ROOT = `${STATE_ROOT}/source`;
 export const WORKSPACE_ROOT = `${STATE_ROOT}/workspaces`;
 export const SOURCE_MARKER = `${SOURCE_ROOT}/.fifony-local-source-ready`;
 
-export const WORKFLOW_RENDERED = `${STATE_ROOT}/WORKFLOW.local.md`;
-
 export const ATTACHMENTS_ROOT = `${STATE_ROOT}/attachments`;
 
 export const S3DB_DATABASE_PATH = `${STATE_ROOT}/s3db`;
