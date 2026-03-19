@@ -242,9 +242,10 @@ function collectClaudeUsage(): ProviderUsage | null {
     { slug: "claude-haiku-4-5", displayName: "Claude Haiku 4.5", description: "Fast and efficient model" },
   ];
 
-  // Detect subscription type from settings
+  // Detect subscription type and configured model from settings
   let plan = "pro";
   let resetInfo = "Weekly reset (every Monday 00:00 UTC)";
+  let currentModel = "";
   const settingsPath = join(claudeDir, "settings.json");
   if (existsSync(settingsPath)) {
     try {
@@ -252,6 +253,9 @@ function collectClaudeUsage(): ProviderUsage | null {
       if (settings.plan === "max" || settings.plan === "max5x") {
         plan = settings.plan;
         resetInfo = `Plan: ${settings.plan.toUpperCase()} — Weekly token limit resets every Monday 00:00 UTC`;
+      }
+      if (typeof settings.model === "string" && settings.model.trim()) {
+        currentModel = settings.model.trim();
       }
     } catch {}
   }
@@ -265,7 +269,7 @@ function collectClaudeUsage(): ProviderUsage | null {
     name: "claude",
     available,
     models,
-    currentModel: "claude-opus-4-6",
+    currentModel,
     usage: {
       today: makePeriod(todayInputTokens, todayOutputTokens, todaySessions, todayStart.toISOString()),
       thisWeek: makePeriod(weekInputTokens, weekOutputTokens, weekSessions, weekStart.toISOString()),

@@ -52,7 +52,7 @@ export const PROVIDER_EFFORT_SUPPORT = {
 };
 
 export function getEffortOptionsForRole(role, pipeline) {
-  const provider = pipeline?.[role] || "claude";
+  const provider = pipeline?.[role] || "codex";
   return PROVIDER_EFFORT_SUPPORT[provider] || EFFORT_OPTIONS;
 }
 

@@ -61,7 +61,7 @@ function ScanProjectStep({
     setAnalyzing(true);
     setAnalyzeError(null);
     try {
-      const data = await api.post("/scan/analyze", { provider: selectedProvider || "claude" });
+      const data = await api.post("/scan/analyze", { provider: selectedProvider || "codex" });
       setAnalysisResult(data);
       if (data.description) setProjectDescription(data.description);
     } catch (err) {
