@@ -196,7 +196,7 @@ function LoadingHero({ fadeOut = false }) {
       <div className="relative z-10 flex flex-col items-center gap-5">
         <div className="flex items-end gap-4">
           <img
-            src="/dinofffaur.png"
+            src="/assets/dinofffaur.png"
             alt=""
             className="h-20 sm:h-28 object-contain select-none pointer-events-none"
             style={{

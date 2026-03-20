@@ -4,7 +4,7 @@ function WelcomeStep({ workspacePath, onGetStarted }) {
   return (
     <div className="flex flex-col items-center text-center gap-6 stagger-children py-4">
       <img
-        src="/dinofffaur.png"
+        src="/assets/dinofffaur.png"
         alt="fifony mascot"
         className="h-72 sm:h-96 object-contain animate-bounce-in select-none pointer-events-none"
         style={{ filter: "drop-shadow(0 12px 40px rgba(128, 0, 255, 0.3))" }}
