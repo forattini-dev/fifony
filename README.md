@@ -85,7 +85,7 @@ stateDiagram-v2
 
 | Step | What happens |
 |------|-------------|
-| **Create** | Describe what you want done. |
+| **Create** | Describe what you want done. Hit **Enhance** — AI rewrites your title and description into a clear, actionable spec with acceptance criteria, edge cases, and suggested labels. One click turns a vague idea into a well-scoped task. |
 | **Plan** | The planner agent generates a structured execution plan: phases, steps, target files, complexity, risks. |
 | **Approve** | You review the plan. Optionally refine it with AI chat before approving. |
 | **Execute** | Agents run in an isolated git worktree. Live output streams to the dashboard. |
