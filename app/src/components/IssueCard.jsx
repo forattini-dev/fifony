@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import {
   Zap, Activity, GitMerge, CheckSquare, Clock,
   Loader, Play, Eye, AlertTriangle, Lightbulb, Pause, ListOrdered,
+  GitPullRequestArrow, XCircle,
 } from "lucide-react";
 import { timeAgo } from "../utils.js";
 import { useElapsedTime } from "../hooks/useElapsedTime.js";
@@ -244,6 +245,9 @@ export function IssueCard({
   const isBlocked    = issue.state === "Blocked";
   const isPlanBusy   = issue.planningStatus === "planning";
   const isMerged     = !!issue.mergedAt;
+  const hasMergeConflict = issue.mergeResult?.conflicts > 0;
+  const canMerge     = !isMerged && !hasMergeConflict && !!issue.branchName
+                       && (isDone || issue.state === "Reviewed");
 
   // Token bump animation
   const prevTokensRef = useRef(issue.tokenUsage?.totalTokens);
@@ -410,9 +414,21 @@ export function IssueCard({
           )}
           {/* createdAt — always shown */}
           <span className="shrink-0">{timeAgo(issue.createdAt)}</span>
+          {hasMergeConflict && (
+            <span className="inline-flex items-center gap-0.5 text-error font-semibold ml-auto shrink-0 opacity-100">
+              <XCircle size={10} />
+              merge failed
+            </span>
+          )}
+          {canMerge && (
+            <span className="inline-flex items-center gap-0.5 text-warning font-semibold ml-auto shrink-0 opacity-100 animate-pulse">
+              <GitPullRequestArrow size={10} />
+              ready to merge
+            </span>
+          )}
           {isMerged && (
-            <span className="inline-flex items-center gap-0.5 text-success/70 ml-auto shrink-0">
-              <GitMerge size={9} />
+            <span className="inline-flex items-center gap-0.5 text-success font-semibold ml-auto shrink-0 opacity-100">
+              <GitMerge size={10} />
               merged
             </span>
           )}
@@ -430,6 +446,16 @@ export function IssueCard({
       {/* Pending scheduler slot — subtle dashed indicator */}
       {isPlanning && !isPlanBusy && !issue.plan && !issue.planningError && (
         <div className="h-[2px] rounded-b-[var(--rounded-box,1rem)] bg-info/20 animate-pulse" />
+      )}
+      {/* Merge status bars */}
+      {hasMergeConflict && (
+        <div className="h-[3px] rounded-b-[var(--rounded-box,1rem)] bg-error animate-pulse" />
+      )}
+      {canMerge && (
+        <div className="h-[3px] rounded-b-[var(--rounded-box,1rem)] bg-warning animate-pulse-soft" />
+      )}
+      {isMerged && (
+        <div className="h-[3px] rounded-b-[var(--rounded-box,1rem)] bg-success" />
       )}
     </div>
   );
