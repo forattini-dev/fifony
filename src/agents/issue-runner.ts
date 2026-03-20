@@ -22,7 +22,7 @@ import { generatePlan } from "./planning/issue-planner.ts";
 import { persistState } from "../persistence/store.ts";
 import { addTokenUsage } from "./directive-parser.ts";
 import { runAgentSession, runAgentPipeline } from "./agent-pipeline.ts";
-import { computeDiffStats, syncIssueDiffStatsToStore } from "../domains/workspace.ts";
+import { computeDiffStats } from "../domains/workspace.ts";
 import { ensureWorktreeCommitted, hydrateIssuePathsFromWorkspace, describeRoutingSignals } from "../domains/workspace.ts";
 import { prepareWorkspace } from "../domains/workspace.ts";
 import { inferCapabilityPaths } from "../routing/capability-resolver.ts";
@@ -234,7 +234,8 @@ async function handleExecutionStage(
 
     computeDiffStats(issue);
     container.issueRepository.markDirty(issue.id);
-    await syncIssueDiffStatsToStore(issue).catch(() => {});
+    // NOTE: EC add() for diff stats happens only at merge time (merge-workspace.command.ts).
+    // Here we just compute and persist the values on the issue for display.
     if (issue.filesChanged) {
       container.eventStore.addEvent(issue.id, "info", `Diff: ${issue.filesChanged} files, +${issue.linesAdded || 0} -${issue.linesRemoved || 0} lines.`);
     }
