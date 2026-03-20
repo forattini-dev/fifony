@@ -194,26 +194,7 @@ Add to `claude_desktop_config.json` or VS Code settings:
 
 ## REST API
 
-Interactive docs at `http://localhost:4000/docs`.
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /api/state` | Full runtime state: issues, metrics, config |
-| `POST /api/issues/create` | Create an issue |
-| `POST /api/issues/enhance` | AI-enhance title and description |
-| `POST /api/issues/:id/plan` | Generate execution plan |
-| `POST /api/issues/:id/plan/refine` | Refine plan with chat feedback |
-| `POST /api/issues/:id/approve` | Approve plan, start execution |
-| `POST /api/issues/:id/merge` | Merge workspace to project root |
-| `GET /api/live/:id` | Live agent output: PID, log tail, elapsed time |
-| `GET /api/diff/:id` | Git diff of workspace changes |
-| `GET /api/config/workflow` | Pipeline workflow configuration |
-| `GET /api/analytics/tokens` | Token usage summary |
-| `GET /api/analytics/hourly` | Hourly usage buckets (48h retention) |
-| `GET /api/providers` | Detected providers and availability |
-| `GET /api/catalog/agents` | Agent catalog, filterable by domain |
-| `POST /api/install/agents` | Install agents to project |
-| `/ws` | WebSocket for real-time state updates |
+All endpoints are auto-documented via the s3db.js ApiPlugin. Open **http://localhost:4000/docs** for the interactive OpenAPI explorer with request/response schemas, try-it-out forms, and WebSocket details.
 
 ---
 
