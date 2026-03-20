@@ -110,31 +110,29 @@ Install as a desktop app. Works offline. Desktop notifications when issues chang
 
 ---
 
-## Agent & Skill Catalog
+## Agents, Skills & Reference Repositories
 
-fifony ships with 15 specialist agents:
+fifony pulls agents and skills from three open-source reference repositories during onboarding:
 
-| Agent | Focus |
-|-------|-------|
-| Frontend Developer | React, Vue, CSS, responsive design |
-| Backend Architect | APIs, microservices, scalable systems |
-| Database Optimizer | Schema design, query optimization, indexing |
-| Security Engineer | OWASP, threat modeling, secure code review |
-| DevOps Automator | CI/CD, Docker, Kubernetes, cloud infrastructure |
-| Mobile App Builder | iOS, Android, React Native, Flutter |
-| AI Engineer | ML models, LLM integration, data pipelines |
-| UI Designer | Visual design, component libraries, design systems |
-| UX Architect | UX patterns, accessibility, information architecture |
-| Code Reviewer | Code quality, best practices, constructive feedback |
-| Technical Writer | Docs, READMEs, API references, tutorials |
-| SRE | Reliability, observability, incident response |
-| Data Engineer | ETL, data warehousing, analytics infrastructure |
-| Software Architect | System design, DDD, architectural patterns |
-| Game Designer | Game mechanics, level design, cross-engine |
+| Repository | What it provides |
+|------------|-----------------|
+| **[LerianStudio/ring](https://github.com/LerianStudio/ring)** | 80+ specialist agents, skills, engineering standards, review commands, and prompt libraries for full-stack development. |
+| **[msitarzewski/agency-agents](https://github.com/msitarzewski/agency-agents)** | Focused agent set for frontend, backend, QA, and review roles. |
+| **[pbakaus/impeccable](https://github.com/pbakaus/impeccable)** | Frontend polish skills — design system enforcement, accessibility audits, and visual quality workflows. |
 
-And 5 skills: `commit`, `review-pr`, `debug`, `testing`, `impeccable` (frontend design system).
+Repositories are cloned to `~/.fifony/repositories/` and synced on demand. During onboarding, fifony scans them and recommends agents/skills matching your project's domain. You pick what to install.
 
-Agents install to `.claude/agents/` and `.codex/agents/` during onboarding. Skills load from `SKILL.md` files in `.claude/skills/`, `.codex/skills/`, or your home directory. fifony infers the right agent from the issue description and target file paths — capability routing is automatic.
+Agents install to `.claude/agents/` and `.codex/agents/`. Skills load from `SKILL.md` files in `.claude/skills/` or `.codex/skills/`. fifony infers the right agent from the issue description and target file paths — capability routing is automatic.
+
+```bash
+# Manage reference repositories from the CLI
+fifony onboarding list                                    # list repos and sync status
+fifony onboarding sync                                    # sync all
+fifony onboarding sync --repository ring                  # sync one
+fifony onboarding import ring --kind agents               # import agents
+fifony onboarding import impeccable --kind skills          # import skills
+fifony onboarding import agency-agents --kind agents --overwrite  # overwrite existing
+```
 
 ---
 
@@ -161,13 +159,6 @@ npx -y fifony --once
 
 # Fine-grained control
 npx -y fifony --concurrency 2 --attempts 3 --poll 500
-
-# Onboarding reference repositories
-fifony onboarding list
-fifony onboarding sync
-fifony onboarding sync --repository ring
-fifony onboarding import ring --kind skills
-fifony onboarding import agency-agents --kind agents --overwrite
 ```
 
 ---
