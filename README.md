@@ -1,5 +1,5 @@
 <div align="center">
-<img src="dinofffaur.png" alt="fifony mascot" width="140" />
+<img src="app/public/dinofffaur.png" alt="fifony mascot" width="140" />
 <br><br>
 
 # fifony
