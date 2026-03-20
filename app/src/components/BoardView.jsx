@@ -29,6 +29,7 @@ const COLUMNS = ["Planning", "In Progress", "Reviewing", "Blocked", "Done", "Can
 const PLANNING_STATES = new Set(["Planning", "Planned"]);
 const IN_PROGRESS_STATES = new Set(["Queued", "Running"]);
 const REVIEWING_STATES = new Set(["Reviewing", "Reviewed"]);
+const DONE_STATES = new Set(["Done", "Merged"]);
 
 const COLUMN_BADGE = {
   Planning: "badge-info",
@@ -439,6 +440,7 @@ export function BoardView({ issues, onStateChange, onRetry, onCancel, onSelect, 
       if (PLANNING_STATES.has(issue.state)) col = "Planning";
       else if (IN_PROGRESS_STATES.has(issue.state)) col = "In Progress";
       else if (REVIEWING_STATES.has(issue.state)) col = "Reviewing";
+      else if (DONE_STATES.has(issue.state)) col = "Done";
       else col = buckets[issue.state] ? issue.state : "Planning";
       buckets[col].push(issue);
     }

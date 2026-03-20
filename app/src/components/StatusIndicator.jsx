@@ -2,7 +2,7 @@ import React from "react";
 import { useElapsedTime } from "../hooks/useElapsedTime.js";
 import {
   Loader, Clock, Play, Eye, AlertTriangle, CheckCircle2,
-  XCircle, ListOrdered, Lightbulb, Timer,
+  XCircle, ListOrdered, Lightbulb, Timer, GitMerge,
 } from "lucide-react";
 
 /**
@@ -78,7 +78,10 @@ function deriveSubStatus(issue) {
       };
 
     case "Done":
-      return { label: "Completed", icon: CheckCircle2, color: "text-success", spin: false };
+      return { label: "Approved", icon: CheckCircle2, color: "text-success", spin: false };
+
+    case "Merged":
+      return { label: "Merged", icon: GitMerge, color: "text-success", spin: false };
 
     case "Cancelled":
       return { label: "Cancelled", icon: XCircle, color: "text-neutral", spin: false };

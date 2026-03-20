@@ -6,12 +6,14 @@ export function computeMetrics(issues: IssueEntry[]): RuntimeMetrics {
   let inProgress = 0;
   let blocked = 0;
   let done = 0;
+  let merged = 0;
   let cancelled = 0;
   const completionTimes: number[] = [];
 
   for (const issue of issues) {
-    const duration = issue.durationMs;
-    if (issue.state === "Done") {
+    // Completion time stats — only for Merged issues (truly finished)
+    if (issue.state === "Merged") {
+      const duration = issue.durationMs;
       const candidate = typeof duration === "number" && Number.isFinite(duration)
         ? duration
         : Number.isFinite(Date.parse(issue.startedAt ?? "")) && Number.isFinite(Date.parse(issue.completedAt ?? ""))
@@ -41,6 +43,9 @@ export function computeMetrics(issues: IssueEntry[]): RuntimeMetrics {
       case "Done":
         done += 1;
         break;
+      case "Merged":
+        merged += 1;
+        break;
       case "Cancelled":
         cancelled += 1;
         break;
@@ -55,6 +60,7 @@ export function computeMetrics(issues: IssueEntry[]): RuntimeMetrics {
       inProgress,
       blocked,
       done,
+      merged,
       cancelled,
       activeWorkers: 0,
     };
@@ -74,6 +80,7 @@ export function computeMetrics(issues: IssueEntry[]): RuntimeMetrics {
     inProgress,
     blocked,
     done,
+    merged,
     cancelled,
     activeWorkers: 0,
     avgCompletionMs: Math.round(totalCompletionMs / completionTimes.length),

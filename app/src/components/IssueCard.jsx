@@ -28,6 +28,7 @@ const STATE_BORDER_LEFT = {
   Reviewed:   "border-l-success/60",
   Blocked:    "border-l-error",
   Done:       "border-l-success",
+  Merged:     "border-l-success",
   Cancelled:  "border-l-neutral",
 };
 
@@ -240,14 +241,15 @@ export function IssueCard({
 }) {
   const isRunning    = issue.state === "Running";
   const isPlanning   = issue.state === "Planning";
-  const isDone       = issue.state === "Done";
+  const isDone       = issue.state === "Done" || issue.state === "Merged";
+  const isMergedState = issue.state === "Merged";
   const isCancelled  = issue.state === "Cancelled";
   const isBlocked    = issue.state === "Blocked";
   const isPlanBusy   = issue.planningStatus === "planning";
   const isMerged     = !!issue.mergedAt;
   const hasMergeConflict = issue.mergeResult?.conflicts > 0;
-  const canMerge     = !isMerged && !hasMergeConflict && !!issue.branchName
-                       && (isDone || issue.state === "Reviewed");
+  const canMerge     = !isMerged && !isMergedState && !hasMergeConflict && !!issue.branchName
+                       && issue.state === "Done";
 
   // Token bump animation
   const prevTokensRef = useRef(issue.tokenUsage?.totalTokens);
@@ -266,7 +268,7 @@ export function IssueCard({
   }, [issue.tokenUsage?.totalTokens]);
 
   useEffect(() => {
-    if (prevStateRef.current !== "Done" && issue.state === "Done") {
+    if ((prevStateRef.current !== "Merged" && issue.state === "Merged") || (prevStateRef.current !== "Done" && issue.state === "Done")) {
       setCompletionFlash(true);
       const t = setTimeout(() => setCompletionFlash(false), 800);
       prevStateRef.current = issue.state;

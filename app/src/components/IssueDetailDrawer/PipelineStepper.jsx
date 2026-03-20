@@ -8,12 +8,13 @@ export const PIPELINE_STEPS = [
   { key: "execute", label: "Execute", icon: PlayCircle, states: ["Planned", "Queued", "Running"] },
   { key: "review", label: "Review", icon: Eye, states: ["Reviewing", "Reviewed"] },
   { key: "done", label: "Approved", icon: CheckCircle2, states: ["Done"] },
-  { key: "merge", label: "Merge", icon: GitMerge, states: [] },
+  { key: "merge", label: "Merge", icon: GitMerge, states: ["Merged"] },
 ];
 
 export function getPipelineIndex(issue) {
   if (issue.state === "Cancelled") return -1;
-  if (issue.mergedAt || issue.state === "Done") return 4;
+  if (issue.state === "Merged") return 4;
+  if (issue.state === "Done") return 3;
   if (issue.state === "Reviewing" || issue.state === "Reviewed") return 2;
   if (["Running", "Queued", "Planned"].includes(issue.state)) return 1;
   if (issue.state === "Blocked") return issue.tokensByPhase?.reviewer?.totalTokens > 0 ? 2 : 1;
@@ -23,7 +24,7 @@ export function getPipelineIndex(issue) {
 
 export function PipelineStepper({ issue }) {
   const currentIdx = getPipelineIndex(issue);
-  const isMerged = !!issue.mergedAt;
+  const isMerged = !!issue.mergedAt || issue.state === "Merged";
   const isCancelled = issue.state === "Cancelled";
 
   if (isCancelled) return null;

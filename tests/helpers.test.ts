@@ -230,7 +230,7 @@ describe("clamp", () => {
 // ── normalizeState() ──────────────────────────────────────────────────────────
 
 describe("normalizeState", () => {
-  const validStates = ["Planning", "Planned", "Queued", "Running", "Reviewing", "Reviewed", "Blocked", "Done", "Cancelled"];
+  const validStates = ["Planning", "Planned", "Queued", "Running", "Reviewing", "Reviewed", "Blocked", "Done", "Merged", "Cancelled"];
 
   for (const state of validStates) {
     it(`passes through valid state: ${state}`, () => {

@@ -9,6 +9,7 @@ export type IssueState =
   | "Reviewed"
   | "Blocked"
   | "Done"
+  | "Merged"
   | "Cancelled";
 
 export type RuntimeEventType =
@@ -202,6 +203,7 @@ export type RuntimeMetrics = {
   inProgress: number;
   blocked: number;
   done: number;
+  merged: number;
   cancelled: number;
   activeWorkers: number;
   avgCompletionMs?: number;

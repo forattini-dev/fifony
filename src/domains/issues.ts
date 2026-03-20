@@ -322,7 +322,7 @@ export function issueDependenciesResolved(issue: IssueEntry, allIssues: IssueEnt
   const map = new Map(allIssues.map((entry) => [entry.id, entry]));
   return issue.blockedBy.every((dependencyId) => {
     const dep = map.get(dependencyId);
-    return dep?.state === "Done";
+    return dep?.state === "Done" || dep?.state === "Merged";
   });
 }
 

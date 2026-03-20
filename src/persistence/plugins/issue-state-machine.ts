@@ -128,9 +128,13 @@ export const issueStateMachineConfig = {
           entry: "onEnterBlocked",
         },
         Done: {
+          on: { MERGE: "Merged", REOPEN: "Planning" },
+          entry: "onEnterDone",
+        },
+        Merged: {
           on: { REOPEN: "Planning" },
           type: "final" as const,
-          entry: "onEnterDone",
+          entry: "onEnterMerged",
         },
         Cancelled: {
           on: { REOPEN: "Planning" },
@@ -210,30 +214,57 @@ export const issueStateMachineConfig = {
       }
     },
 
-    onEnterDone: async (context: Record<string, unknown>, _event: string, machine: Machine) => {
+    onEnterDone: async (context: Record<string, unknown>, _event: string, _machine: Machine) => {
+      const issue = resolveIssue(context);
+      if (issue) {
+        // Done = approved, waiting for merge. Not terminal yet.
+        issue.nextRetryAt = undefined;
+        issue.lastError = undefined;
+        // Pre-compute diff stats for display (but EC add() happens only on Merged)
+        if (!issue.linesAdded && !issue.linesRemoved && issue.baseBranch && issue.branchName) {
+          computeDiffStats(issue);
+        }
+        emitFsmEvent(issue.id, "state", `${issue.identifier} approved — waiting for merge.`);
+      }
+    },
+
+    onEnterMerged: async (context: Record<string, unknown>, _event: string, machine: Machine) => {
       const issue = resolveIssue(context);
       const ts = new Date().toISOString();
       const week = isoWeek();
       if (issue) {
+        // Ensure diff stats are computed
         if (!issue.linesAdded && !issue.linesRemoved && issue.baseBranch && issue.branchName) {
           computeDiffStats(issue);
         }
         issue.completedAt = ts;
         issue.terminalWeek = week;
+        if (!issue.mergedAt) issue.mergedAt = ts;
         issue.nextRetryAt = undefined;
         issue.lastError = undefined;
-        // NOTE: Do NOT call syncIssueDiffStatsToStore here — it's already called
-        // by the issue-runner after execution and by merge-workspace at merge time.
-        // Calling it here would race with those and produce delta=0 (no EC tracking).
-        emitFsmEvent(issue.id, "state", `${issue.identifier} completed.`);
+        emitFsmEvent(issue.id, "state", `${issue.identifier} merged.`);
       }
       const res = issueResource(machine);
       if (res) {
         res.patch(machine.entityId, {
-          completedAt: ts, terminalWeek: week, nextRetryAt: undefined, lastError: undefined,
+          completedAt: ts, terminalWeek: week, mergedAt: issue?.mergedAt ?? ts,
+          nextRetryAt: undefined, lastError: undefined,
           linesAdded: issue?.linesAdded, linesRemoved: issue?.linesRemoved, filesChanged: issue?.filesChanged,
           branchName: issue?.branchName, workspacePath: issue?.workspacePath, worktreePath: issue?.worktreePath,
         }).catch(() => {});
+
+        // EC: add() raw diff stats at merge time (the moment code churn is finalized)
+        const add = (res as any).add;
+        if (typeof add === "function" && issue) {
+          try {
+            if (issue.linesAdded)   await add.call(res, machine.entityId, "linesAdded", issue.linesAdded);
+            if (issue.linesRemoved) await add.call(res, machine.entityId, "linesRemoved", issue.linesRemoved);
+            if (issue.filesChanged) await add.call(res, machine.entityId, "filesChanged", issue.filesChanged);
+            logger.info({ issueId: issue.id, linesAdded: issue.linesAdded, linesRemoved: issue.linesRemoved, filesChanged: issue.filesChanged }, "[FSM] EC add() for diff stats on merge");
+          } catch (err) {
+            logger.warn({ err: String(err), issueId: issue?.id }, "[FSM] EC add() failed for diff stats");
+          }
+        }
       }
     },
 
@@ -274,6 +305,7 @@ const EVENT_TO_STATE: Record<string, IssueState> = {
   REVIEW: "Reviewing",
   REVIEWED: "Reviewed",
   DONE: "Done",
+  MERGE: "Merged",
   CANCEL: "Cancelled",
   BLOCK: "Blocked",
   UNBLOCK: "Queued",

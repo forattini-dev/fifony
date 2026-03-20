@@ -11,18 +11,20 @@ const COLUMN_STATES = {
   "In Progress": ["Queued", "Running"],
   Reviewing: ["Reviewing", "Reviewed"],
   Blocked: ["Blocked"],
-  Done: ["Done"],
+  Done: ["Done", "Merged"],
   Cancelled: ["Cancelled"],
 };
 
-/** Reverse: actual states → column name. Must match BoardView's PLANNING_STATES, IN_PROGRESS_STATES and REVIEWING_STATES. */
+/** Reverse: actual states → column name. Must match BoardView's grouping sets. */
 const PLANNING_STATES = new Set(["Planning", "Planned"]);
 const IN_PROGRESS_STATES = new Set(["Queued", "Running"]);
 const REVIEWING_STATES = new Set(["Reviewing", "Reviewed"]);
+const DONE_STATES = new Set(["Done", "Merged"]);
 function stateToColumn(state) {
   if (PLANNING_STATES.has(state)) return "Planning";
   if (IN_PROGRESS_STATES.has(state)) return "In Progress";
   if (REVIEWING_STATES.has(state)) return "Reviewing";
+  if (DONE_STATES.has(state)) return "Done";
   return state;
 }
 

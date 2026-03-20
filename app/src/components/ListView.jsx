@@ -10,12 +10,12 @@ import { timeAgo, formatDuration } from "../utils.js";
 
 const STATE_BADGE = {
   Planning: "badge-info", Planned: "badge-warning", Queued: "badge-info", Running: "badge-primary",
-  Reviewing: "badge-secondary", Reviewed: "badge-success", Blocked: "badge-error", Done: "badge-success", Cancelled: "badge-neutral",
+  Reviewing: "badge-secondary", Reviewed: "badge-success", Blocked: "badge-error", Done: "badge-success", Merged: "badge-success", Cancelled: "badge-neutral",
 };
 
 const STATE_BG = {
   Planning: "border-l-info", Planned: "border-l-warning", Queued: "border-l-info", Running: "border-l-primary",
-  Reviewing: "border-l-secondary", Reviewed: "border-l-success", Blocked: "border-l-error", Done: "border-l-success", Cancelled: "border-l-neutral",
+  Reviewing: "border-l-secondary", Reviewed: "border-l-success", Blocked: "border-l-error", Done: "border-l-success", Merged: "border-l-success", Cancelled: "border-l-neutral",
 };
 
 function formatTokens(n) {

@@ -4,11 +4,11 @@ import ListView from "../components/ListView";
 import { Search, X, Filter, SlidersHorizontal, Eye } from "lucide-react";
 import { useMemo, useState } from "react";
 
-const STATES = ["Planning", "Planned", "Queued", "Running", "Reviewing", "Reviewed", "Blocked", "Done", "Cancelled"];
+const STATES = ["Planning", "Planned", "Queued", "Running", "Reviewing", "Reviewed", "Blocked", "Done", "Merged", "Cancelled"];
 
 const STATE_COLOR = {
   Planning: "badge-info", Planned: "badge-warning", Queued: "badge-info", Running: "badge-primary",
-  Reviewing: "badge-secondary", Reviewed: "badge-success", Blocked: "badge-error", Done: "badge-success", Cancelled: "badge-neutral",
+  Reviewing: "badge-secondary", Reviewed: "badge-success", Blocked: "badge-error", Done: "badge-success", Merged: "badge-success", Cancelled: "badge-neutral",
 };
 
 const COMPLETION_OPTIONS = [

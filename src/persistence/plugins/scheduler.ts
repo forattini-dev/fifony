@@ -3,7 +3,7 @@ import type {
   ParallelismAnalysis,
   RuntimeState,
 } from "../../types.ts";
-import { EXECUTING_STATES, TERMINAL_STATES } from "../../concerns/constants.ts";
+import { EXECUTING_STATES, TERMINAL_STATES, COMPLETED_STATES } from "../../concerns/constants.ts";
 import { now } from "../../concerns/helpers.ts";
 import { logger } from "../../concerns/logger.ts";
 import { persistState } from "../store.ts";
@@ -193,5 +193,5 @@ export async function ensureNotStale(state: RuntimeState, staleTimeoutMs: number
 }
 
 export function hasTerminalQueue(state: RuntimeState): boolean {
-  return state.issues.every((issue) => TERMINAL_STATES.has(issue.state) || issue.attempts >= issue.maxAttempts);
+  return state.issues.every((issue) => COMPLETED_STATES.has(issue.state) || issue.attempts >= issue.maxAttempts);
 }

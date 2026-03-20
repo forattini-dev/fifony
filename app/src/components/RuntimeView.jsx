@@ -1,18 +1,18 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { Cpu, Circle, Clock, Terminal, CheckCircle2, XCircle, AlertTriangle, Eye, ListOrdered, Zap, Gauge, Users, Loader, ChevronDown, ChevronUp } from "lucide-react";
+import { Cpu, Circle, Clock, Terminal, CheckCircle2, XCircle, AlertTriangle, Eye, ListOrdered, Zap, Gauge, Users, Loader, ChevronDown, ChevronUp, GitMerge } from "lucide-react";
 import { timeAgo, formatDuration } from "../utils.js";
 import { api } from "../api.js";
 import { useWorkflowConfig } from "../hooks/useWorkflowConfig.js";
 
 const STATE_BADGE = {
   Queued: "badge-info", Running: "badge-primary", Reviewing: "badge-secondary",
-  Reviewed: "badge-success", Blocked: "badge-error", Done: "badge-success", Cancelled: "badge-neutral",
+  Reviewed: "badge-success", Blocked: "badge-error", Done: "badge-success", Merged: "badge-success", Cancelled: "badge-neutral",
   Planning: "badge-info",
 };
 
 const STATE_ICON = {
   Queued: ListOrdered, Running: Circle, Reviewing: Eye,
-  Reviewed: Eye, Blocked: AlertTriangle, Done: CheckCircle2, Cancelled: XCircle,
+  Reviewed: Eye, Blocked: AlertTriangle, Done: CheckCircle2, Merged: GitMerge, Cancelled: XCircle,
 };
 
 function formatTokens(n) {
@@ -186,8 +186,8 @@ function QueueItem({ issue }) {
 // ── Recently completed ──────────────────────────────────────────────────────
 
 function CompletedItem({ issue }) {
-  const Icon = issue.state === "Done" ? CheckCircle2 : XCircle;
-  const color = issue.state === "Done" ? "text-success" : "text-neutral";
+  const Icon = issue.state === "Merged" ? GitMerge : issue.state === "Done" ? CheckCircle2 : XCircle;
+  const color = (issue.state === "Done" || issue.state === "Merged") ? "text-success" : "text-neutral";
   return (
     <div className="flex items-center gap-2 text-xs py-1.5 px-3 rounded-lg bg-base-200">
       <Icon className={`size-3 shrink-0 ${color}`} />
@@ -263,7 +263,7 @@ export function RuntimeView({ state, providers, parallelism, onRefresh, issues: 
     || (i.state === "Planning" && i.planningStatus !== "planning"),
   );
   const completed = stateIssues
-    .filter((i) => i.state === "Done" || i.state === "Cancelled")
+    .filter((i) => i.state === "Done" || i.state === "Merged" || i.state === "Cancelled")
     .sort((a, b) => (b.completedAt || "").localeCompare(a.completedAt || ""))
     .slice(0, 10);
 

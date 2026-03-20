@@ -42,7 +42,6 @@ export async function mergeWorkspaceCommand(
       { issue, target: "Done", note: "Approved and merged by user." },
       deps,
     );
-    deps.eventStore.addEvent(issue.id, "state", `${issue.identifier} approved — moved to Done before merge.`);
   }
 
   const wp = issue.worktreePath ?? issue.workspacePath;
@@ -50,8 +49,7 @@ export async function mergeWorkspaceCommand(
     throw new Error("No workspace found for this issue.");
   }
 
-  // Compute line stats from git diff before merge (use --stat for file-level detail)
-  // This is the authoritative moment for EC tracking — merge is when code churn is "realized"
+  // Compute diff stats BEFORE the git merge (branch still diverged from base)
   if (issue.branchName && issue.baseBranch) {
     try {
       const stat = execSync(
@@ -60,34 +58,9 @@ export async function mergeWorkspaceCommand(
       );
       parseDiffStats(issue, stat);
       logger.info({ issueId: issue.id, linesAdded: issue.linesAdded, linesRemoved: issue.linesRemoved, filesChanged: issue.filesChanged }, "[Merge] Diff stats computed");
-
-      // Patch resource with the values + send raw values to EC via add()
-      const { getIssueStateResource } = await import("../persistence/store.ts");
-      const issueResource = getIssueStateResource();
-      if (issueResource) {
-        await (issueResource as any).patch(issue.id, {
-          linesAdded: issue.linesAdded || 0,
-          linesRemoved: issue.linesRemoved || 0,
-          filesChanged: issue.filesChanged || 0,
-          branchName: issue.branchName,
-        });
-
-        // EC: always add() raw values at merge time (the moment code churn is finalized)
-        const add = (issueResource as any).add;
-        if (typeof add === "function") {
-          if (issue.linesAdded)   await add.call(issueResource, issue.id, "linesAdded", issue.linesAdded);
-          if (issue.linesRemoved) await add.call(issueResource, issue.id, "linesRemoved", issue.linesRemoved);
-          if (issue.filesChanged) await add.call(issueResource, issue.id, "filesChanged", issue.filesChanged);
-          logger.info({ issueId: issue.id, linesAdded: issue.linesAdded, linesRemoved: issue.linesRemoved, filesChanged: issue.filesChanged }, "[Merge] EC add() sent for diff stats");
-        } else {
-          logger.debug({ issueId: issue.id }, "[Merge] resource.add not available — EC plugin may not be installed");
-        }
-      }
     } catch (err) {
-      logger.warn({ err: String(err), issueId: issue.id, branchName: issue.branchName, baseBranch: issue.baseBranch }, "[Merge] Failed to compute/sync diff stats");
+      logger.warn({ err: String(err), issueId: issue.id }, "[Merge] Failed to compute diff stats");
     }
-  } else {
-    logger.warn({ issueId: issue.id, branchName: issue.branchName, baseBranch: issue.baseBranch }, "[Merge] Missing branchName or baseBranch — cannot compute diff stats");
   }
 
   // Clear residual squash from index
@@ -100,6 +73,7 @@ export async function mergeWorkspaceCommand(
     }
   } catch { /* non-critical */ }
 
+  // Perform the actual git merge
   const result = mergeWorkspace(issue);
   issue.mergeResult = {
     copied: result.copied.length,
@@ -108,29 +82,29 @@ export async function mergeWorkspaceCommand(
     conflicts: result.conflicts.length,
   };
 
-  if (result.conflicts.length === 0) {
-    issue.mergedAt = now();
-    if (!issue.mergedReason) issue.mergedReason = "Merged by user via PreviewModal.";
-    // Cleanup worktree + branch after successful merge
-    if (issue.workspacePath) {
-      try {
-        await cleanWorkspace(issue.id, issue, state);
-        issue.workspacePath = undefined as any;
-        issue.worktreePath = undefined as any;
-      } catch { /* non-critical */ }
-    }
+  if (result.conflicts.length > 0) {
+    // Conflicts: do NOT transition to Merged — stay in Done
+    deps.eventStore.addEvent(issue.id, "error", `Merge conflicts: ${result.conflicts.join(", ")}`);
+    await deps.persistencePort.persistState(state);
+    return result;
   }
 
-  const conflictMsg = result.conflicts.length > 0
-    ? ` ${result.conflicts.length} conflict(s): ${result.conflicts.join(", ")}.`
-    : "";
-  deps.eventStore.addEvent(issue.id, "merge", `Workspace merged: ${result.copied.length} file(s) copied, ${result.deleted.length} deleted.${conflictMsg}`);
+  // Success: transition Done → Merged (FSM handles: completedAt, mergedAt, EC add(), event)
+  if (!issue.mergedReason) issue.mergedReason = "Merged by user via PreviewModal.";
+  await transitionIssueCommand(
+    { issue, target: "Merged", note: `Workspace merged: ${result.copied.length} file(s) copied, ${result.deleted.length} deleted.` },
+    deps,
+  );
 
-  if (result.conflicts.length > 0) {
-    deps.eventStore.addEvent(issue.id, "error", `Merge conflicts: ${result.conflicts.join(", ")}`);
+  // Cleanup worktree + branch after successful merge
+  if (issue.workspacePath) {
+    try {
+      await cleanWorkspace(issue.id, issue, state);
+      issue.workspacePath = undefined as any;
+      issue.worktreePath = undefined as any;
+    } catch { /* non-critical */ }
   }
 
   await deps.persistencePort.persistState(state);
-
   return result;
 }

@@ -208,7 +208,7 @@ async function main() {
     config,
     issues: [],
     events: [],
-    metrics: { total: 0, planning: 0, queued: 0, inProgress: 0, blocked: 0, done: 0, cancelled: 0, activeWorkers: 0 },
+    metrics: { total: 0, planning: 0, queued: 0, inProgress: 0, blocked: 0, done: 0, merged: 0, cancelled: 0, activeWorkers: 0 },
     notes: [],
     booting: true,
   };
@@ -301,7 +301,7 @@ async function main() {
   }
 
   // Clean terminal workspaces in background (non-blocking boot)
-  const terminalIssues = state.issues.filter((i) => i.state === "Done" || i.state === "Cancelled");
+  const terminalIssues = state.issues.filter((i) => i.state === "Merged" || i.state === "Cancelled");
   if (terminalIssues.length > 0) {
     logger.info(`Scheduling cleanup of ${terminalIssues.length} terminal workspace(s) in background...`);
     setImmediate(async () => {

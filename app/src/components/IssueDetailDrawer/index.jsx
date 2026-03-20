@@ -44,7 +44,8 @@ function DrawerFooter({ issue, onStateChange, onMerge, onPush, mergeBusy, mergeE
   const isRunning = issue.state === "Running" || issue.state === "Queued";
   const isInReview = issue.state === "Reviewing" || issue.state === "Reviewed";
   const isDone = issue.state === "Done";
-  const isMerged = !!issue.mergedAt;
+  const isMergedState = issue.state === "Merged";
+  const isMerged = !!issue.mergedAt || isMergedState;
 
   // Planning: approve button lives inside PlanningTab, nothing to show here
   if (isPlanning) return null;

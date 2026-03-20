@@ -221,7 +221,7 @@ export function DashboardProvider({ children }) {
     const prev = prevIssueStatesRef.current;
     for (const issue of issues) {
       const prevState = prev.get(issue.id);
-      if (prevState && prevState !== "Done" && issue.state === "Done") {
+      if (prevState && prevState !== "Merged" && issue.state === "Merged") {
         // Find the card element in the DOM to position confetti on it
         const cardEl = document.querySelector(`[data-issue-id="${issue.id}"]`);
         if (cardEl) {
