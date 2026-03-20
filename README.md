@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="dinofffaur.png" alt="fifony mascot" width="180" />
+
 # fifony
 
 **AI agents that actually ship code. You just watch.**
