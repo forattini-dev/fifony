@@ -1,6 +1,6 @@
-<table align="center"><tr>
-<td><img src="dinofffaur.png" alt="fifony mascot" width="140" /></td>
-<td>
+<table align="center" border="0" cellspacing="0" cellpadding="0"><tr>
+<td style="border:none"><img src="dinofffaur.png" alt="fifony mascot" width="140" /></td>
+<td style="border:none">
 
 <h1>fifony</h1>
 
