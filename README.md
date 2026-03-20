@@ -221,17 +221,19 @@ FIFONY_LOG_FILE=0                     # set to 1 to also write .fifony/fifony-lo
 ```
 .fifony/
   s3db/           ← durable database (issues, events, sessions, settings)
-  source/         ← project snapshot used for workspace seeding
-  workspaces/     ← isolated per-issue execution directories (git worktrees)
+  source/         ← project snapshot for diff reference
+  workspaces/     ← per-issue git worktrees
 ```
 
-- **State machine (single source of truth):** States, guarded transitions, actions, and triggers are centralized in `issue-state-machine.ts`. All side effects (events, field mutations, EC tracking) happen in FSM entry actions.
-- **Persistence (s3db.js):** Issues, events, sessions, and settings are first-class resources. No external DB required.
-- **Eventual consistency analytics:** `EventualConsistencyPlugin` tracks `linesAdded`, `linesRemoved`, `filesChanged`, token usage, and event counts with daily cohort rollups.
-- **Queue workers:** `S3QueuePlugin` dispatches planning/execution/review jobs to concurrent workers.
-- **Agent abstraction:** Wraps local CLIs (Claude, Codex, Gemini), not proprietary model logic. Per-stage provider/model/effort configuration.
-- **Per-issue isolation:** Each issue gets its own git worktree branch. No file conflicts, safe parallel work.
-- **Capability routing:** Issue labels derived from text and file paths drive automatic provider/agent selection.
+| Layer | How it works |
+|-------|-------------|
+| **State machine** | Single source of truth. All transitions, side effects (events, field mutations, EC tracking), and guards live in `issue-state-machine.ts`. |
+| **Persistence** | s3db.js with SQLite backend. Issues, events, sessions, and settings are first-class resources. No external DB. |
+| **Analytics** | `EventualConsistencyPlugin` tracks token usage, code churn (lines added/removed), and event counts with daily cohort rollups. |
+| **Queue** | `S3QueuePlugin` dispatches planning/execution/review jobs to concurrent workers. |
+| **Agents** | Wraps local CLIs (Claude, Codex, Gemini). Per-stage provider, model, and reasoning effort. No proprietary model logic. |
+| **Isolation** | Each issue gets its own git worktree branch. Parallel work on the same repo without file conflicts. |
+| **Routing** | Capability labels derived from issue text and file paths drive automatic agent/provider selection. |
 
 ---
 
