@@ -50,6 +50,9 @@ function ThemeSwatch({ theme, selected, onClick }) {
 }
 
 function WorkersThemeStep({ concurrency, setConcurrency, selectedTheme, setSelectedTheme }) {
+  const safeConcurrency = Number.isFinite(concurrency) ? Math.max(1, Math.min(5, concurrency)) : 1;
+  const sliderPosition = (safeConcurrency - 1) * 25;
+
   return (
     <div className="flex flex-col gap-6 stagger-children">
       <div className="text-center">
@@ -66,22 +69,33 @@ function WorkersThemeStep({ concurrency, setConcurrency, selectedTheme, setSelec
             Worker Concurrency
           </h3>
           <p className="text-xs text-base-content/60">
-            How many agents can work in parallel ({concurrency} worker{concurrency !== 1 ? "s" : ""})
+            How many agents can work in parallel ({safeConcurrency} worker{safeConcurrency !== 1 ? "s" : ""})
           </p>
-          <input
-            type="range"
-            min={1}
-            max={16}
-            value={concurrency}
-            onChange={(e) => setConcurrency(Number(e.target.value))}
-            className="range range-primary range-sm"
-          />
-          <div className="flex justify-between text-xs text-base-content/40 px-1">
-            <span>1</span>
-            <span>4</span>
-            <span>8</span>
-            <span>12</span>
-            <span>16</span>
+          <div className="w-full max-w-xs">
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={25}
+              value={sliderPosition}
+              onChange={(e) => setConcurrency(Math.round(Number(e.target.value) / 25) + 1)}
+              aria-label="Number of parallel workers"
+              className="range range-primary range-sm w-full"
+            />
+            <div className="flex justify-between px-2.5 mt-2 text-xs">
+              <span>|</span>
+              <span>|</span>
+              <span>|</span>
+              <span>|</span>
+              <span>|</span>
+            </div>
+            <div className="flex justify-between px-2.5 mt-2 text-xs">
+              <span>1</span>
+              <span>2</span>
+              <span>3</span>
+              <span>4</span>
+              <span>5</span>
+            </div>
           </div>
           <p className="text-xs text-base-content/50 bg-base-100 rounded-lg px-3 py-2 mt-1">
             <span className="font-medium text-base-content/70">Tip:</span> 2–4 workers is recommended for most projects. More workers consume more API quota and may hit rate limits.
