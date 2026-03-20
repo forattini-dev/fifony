@@ -34,6 +34,17 @@ fifony auto-detects your installed CLI tools (Claude, Codex, Gemini) and routes 
 
 ```mermaid
 stateDiagram-v2
+    direction LR
+
+    classDef planning fill:#38bdf8,color:#fff,stroke:#0ea5e9,stroke-width:2px
+    classDef queued fill:#a78bfa,color:#fff,stroke:#8b5cf6,stroke-width:2px
+    classDef running fill:#818cf8,color:#fff,stroke:#6366f1,stroke-width:2px
+    classDef review fill:#f59e0b,color:#fff,stroke:#d97706,stroke-width:2px
+    classDef done fill:#34d399,color:#fff,stroke:#10b981,stroke-width:2px
+    classDef merged fill:#22c55e,color:#fff,stroke:#16a34a,stroke-width:3px
+    classDef blocked fill:#f87171,color:#fff,stroke:#ef4444,stroke-width:2px
+    classDef cancelled fill:#9ca3af,color:#fff,stroke:#6b7280,stroke-width:2px
+
     [*] --> Planning
     Planning --> Planned: PLANNED
     Planned --> Queued: QUEUE
@@ -48,7 +59,7 @@ stateDiagram-v2
     Blocked --> Queued: UNBLOCK
     Blocked --> Planning: REPLAN
 
-    Reviewed --> Queued: REQUEUE (rework)
+    Reviewed --> Queued: rework
     Reviewed --> Planning: REPLAN
 
     Done --> Planning: REOPEN
@@ -62,6 +73,15 @@ stateDiagram-v2
 
     Merged --> [*]
     Cancelled --> [*]
+
+    class Planning,Planned planning
+    class Queued queued
+    class Running running
+    class Reviewing,Reviewed review
+    class Done done
+    class Merged merged
+    class Blocked blocked
+    class Cancelled cancelled
 ```
 
 | Step | What happens |
