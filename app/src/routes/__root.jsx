@@ -1,4 +1,5 @@
 import { createRootRoute, Outlet, useRouterState, useNavigate } from "@tanstack/react-router";
+import mascotUrl from "/dinofffaur.png?url";
 import { DashboardProvider, useDashboard } from "../context/DashboardContext";
 import { useSettings, getSettingsList, getSettingValue } from "../hooks";
 import { lazy, Suspense, useState, useCallback, useEffect, useMemo, useRef } from "react";
@@ -196,7 +197,7 @@ function LoadingHero({ fadeOut = false }) {
       <div className="relative z-10 flex flex-col items-center gap-5">
         <div className="flex items-end gap-4">
           <img
-            src="/assets/dinofffaur.png"
+            src={mascotUrl}
             alt=""
             className="h-20 sm:h-28 object-contain select-none pointer-events-none"
             style={{

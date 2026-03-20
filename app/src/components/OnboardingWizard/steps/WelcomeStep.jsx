@@ -1,10 +1,11 @@
 import { ChevronRight, Sparkles } from "lucide-react";
+import mascotUrl from "/dinofffaur.png?url";
 
 function WelcomeStep({ workspacePath, onGetStarted }) {
   return (
     <div className="flex flex-col items-center text-center gap-6 stagger-children py-4">
       <img
-        src="/assets/dinofffaur.png"
+        src={mascotUrl}
         alt="fifony mascot"
         className="h-72 sm:h-96 object-contain animate-bounce-in select-none pointer-events-none"
         style={{ filter: "drop-shadow(0 12px 40px rgba(128, 0, 255, 0.3))" }}
