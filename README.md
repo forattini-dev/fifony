@@ -22,6 +22,10 @@ npx -y fifony
 
 Open **http://localhost:4000**. The first run launches the onboarding wizard — it detects your CLIs, scans your project, and configures everything in six steps. State lives in `.fifony/`. No accounts, no cloud, no external database.
 
+<div align="center">
+<img src="docs/ss-01.webp" alt="Onboarding wizard" width="720" />
+</div>
+
 ---
 
 ## How It Works
@@ -94,6 +98,14 @@ stateDiagram-v2
 
 Agents run as detached child processes, tracked by PID. If the server restarts mid-run, fifony recovers on the next boot.
 
+<div align="center">
+<img src="docs/ss-02.webp" alt="Create issue with Enhance" width="720" />
+<br><sub>Create an issue and hit Enhance — AI writes a full spec</sub>
+<br><br>
+<img src="docs/ss-03.webp" alt="Plan review and approve" width="720" />
+<br><sub>Review the AI-generated plan, refine it, then approve to start execution</sub>
+</div>
+
 ---
 
 ## Onboarding Wizard
@@ -124,6 +136,14 @@ Settings are saved progressively and can be re-run from Settings at any time.
 | `/settings` | General, Workflow pipeline config, Notifications, Providers. |
 
 The **Issue Detail Drawer** shows the full plan (phases and steps), all execution sessions, the workspace diff, and a per-phase token breakdown — Plan / Execute / Review — with input and output counts per model.
+
+<div align="center">
+<img src="docs/ss-04.webp" alt="Agents cockpit" width="720" />
+<br><sub>Agents cockpit — live output, worker slots, token usage</sub>
+<br><br>
+<img src="docs/ss-05.webp" alt="Analytics dashboard" width="720" />
+<br><sub>Analytics — token trends, code churn, engineering KPIs, model breakdown</sub>
+</div>
 
 ### PWA
 

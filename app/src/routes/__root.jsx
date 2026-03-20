@@ -1,5 +1,5 @@
 import { createRootRoute, Outlet, useRouterState, useNavigate } from "@tanstack/react-router";
-import mascotUrl from "/dinofffaur.png?url";
+import mascotUrl from "/dinofffaur.webp?url";
 import { DashboardProvider, useDashboard } from "../context/DashboardContext";
 import { useSettings, getSettingsList, getSettingValue } from "../hooks";
 import { lazy, Suspense, useState, useCallback, useEffect, useMemo, useRef } from "react";

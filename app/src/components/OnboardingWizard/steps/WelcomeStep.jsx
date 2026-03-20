@@ -1,5 +1,5 @@
 import { ChevronRight, Sparkles } from "lucide-react";
-import mascotUrl from "/dinofffaur.png?url";
+import mascotUrl from "/dinofffaur.webp?url";
 
 function WelcomeStep({ workspacePath, onGetStarted }) {
   return (
