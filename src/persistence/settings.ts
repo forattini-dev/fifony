@@ -31,6 +31,9 @@ export const SETTING_ID_DETECTED_PROVIDERS = "providers.detected";
 export const SETTING_ID_UI_THEME = "ui.theme";
 export const SETTING_ID_UI_NOTIFICATIONS_ENABLED = "ui.notifications.enabled";
 export const SETTING_ID_WORKFLOW_CONFIG = "runtime.workflowConfig";
+export const SETTING_ID_TEST_COMMAND = "runtime.testCommand";
+export const SETTING_ID_MERGE_MODE = "runtime.mergeMode";
+export const SETTING_ID_PR_BASE_BRANCH = "runtime.prBaseBranch";
 
 export async function loadRuntimeSettings(): Promise<RuntimeSettingRecord[]> {
   return loadPersistedSettings();
@@ -49,6 +52,9 @@ export const RUNTIME_CONFIG_SETTING_IDS = new Set<string>([
   SETTING_ID_AGENT_PROVIDER,
   SETTING_ID_AGENT_COMMAND,
   SETTING_ID_DEFAULT_EFFORT,
+  SETTING_ID_TEST_COMMAND,
+  SETTING_ID_MERGE_MODE,
+  SETTING_ID_PR_BASE_BRANCH,
 ]);
 
 const VALID_REASONING_EFFORTS = new Set<ReasoningEffort>(["low", "medium", "high", "extra-high"]);
@@ -126,6 +132,9 @@ function buildRuntimeConfigSettings(
     { id: SETTING_ID_AGENT_PROVIDER, scope: "runtime", value: config.agentProvider, source, updatedAt },
     { id: SETTING_ID_AGENT_COMMAND, scope: "runtime", value: config.agentCommand, source, updatedAt },
     { id: SETTING_ID_DEFAULT_EFFORT, scope: "runtime", value: config.defaultEffort, source, updatedAt },
+    { id: SETTING_ID_TEST_COMMAND, scope: "runtime", value: config.testCommand ?? "", source, updatedAt },
+    { id: SETTING_ID_MERGE_MODE, scope: "runtime", value: config.mergeMode ?? "local", source, updatedAt },
+    { id: SETTING_ID_PR_BASE_BRANCH, scope: "runtime", value: config.prBaseBranch ?? "", source, updatedAt },
   ];
 }
 
@@ -215,6 +224,24 @@ export function applyPersistedSettings(config: RuntimeConfig, settings: RuntimeS
         const parsed = sanitizeDefaultEffort(setting.value);
         if (parsed) {
           nextConfig.defaultEffort = parsed;
+        }
+        break;
+      }
+      case SETTING_ID_TEST_COMMAND: {
+        if (typeof setting.value === "string") {
+          nextConfig.testCommand = setting.value.trim() || undefined;
+        }
+        break;
+      }
+      case SETTING_ID_MERGE_MODE: {
+        if (setting.value === "local" || setting.value === "push-pr") {
+          nextConfig.mergeMode = setting.value;
+        }
+        break;
+      }
+      case SETTING_ID_PR_BASE_BRANCH: {
+        if (typeof setting.value === "string" && setting.value.trim()) {
+          nextConfig.prBaseBranch = setting.value.trim();
         }
         break;
       }

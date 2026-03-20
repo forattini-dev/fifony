@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import {
   FolderRoot, GitBranch, AlertTriangle, CheckCircle, Loader,
-  ShieldCheck, Loader2, Sparkles, PencilLine, GitMerge,
+  ShieldCheck, Loader2, Sparkles, PencilLine, GitMerge, FlaskConical, GitPullRequest,
 } from "lucide-react";
 import { api } from "../../../api";
 import { buildQueueTitle, normalizeProjectName } from "../../../project-meta.js";
@@ -68,15 +68,43 @@ function BranchCard({ currentBranch, onBranchCreated }) {
       .catch(() => setGitStatus({ isGit: true, branch: currentBranch, hasCommits: true }));
   }, []);
 
-  // Branch creation
-  const [branchName, setBranchName] = useState("develop");
+  // Branch switch/create
+  const [editing, setEditing] = useState(false);
+  const [inputValue, setInputValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [branchError, setBranchError] = useState(null);
-  const [branchDone, setBranchDone] = useState(false);
+  const [switchResult, setSwitchResult] = useState(null); // { branch, created }
 
   const isGit = gitStatus === null || gitStatus.isGit;
   const isProtected = PROTECTED_BRANCHES.has(activeBranch);
-  const isValidBranchName = /^[a-zA-Z0-9/_.-]+$/.test(branchName.trim()) && branchName.trim().length > 0;
+  const trimmedInput = inputValue.trim();
+  const isValidInput = /^[a-zA-Z0-9/_.-]+$/.test(trimmedInput) && trimmedInput.length > 0;
+  const isSameBranch = trimmedInput === activeBranch;
+
+  function startEditing() {
+    setEditing(true);
+    setInputValue(activeBranch || "");
+    setBranchError(null);
+    setSwitchResult(null);
+  }
+
+  async function handleSwitch() {
+    if (!isValidInput || isSameBranch || busy) return;
+    setBusy(true);
+    setBranchError(null);
+    try {
+      const res = await api.post("/git/switch", { branchName: trimmedInput });
+      if (!res.ok) throw new Error(res.error || "Failed to switch branch.");
+      setActiveBranch(trimmedInput);
+      setSwitchResult({ branch: trimmedInput, created: res.created });
+      setEditing(false);
+      onBranchCreated?.(trimmedInput);
+    } catch (err) {
+      setBranchError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function handleGitInit() {
     setInitBusy(true);
@@ -90,22 +118,6 @@ function BranchCard({ currentBranch, onBranchCreated }) {
       setInitError(err instanceof Error ? err.message : String(err));
     } finally {
       setInitBusy(false);
-    }
-  }
-
-  async function handleCreateBranch() {
-    if (!isValidBranchName || busy) return;
-    setBusy(true);
-    setBranchError(null);
-    try {
-      const res = await api.post("/git/branch", { branchName: branchName.trim() });
-      if (!res.ok) throw new Error(res.error || "Failed to create branch.");
-      setBranchDone(true);
-      onBranchCreated?.(branchName.trim());
-    } catch (err) {
-      setBranchError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -144,59 +156,39 @@ function BranchCard({ currentBranch, onBranchCreated }) {
       {/* Git initialized */}
       {isGit && (
         <div className="flex flex-col gap-4">
-          <div className="flex items-center gap-2 px-4 py-3 rounded-box border border-base-300 bg-base-100">
-            <GitBranch className="size-4 opacity-50 shrink-0" />
-            <span className="text-sm opacity-50">Current branch:</span>
-            <span className="font-mono text-sm font-semibold">
-              {activeBranch || (gitStatus === null ? "…" : "—")}
-            </span>
-            {isProtected && (
-              <span className="badge badge-warning badge-sm ml-auto shrink-0">protected</span>
-            )}
-          </div>
-
-          {isProtected && (
-            <div className="alert alert-warning py-3">
-              <AlertTriangle className="size-4 shrink-0" />
-              <div className="text-sm">
-                <p className="font-semibold">Working directly on <span className="font-mono">{activeBranch}</span></p>
-                <p className="opacity-80 mt-0.5">In teams with protected branches, local merges are rejected. Create a working branch or use Push PR mode.</p>
-              </div>
-            </div>
-          )}
-
-          {branchDone ? (
-            <div className="alert alert-success py-3 text-sm">
-              <CheckCircle className="size-4 shrink-0" />
-              <div>
-                <p className="font-semibold">Branch created successfully</p>
-                <p className="opacity-75 font-mono mt-0.5">
-                  Now on <span className="text-success-content">{branchName.trim()}</span> — agents will use this as the base branch
-                </p>
-              </div>
-            </div>
-          ) : (
+          {/* Current branch — editable */}
+          {editing ? (
             <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium">Create a new branch now</label>
               <div className="flex gap-2">
                 <label className="input input-bordered flex items-center gap-2 flex-1">
                   <GitBranch className="size-3.5 opacity-40" />
                   <input
                     type="text"
                     className="grow font-mono text-sm"
-                    value={branchName}
-                    onChange={(e) => { setBranchName(e.target.value); setBranchError(null); }}
-                    onKeyDown={(e) => e.key === "Enter" && handleCreateBranch()}
+                    value={inputValue}
+                    onChange={(e) => { setInputValue(e.target.value); setBranchError(null); }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleSwitch();
+                      if (e.key === "Escape") { setEditing(false); setBranchError(null); }
+                    }}
                     placeholder="develop"
+                    autoFocus
                     disabled={busy}
                   />
                 </label>
                 <button
                   className="btn btn-primary"
-                  onClick={handleCreateBranch}
-                  disabled={!isValidBranchName || busy}
+                  onClick={handleSwitch}
+                  disabled={!isValidInput || isSameBranch || busy}
                 >
-                  {busy ? <Loader className="size-4 animate-spin" /> : "Create"}
+                  {busy ? <Loader className="size-4 animate-spin" /> : "Switch"}
+                </button>
+                <button
+                  className="btn btn-ghost"
+                  onClick={() => { setEditing(false); setBranchError(null); }}
+                  disabled={busy}
+                >
+                  Cancel
                 </button>
               </div>
               {branchError && (
@@ -205,8 +197,53 @@ function BranchCard({ currentBranch, onBranchCreated }) {
                 </p>
               )}
               <p className="text-xs opacity-40">
-                Equivalent to: <span className="font-mono">git checkout -b {branchName.trim() || "develop"}</span>
+                Switches to the branch if it exists, or creates it from the current HEAD.
               </p>
+            </div>
+          ) : (
+            <div
+              className="flex items-center gap-2 px-4 py-3 rounded-box border border-base-300 bg-base-100 cursor-pointer hover:border-primary/40 transition-colors group"
+              onClick={startEditing}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => e.key === "Enter" && startEditing()}
+            >
+              <GitBranch className="size-4 opacity-50 shrink-0" />
+              <span className="text-sm opacity-50">Current branch:</span>
+              <span className="font-mono text-sm font-semibold">
+                {activeBranch || (gitStatus === null ? "…" : "—")}
+              </span>
+              {isProtected && (
+                <span className="badge badge-warning badge-sm ml-auto shrink-0">protected</span>
+              )}
+              {!isProtected && (
+                <PencilLine className="size-3.5 opacity-0 group-hover:opacity-40 ml-auto shrink-0 transition-opacity" />
+              )}
+            </div>
+          )}
+
+          {/* Switch result feedback */}
+          {switchResult && (
+            <div className="alert alert-success py-3 text-sm animate-fade-in">
+              <CheckCircle className="size-4 shrink-0" />
+              <div>
+                <p className="font-semibold">
+                  {switchResult.created ? "Branch created" : "Switched to branch"}
+                </p>
+                <p className="opacity-75 font-mono mt-0.5">
+                  Now on <span className="text-success-content">{switchResult.branch}</span> — agents will use this as the base branch
+                </p>
+              </div>
+            </div>
+          )}
+
+          {isProtected && !editing && (
+            <div className="alert alert-warning py-3">
+              <AlertTriangle className="size-4 shrink-0" />
+              <div className="text-sm">
+                <p className="font-semibold">Working directly on <span className="font-mono">{activeBranch}</span></p>
+                <p className="opacity-80 mt-0.5">In teams with protected branches, local merges are rejected. Click the branch above to switch, or use Push PR mode.</p>
+              </div>
             </div>
           )}
 
@@ -217,10 +254,72 @@ function BranchCard({ currentBranch, onBranchCreated }) {
   );
 }
 
+function MergeModeCard({ mergeMode, setMergeMode, prBaseBranch, setPrBaseBranch, currentBranch }) {
+  return (
+    <div className="bg-base-200 rounded-2xl p-5 flex flex-col gap-4">
+      <div className="flex items-center gap-2">
+        <GitPullRequest className="size-4 text-primary" />
+        <div className="text-sm font-semibold">Merge mode</div>
+      </div>
+      <p className="text-xs text-base-content/50 -mt-2">
+        Choose how completed issues are integrated: local git merge or push a PR to GitHub.
+      </p>
+      <div className="flex gap-3">
+        <label className={`flex-1 cursor-pointer rounded-xl border-2 p-3 text-center text-sm font-medium transition-colors ${mergeMode === "local" ? "border-primary bg-primary/10" : "border-base-300 bg-base-100"}`}>
+          <input type="radio" name="mergeMode" className="hidden" checked={mergeMode === "local"} onChange={() => setMergeMode("local")} />
+          <GitMerge className="size-4 mx-auto mb-1 opacity-60" />
+          Local merge
+        </label>
+        <label className={`flex-1 cursor-pointer rounded-xl border-2 p-3 text-center text-sm font-medium transition-colors ${mergeMode === "push-pr" ? "border-primary bg-primary/10" : "border-base-300 bg-base-100"}`}>
+          <input type="radio" name="mergeMode" className="hidden" checked={mergeMode === "push-pr"} onChange={() => setMergeMode("push-pr")} />
+          <GitPullRequest className="size-4 mx-auto mb-1 opacity-60" />
+          Push PR
+        </label>
+      </div>
+      {mergeMode === "push-pr" && (
+        <label className="form-control w-full gap-2">
+          <span className="label-text text-sm font-medium">PR base branch</span>
+          <input
+            type="text"
+            className="input input-bordered w-full text-sm font-mono"
+            placeholder={currentBranch || "main"}
+            value={prBaseBranch}
+            onChange={(e) => setPrBaseBranch(e.target.value)}
+          />
+          <p className="text-xs opacity-40">Branch that PRs will target. Defaults to the current branch.</p>
+        </label>
+      )}
+    </div>
+  );
+}
+
+function TestCommandCard({ testCommand, setTestCommand }) {
+  return (
+    <div className="bg-base-200 rounded-2xl p-5 flex flex-col gap-4">
+      <div className="flex items-center gap-2">
+        <FlaskConical className="size-4 text-primary" />
+        <div className="text-sm font-semibold">Test command</div>
+      </div>
+      <p className="text-xs text-base-content/50 -mt-2">
+        Validation gate: this command runs before merge/done. Leave empty to skip.
+      </p>
+      <input
+        type="text"
+        className="input input-bordered w-full text-sm font-mono"
+        placeholder="pnpm test"
+        value={testCommand}
+        onChange={(e) => setTestCommand(e.target.value)}
+      />
+    </div>
+  );
+}
+
 function SetupStep({
   projectName, setProjectName,
   detectedProjectName, projectSource, workspacePath,
   currentBranch, onBranchCreated,
+  mergeMode, setMergeMode, prBaseBranch, setPrBaseBranch,
+  testCommand, setTestCommand,
 }) {
   const normalizedProjectName = normalizeProjectName(projectName);
   const queueTitle = buildQueueTitle(normalizedProjectName || detectedProjectName);
@@ -297,6 +396,8 @@ function SetupStep({
       </div>
 
       <BranchCard currentBranch={currentBranch} onBranchCreated={onBranchCreated} />
+      <MergeModeCard mergeMode={mergeMode} setMergeMode={setMergeMode} prBaseBranch={prBaseBranch} setPrBaseBranch={setPrBaseBranch} currentBranch={currentBranch} />
+      <TestCommandCard testCommand={testCommand} setTestCommand={setTestCommand} />
     </div>
   );
 }

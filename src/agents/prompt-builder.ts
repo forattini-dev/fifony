@@ -4,6 +4,32 @@ import type {
 } from "../types.ts";
 import { renderPrompt } from "./prompting.ts";
 
+/** Build retry context from previous failed attempts for injection into prompts. */
+export function buildRetryContext(issue: IssueEntry): string {
+  const summaries = issue.previousAttemptSummaries;
+  if (!summaries || summaries.length === 0) return "";
+
+  const lines = ["## Previous Attempts\n"];
+  lines.push("The following previous attempts FAILED. Do NOT repeat the same approach. Try a fundamentally different strategy.\n");
+
+  for (let i = 0; i < summaries.length; i++) {
+    const s = summaries[i];
+    lines.push(`### Attempt ${i + 1} (plan v${s.planVersion}, exec #${s.executeAttempt})`);
+    lines.push(`**Error:** ${s.error}`);
+    if (s.outputTail) {
+      lines.push(`**Output tail:**\n\`\`\`\n${s.outputTail}\n\`\`\``);
+    }
+    if (s.outputFile) {
+      lines.push(`*Full output saved in: outputs/${s.outputFile}*`);
+    }
+    lines.push("");
+  }
+
+  // Hard limit to ~2000 tokens (~8000 chars)
+  const full = lines.join("\n");
+  return full.length > 8000 ? full.slice(0, 8000) + "\n[...truncated]" : full;
+}
+
 export async function buildPrompt(issue: IssueEntry, _workflowDefinition: null): Promise<string> {
   const rendered = await renderPrompt("workflow-default", { issue, attempt: issue.attempts || 0 });
 

@@ -1,4 +1,5 @@
 import {
+  mkdirSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -23,9 +24,17 @@ import {
   buildProviderSessionKey,
 } from "./session-state.ts";
 import { readAgentDirective, addTokenUsage } from "./directive-parser.ts";
-import { buildTurnPrompt, buildProviderBasePrompt } from "./prompt-builder.ts";
+import { buildTurnPrompt, buildProviderBasePrompt, buildRetryContext } from "./prompt-builder.ts";
 import { runCommandWithTimeout, runHook } from "./command-executor.ts";
 import { record as recordTokens } from "../domains/tokens.ts";
+
+/** Compute the versioned stdout output filename for a given phase/version/attempt/turn. */
+function resolveOutputFileName(role: string, planVersion: number, attempt: number, turn: number): string {
+  if (role === "planner") {
+    return `plan.v${planVersion}.t${turn}.stdout.log`;
+  }
+  return `${role === "reviewer" ? "review" : "execute"}.v${planVersion}a${attempt}.t${turn}.stdout.log`;
+}
 
 export async function runAgentSession(
   state: RuntimeState,
@@ -78,6 +87,17 @@ export async function runAgentSession(
   session.maxTurns = maxTurns;
   await persistAgentSessionState(sessionKey, issue, provider, cycle, session);
 
+  // Compute persistent stdout output file
+  const outputsDir = join(workspacePath, "outputs");
+  mkdirSync(outputsDir, { recursive: true });
+  const outputFileName = resolveOutputFileName(
+    provider.role,
+    issue.planVersion ?? 1,
+    provider.role === "planner" ? 0 : (issue.executeAttempt ?? 1),
+    turnIndex,
+  );
+  const outputFilePath = join(outputsDir, outputFileName);
+
   logger.info({ issueId: issue.id, identifier: issue.identifier, turn: turnIndex, maxTurns, provider: provider.provider, role: provider.role, cycle, command: provider.command.slice(0, 120) }, "[Agent] Spawning agent command");
   const turnStartedAt = now();
   const turnEnv = {
@@ -104,7 +124,7 @@ export async function runAgentSession(
 
   addEvent(state, issue.id, "runner", `Turn ${turnIndex}/${maxTurns} started for ${issue.identifier}.`);
 
-  const turnResult = await runCommandWithTimeout(provider.command, workspacePath, issue, state.config, turnPrompt, turnPromptFile, turnEnv);
+  const turnResult = await runCommandWithTimeout(provider.command, workspacePath, issue, state.config, turnPrompt, turnPromptFile, turnEnv, outputFilePath);
 
   if (state.config.afterRunHook) {
     await runHook(state.config.afterRunHook, workspacePath, issue, "after_run", {
@@ -243,6 +263,14 @@ export async function runAgentPipeline(
 
   if (!effectiveProvider.command.trim()) {
     throw new Error(`No command configured for provider ${effectiveProvider.provider} (${effectiveProvider.role}).`);
+  }
+
+  // Inject retry context from previous failed attempts
+  if (issue.attempts > 0) {
+    const retryCtx = buildRetryContext(issue);
+    if (retryCtx) {
+      providerPrompt = `${providerPrompt}\n\n${retryCtx}`;
+    }
   }
 
   pipeline.history.push(`[${now()}] Running ${effectiveProvider.role}:${effectiveProvider.provider} in cycle ${pipeline.cycle}${compiled ? ` [${compiled.meta.adapter} adapter]` : ""}.`);

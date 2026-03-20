@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { env, exit, argv } from "node:process";
 import { CLI_ARGS, PACKAGE_ROOT, STATE_ROOT, TARGET_ROOT } from "./concerns/constants.ts";
 import { debugBoot, fail, now, sleep, parseIntArg } from "./concerns/helpers.ts";
@@ -28,7 +28,7 @@ import { installGracefulShutdown, isShuttingDown, ensureNotStale, hasTerminalQue
 import { cleanWorkspace, isAgentStillRunning, cleanStalePidFile } from "./agents/agent.ts";
 import { recoverPlanningSession } from "./agents/planning/issue-planner.ts";
 import { hydrate as hydrateTokenLedger } from "./domains/tokens.ts";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import type { RuntimeState } from "./types.ts";
 
 function parsePort(args: string[]): number | undefined {
@@ -275,6 +275,23 @@ async function main() {
       logger.info({ defaultBranch: detectedBranch }, "[Agent] Default branch detected");
     } catch {
       // Not a git repo or detection failed — leave undefined
+    }
+  }
+
+  // Auto-detect test command from package.json if not configured
+  if (!state.config.testCommand) {
+    try {
+      const pkgPath = join(TARGET_ROOT, "package.json");
+      if (existsSync(pkgPath)) {
+        const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+        const testScript = pkg?.scripts?.test;
+        if (testScript && !testScript.includes("no test specified")) {
+          state.config.testCommand = "pnpm test";
+          logger.info({ testCommand: state.config.testCommand }, "[Boot] Auto-detected test command from package.json");
+        }
+      }
+    } catch {
+      // Non-critical — leave testCommand undefined
     }
   }
 

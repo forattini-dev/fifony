@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   GitMerge, GitBranch, CheckCircle2, AlertTriangle, ClipboardCheck,
   Code, Terminal, ThumbsUp, ThumbsDown, RotateCcw, ImageIcon, Paperclip, Loader,
+  ExternalLink,
 } from "lucide-react";
 import { api } from "../../../api.js";
 import { Section } from "../shared.jsx";
@@ -98,6 +99,22 @@ export function ReviewTab({ issue, issueId, onStateChange }) {
               <p className="text-xs text-warning font-medium mt-0.5">{mergeResult.conflicts} file{mergeResult.conflicts !== 1 ? "s" : ""} conflicted with another worker and were skipped.</p>
             )}
             <p className="text-xs opacity-50 mt-0.5">The approved branch has been integrated into the current project branch.</p>
+          </div>
+        </div>
+      )}
+      {issue.prUrl && (
+        <div className="alert border border-primary/30 bg-primary/5 text-sm">
+          <ExternalLink className="size-4 shrink-0 text-primary" />
+          <div>
+            <span className="font-semibold">Pull request created</span>
+            <a
+              href={issue.prUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="block text-xs text-primary hover:underline mt-0.5 font-mono break-all"
+            >
+              {issue.prUrl}
+            </a>
           </div>
         </div>
       )}

@@ -23,6 +23,7 @@ import { persistState } from "../persistence/store.ts";
 import { addTokenUsage } from "./directive-parser.ts";
 import { runAgentSession, runAgentPipeline } from "./agent-pipeline.ts";
 import { computeDiffStats } from "../domains/workspace.ts";
+import { runValidationGate } from "../domains/validation.ts";
 import { ensureWorktreeCommitted, hydrateIssuePathsFromWorkspace, describeRoutingSignals } from "../domains/workspace.ts";
 import { prepareWorkspace } from "../domains/workspace.ts";
 import { inferCapabilityPaths } from "../routing/capability-resolver.ts";
@@ -179,6 +180,20 @@ async function handleReviewStage(
   if (reviewResult.success) {
     issue.mergedReason = `Auto-approved by reviewer in ${reviewResult.turns} turn(s).`;
     await transitionIssueCommand({ issue, target: "Reviewed", note: `Reviewer completed for ${issue.identifier}.` }, container);
+
+    // Run validation gate before transitioning to Done
+    const validation = await runValidationGate(issue, state.config);
+    if (validation) {
+      issue.validationResult = validation;
+      markIssueDirty(issue.id);
+      if (!validation.passed) {
+        addEvent(state, issue.id, "error", `Validation gate failed for ${issue.identifier}: ${validation.command}`);
+        logger.warn({ issueId: issue.id, command: validation.command }, "[Agent] Validation gate failed — staying in Reviewed");
+        return;
+      }
+      addEvent(state, issue.id, "info", `Validation gate passed for ${issue.identifier}.`);
+    }
+
     await transitionIssueCommand({ issue, target: "Done", note: `Reviewer approved ${issue.identifier} in ${reviewResult.turns} turn(s).` }, container);
     // completedAt and lastError are set by FSM onEnterDone
   } else if (reviewResult.continueRequested) {

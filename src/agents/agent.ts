@@ -25,7 +25,7 @@ export type { AgentPidInfo } from "./pid-manager.ts";
 export { computeDiffStats, inferChangedWorkspacePaths, parseDiffStats } from "../domains/workspace.ts";
 
 // ── Re-exports from workspace-merge ───────────────────────────────────────
-export { mergeWorkspace, pushWorktreeBranch, hydrateIssuePathsFromWorkspace, describeRoutingSignals, shouldSkipMergePath, ensureWorktreeCommitted } from "../domains/workspace.ts";
+export { mergeWorkspace, hydrateIssuePathsFromWorkspace, describeRoutingSignals, shouldSkipMergePath, ensureWorktreeCommitted } from "../domains/workspace.ts";
 export type { MergeResult } from "../domains/workspace.ts";
 
 // ── Re-exports from session-state ─────────────────────────────────────────

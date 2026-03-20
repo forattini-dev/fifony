@@ -9,6 +9,7 @@ import { TARGET_ROOT } from "../concerns/constants.ts";
 import { now } from "../concerns/helpers.ts";
 import { logger } from "../concerns/logger.ts";
 import { parseDiffStats } from "../domains/workspace.ts";
+import { runValidationGate } from "../domains/validation.ts";
 
 export type MergeWorkspaceInput = {
   issue: IssueEntry;
@@ -72,6 +73,15 @@ export async function mergeWorkspaceCommand(
       logger.info({ issueId: issue.id }, "[Command] Cleared residual squash from index before merge");
     }
   } catch { /* non-critical */ }
+
+  // Run validation gate before merge
+  const validation = await runValidationGate(issue, state.config);
+  if (validation) {
+    issue.validationResult = validation;
+    if (!validation.passed) {
+      throw new Error(`Validation gate failed (${validation.command}): ${validation.output.slice(0, 500)}`);
+    }
+  }
 
   // Perform the actual git merge
   const result = mergeWorkspace(issue);

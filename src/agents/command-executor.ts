@@ -19,6 +19,7 @@ export async function runCommandWithTimeout(
   promptText: string,
   promptFile: string,
   extraEnv: Record<string, string> = {},
+  outputFile?: string,
 ): Promise<{ success: boolean; code: number | null; output: string }> {
   return new Promise((resolve) => {
     const started = Date.now();
@@ -89,12 +90,21 @@ export async function runCommandWithTimeout(
     const liveLogFile = join(workspacePath, "live-output.log");
     writeFileSync(liveLogFile, "", "utf8");
 
+    // Write header to persistent stdout file if requested
+    if (outputFile) {
+      try {
+        const header = `# fifony stdout capture\n# turn: ${extraEnv.FIFONY_TURN_INDEX ?? "?"}\n# provider: ${extraEnv.FIFONY_AGENT_PROVIDER ?? "?"}\n# role: ${extraEnv.FIFONY_AGENT_ROLE ?? "?"}\n# timestamp: ${new Date().toISOString()}\n---\n`;
+        writeFileSync(outputFile, header, "utf8");
+      } catch {}
+    }
+
     const onChunk = (chunk: Buffer | string) => {
       const text = String(chunk);
       if (outputHeader.length < 2000) outputHeader = (outputHeader + text).slice(0, 2000);
       output = appendFileTail(output, text, config.logLinesTail);
       outputBytes += text.length;
       try { appendFileSync(liveLogFile, text); } catch {}
+      if (outputFile) { try { appendFileSync(outputFile, text); } catch {} }
       issue.commandOutputTail = output;
     };
 

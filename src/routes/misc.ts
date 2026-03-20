@@ -1,9 +1,11 @@
 import type { RuntimeState } from "../types.ts";
 import { logger } from "../concerns/logger.ts";
 import { toStringValue } from "../concerns/helpers.ts";
-import { isAgentStillRunning, pushWorktreeBranch } from "../agents/agent.ts";
+import { isAgentStillRunning } from "../agents/agent.ts";
 import { addEvent } from "../domains/issues.ts";
 import { persistState } from "../persistence/store.ts";
+import { getContainer } from "../persistence/container.ts";
+import { pushWorkspaceCommand } from "../commands/push-workspace.command.ts";
 import { findIssue, listEvents, parseIssue } from "../routes/helpers.ts";
 import { TARGET_ROOT, SOURCE_ROOT, ATTACHMENTS_ROOT } from "../concerns/constants.ts";
 import { execSync } from "node:child_process";
@@ -13,6 +15,7 @@ import {
   existsSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   readSync,
   statSync,
@@ -31,15 +34,13 @@ export function registerMiscRoutes(
     if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
     const issue = findIssue(state, issueId);
     if (!issue) return c.json({ ok: false, error: "Issue not found." }, 404);
-    if (issue.state !== "Done") {
-      return c.json({ ok: false, error: `Issue ${issue.identifier} must be in Done state to push. Current state: ${issue.state}.` }, 409);
+    if (!["Done", "Reviewing", "Reviewed"].includes(issue.state)) {
+      return c.json({ ok: false, error: `Issue ${issue.identifier} must be in Done, Reviewing, or Reviewed state to push. Current state: ${issue.state}.` }, 409);
     }
     try {
-      const prUrl = pushWorktreeBranch(issue);
-      issue.mergedAt = new Date().toISOString();
-      addEvent(state, issue.id, "merge", `Branch ${issue.branchName} pushed to origin. PR: ${prUrl}`);
-      await persistState(state);
-      return c.json({ ok: true, prUrl });
+      const container = getContainer();
+      const result = await pushWorkspaceCommand({ issue, state }, container);
+      return c.json({ ok: true, prUrl: result.prUrl, ghAvailable: result.ghAvailable });
     } catch (error) {
       logger.error({ err: error }, `[API] Failed to push branch for ${issueId}`);
       return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 500);
@@ -317,6 +318,29 @@ export function registerMiscRoutes(
     }
   });
 
+  app.post("/api/git/switch", async (c: any) => {
+    try {
+      const { branchName } = await c.req.json() as { branchName?: string };
+      if (!branchName || !/^[a-zA-Z0-9/_.-]+$/.test(branchName)) {
+        return c.json({ ok: false, error: "Invalid branch name." }, 400);
+      }
+      let created = false;
+      try {
+        // Try switching to existing branch first
+        execSync(`git checkout "${branchName}"`, { cwd: TARGET_ROOT, stdio: "pipe" });
+      } catch {
+        // Branch doesn't exist — create it
+        execSync(`git checkout -b "${branchName}"`, { cwd: TARGET_ROOT, stdio: "pipe" });
+        created = true;
+      }
+      state.config.defaultBranch = branchName;
+      await persistState(state);
+      return c.json({ ok: true, defaultBranch: branchName, created });
+    } catch (error) {
+      return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 500);
+    }
+  });
+
   app.get("/api/events/feed", async (c: any) => {
     const since = c.req.query("since");
     const issueId = c.req.query("issueId");
@@ -364,6 +388,55 @@ export function registerMiscRoutes(
     } catch (error) {
       logger.error({ err: error }, "Failed to update .gitignore");
       return c.json({ ok: false, error: "Failed to update .gitignore" }, 500);
+    }
+  });
+
+  app.get("/api/issues/:id/outputs", async (c: any) => {
+    try {
+      const issueId = parseIssue(c);
+      if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
+      const issue = findIssue(state, issueId);
+      if (!issue) return c.json({ ok: false, error: "Issue not found." }, 404);
+      const wp = issue.workspacePath;
+      if (!wp) return c.json({ ok: true, files: [] });
+      const outputsDir = join(wp, "outputs");
+      if (!existsSync(outputsDir)) return c.json({ ok: true, files: [] });
+      const entries = readdirSync(outputsDir)
+        .filter((f: string) => f.endsWith(".stdout.log"))
+        .map((f: string) => {
+          try {
+            const s = statSync(join(outputsDir, f));
+            return { name: f, size: s.size };
+          } catch {
+            return { name: f, size: 0 };
+          }
+        });
+      return c.json({ ok: true, files: entries });
+    } catch (error) {
+      return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 500);
+    }
+  });
+
+  app.get("/api/issues/:id/outputs/:filename", async (c: any) => {
+    try {
+      const issueId = parseIssue(c);
+      if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
+      const issue = findIssue(state, issueId);
+      if (!issue) return c.json({ ok: false, error: "Issue not found." }, 404);
+      const filename = c.req.param?.("filename") ?? c.req.params?.filename ?? "";
+      if (!filename) return c.json({ ok: false, error: "Filename is required." }, 400);
+      const safeName = basename(filename);
+      if (safeName !== filename || !safeName.endsWith(".stdout.log")) {
+        return c.json({ ok: false, error: "Invalid filename." }, 400);
+      }
+      const wp = issue.workspacePath;
+      if (!wp) return c.json({ ok: false, error: "No workspace found." }, 404);
+      const filePath = join(wp, "outputs", safeName);
+      if (!existsSync(filePath)) return c.json({ ok: false, error: "Output file not found." }, 404);
+      const content = readFileSync(filePath, "utf8");
+      return new Response(content, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
+    } catch (error) {
+      return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 500);
     }
   });
 

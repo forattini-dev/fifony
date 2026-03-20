@@ -101,6 +101,28 @@ export type IssueEntry = {
   reviewAttempt: number;
   /** Previous plans archived before each replan */
   planHistory?: IssuePlan[];
+  /** Summaries of previous failed execution attempts (for retry context) */
+  previousAttemptSummaries?: AttemptSummary[];
+  /** Validation gate result (test command execution) */
+  validationResult?: ValidationResult;
+  /** URL of the PR created via push-pr merge mode */
+  prUrl?: string;
+};
+
+export type AttemptSummary = {
+  planVersion: number;
+  executeAttempt: number;
+  error: string;
+  outputTail?: string;
+  outputFile?: string;
+  timestamp: string;
+};
+
+export type ValidationResult = {
+  passed: boolean;
+  output: string;
+  command: string;
+  ranAt: string;
 };
 
 export type IssuePlanStep = {
@@ -188,6 +210,8 @@ export type RuntimeConfig = {
   runMode: "filesystem";
   defaultBranch?: string;
   mergeMode?: "local" | "push-pr";
+  testCommand?: string;
+  prBaseBranch?: string;
   afterCreateHook: string;
   beforeRunHook: string;
   afterRunHook: string;

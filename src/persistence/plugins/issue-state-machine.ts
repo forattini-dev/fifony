@@ -1,10 +1,12 @@
-import type { IssueEntry, IssueState } from "../../types.ts";
+import type { AttemptSummary, IssueEntry, IssueState } from "../../types.ts";
 import { S3DB_ISSUE_RESOURCE, TERMINAL_STATES } from "../../concerns/constants.ts";
 import { computeDiffStats } from "../../domains/workspace.ts";
 import { invalidateMetrics } from "../metrics-cache.ts";
 import { markIssueDirty } from "../dirty-tracker.ts";
 import { isoWeek, now } from "../../concerns/helpers.ts";
 import { logger } from "../../concerns/logger.ts";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 
 // ── Event emitter callback (set after container init to avoid circular deps) ──
 type FsmEventEmitter = (issueId: string, kind: string, message: string) => void;
@@ -179,6 +181,34 @@ export const issueStateMachineConfig = {
     onEnterQueued: async (context: Record<string, unknown>, _event: string, _machine: Machine) => {
       const issue = resolveIssue(context);
       if (issue) {
+        // Archive previous attempt summary before clearing lastError
+        if (issue.attempts > 0 && issue.lastError) {
+          const summary: AttemptSummary = {
+            planVersion: issue.planVersion ?? 1,
+            executeAttempt: issue.executeAttempt ?? 1,
+            error: (issue.lastError ?? "").slice(0, 500),
+            outputTail: (issue.commandOutputTail ?? "").slice(0, 500),
+            timestamp: now(),
+          };
+          // Find the most recent stdout file in outputs/
+          if (issue.workspacePath) {
+            try {
+              const outputsDir = join(issue.workspacePath, "outputs");
+              if (existsSync(outputsDir)) {
+                const files = readdirSync(outputsDir)
+                  .filter((f: string) => f.endsWith(".stdout.log"))
+                  .sort((a: string, b: string) => {
+                    try { return statSync(join(outputsDir, b)).mtimeMs - statSync(join(outputsDir, a)).mtimeMs; }
+                    catch { return 0; }
+                  });
+                if (files.length > 0) summary.outputFile = files[0];
+              }
+            } catch {}
+          }
+          const prev = issue.previousAttemptSummaries ?? [];
+          issue.previousAttemptSummaries = [...prev.slice(-(2)), summary].slice(-3);
+        }
+
         issue.nextRetryAt = undefined;
         issue.lastError = undefined;
         logger.info({ issueId: issue.id, identifier: issue.identifier }, "[FSM] onEnterQueued — enqueuing for execution");

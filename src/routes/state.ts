@@ -23,6 +23,7 @@ import { approvePlanCommand } from "../commands/approve-plan.command.ts";
 import { executeIssueCommand } from "../commands/execute-issue.command.ts";
 import { replanIssueCommand } from "../commands/replan-issue.command.ts";
 import { mergeWorkspaceCommand } from "../commands/merge-workspace.command.ts";
+import { pushWorkspaceCommand } from "../commands/push-workspace.command.ts";
 import { transitionIssueCommand } from "../commands/transition-issue.command.ts";
 
 type GetStateResult = RuntimeState & {
@@ -221,6 +222,10 @@ export function registerStateRoutes(
       const issue = findIssue(state, issueId);
       if (!issue) return c.json({ ok: false, error: "Issue not found." }, 404);
       const container = getContainer();
+      if (state.config.mergeMode === "push-pr") {
+        const result = await pushWorkspaceCommand({ issue, state }, container);
+        return c.json({ ok: true, prUrl: result.prUrl, ghAvailable: result.ghAvailable });
+      }
       const result = await mergeWorkspaceCommand({ issue, state }, container);
       return c.json({ ok: true, ...result });
     } catch (error) {

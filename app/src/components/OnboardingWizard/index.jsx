@@ -46,6 +46,9 @@ export default function OnboardingWizard({ onComplete }) {
   const [runtimeSnapshot, setRuntimeSnapshot] = useState(null);
   const [selectedAgents, setSelectedAgents] = useState([]);
   const [selectedSkills, setSelectedSkills] = useState([]);
+  const [mergeMode, setMergeMode] = useState("local");
+  const [prBaseBranch, setPrBaseBranch] = useState("");
+  const [testCommand, setTestCommand] = useState("");
 
   const STEP_COUNT = getStepCount();
   const STEP_LABELS = getStepLabels();
@@ -111,6 +114,13 @@ export default function OnboardingWizard({ onComplete }) {
     if (Number.isFinite(parsedConcurrency)) {
       setConcurrency(Math.min(10, Math.max(1, parsedConcurrency)));
     }
+
+    const savedMergeMode = getSettingValue(settings, "runtime.mergeMode", "local");
+    if (savedMergeMode === "local" || savedMergeMode === "push-pr") setMergeMode(savedMergeMode);
+    const savedPrBaseBranch = getSettingValue(settings, "runtime.prBaseBranch", "");
+    if (typeof savedPrBaseBranch === "string") setPrBaseBranch(savedPrBaseBranch);
+    const savedTestCommand = getSettingValue(settings, "runtime.testCommand", "");
+    if (typeof savedTestCommand === "string") setTestCommand(savedTestCommand);
   }, [settings, settingsQuery.isLoading]);
 
   useEffect(() => {
@@ -196,6 +206,13 @@ export default function OnboardingWizard({ onComplete }) {
       if (normalizedProjectName) {
         saveSetting(PROJECT_SETTING_ID, normalizedProjectName, "system").catch(() => {});
       }
+      saveSetting("runtime.mergeMode", mergeMode, "runtime").catch(() => {});
+      if (mergeMode === "push-pr" && prBaseBranch.trim()) {
+        saveSetting("runtime.prBaseBranch", prBaseBranch.trim(), "runtime").catch(() => {});
+      }
+      if (testCommand.trim()) {
+        saveSetting("runtime.testCommand", testCommand.trim(), "runtime").catch(() => {});
+      }
     } else if (currentStepName === "Pipeline") {
       const pipelineProviders = [
         { provider: pipeline.planner, role: "planner" },
@@ -210,7 +227,7 @@ export default function OnboardingWizard({ onComplete }) {
       saveSetting("ui.theme", selectedTheme, "ui").catch(() => {});
       api.post("/config/concurrency", { concurrency }).catch(() => {});
     }
-  }, [pipeline, efforts, models, concurrency, selectedTheme, normalizedProjectName]);
+  }, [pipeline, efforts, models, concurrency, selectedTheme, normalizedProjectName, mergeMode, prBaseBranch, testCommand]);
 
   const goNext = useCallback(() => {
     if (step < STEP_COUNT - 1) {
@@ -251,6 +268,13 @@ export default function OnboardingWizard({ onComplete }) {
       // Save as WorkflowConfig (the format read by planner, executor, reviewer stages)
       saves.push(saveSetting("runtime.workflowConfig", buildWorkflowConfig(pipeline, efforts, models), "runtime"));
       saves.push(api.post("/config/concurrency", { concurrency }));
+      saves.push(saveSetting("runtime.mergeMode", mergeMode, "runtime"));
+      if (mergeMode === "push-pr" && prBaseBranch.trim()) {
+        saves.push(saveSetting("runtime.prBaseBranch", prBaseBranch.trim(), "runtime"));
+      }
+      if (testCommand.trim()) {
+        saves.push(saveSetting("runtime.testCommand", testCommand.trim(), "runtime"));
+      }
 
       // Install selected agents and skills
       if (selectedAgents.length > 0) {
@@ -304,7 +328,7 @@ export default function OnboardingWizard({ onComplete }) {
       qc.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
       onComplete?.();
     }
-  }, [normalizedProjectName, pipeline, efforts, models, concurrency, selectedTheme, selectedAgents, selectedSkills, qc, onComplete]);
+  }, [normalizedProjectName, pipeline, efforts, models, concurrency, selectedTheme, selectedAgents, selectedSkills, mergeMode, prBaseBranch, testCommand, qc, onComplete]);
 
   // Can proceed from step
   const canProceed =
@@ -367,7 +391,13 @@ export default function OnboardingWizard({ onComplete }) {
               projectSource={projectSource}
               workspacePath={workspacePath}
               currentBranch={defaultBranch}
-              onBranchCreated={(branch) => setDefaultBranch(branch)}
+              onBranchCreated={(branch) => { setDefaultBranch(branch); if (!prBaseBranch) setPrBaseBranch(branch); }}
+              mergeMode={mergeMode}
+              setMergeMode={setMergeMode}
+              prBaseBranch={prBaseBranch}
+              setPrBaseBranch={setPrBaseBranch}
+              testCommand={testCommand}
+              setTestCommand={setTestCommand}
             />
           )}
           {stepName === "Pipeline" && (
