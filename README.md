@@ -51,21 +51,23 @@ stateDiagram-v2
     [*] --> Planning
     Planning --> PendingApproval: PLANNED
     PendingApproval --> Queued: QUEUE
+    PendingApproval --> Planning: REPLAN
     Queued --> Running: RUN
     Running --> Reviewing: REVIEW
-    Reviewing --> PendingDecision: REVIEWED
-    PendingDecision --> Approved: APPROVE
-    Approved --> Merged: MERGE
-
+    Running --> Queued: REQUEUE
     Running --> Blocked: BLOCK
+    Reviewing --> PendingDecision: REVIEWED
+    Reviewing --> Queued: REQUEUE
     Reviewing --> Blocked: BLOCK
+    PendingDecision --> Approved: APPROVE
+    PendingDecision --> Queued: REQUEUE (rework)
+    PendingDecision --> Planning: REPLAN
+    Approved --> Merged: MERGE
+    Approved --> Planning: REOPEN
+
     Blocked --> Queued: UNBLOCK
     Blocked --> Planning: REPLAN
 
-    PendingDecision --> Queued: REQUEUE (rework)
-    PendingDecision --> Planning: REPLAN
-
-    Approved --> Planning: REOPEN
     Merged --> Planning: REOPEN
 
     Planning --> Cancelled: CANCEL
