@@ -19,13 +19,13 @@ function SettingsLayout() {
   return (
     <div className="flex-1 flex flex-col min-h-0 px-4 pb-4 pt-3">
       <div className="max-w-5xl w-full mx-auto flex-1 flex flex-col min-h-0 gap-5">
-        <div role="tablist" className="tabs tabs-lift">
+        <div role="tablist" className="tabs tabs-lift overflow-x-auto flex-nowrap scrollbar-none" style={{ scrollbarWidth: "none" }}>
           {TABS.map(({ to, label, icon: Icon }) => (
             <Link
               key={to}
               to={to}
               role="tab"
-              className={`tab gap-1.5 ${currentPath.startsWith(to) ? "tab-active" : ""}`}
+              className={`tab gap-1.5 whitespace-nowrap ${currentPath.startsWith(to) ? "tab-active" : ""}`}
             >
               <Icon className="size-3.5" />
               {label}

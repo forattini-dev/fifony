@@ -39,6 +39,7 @@ stateDiagram-v2
     direction LR
 
     classDef planning fill:#38bdf8,color:#fff,stroke:#0ea5e9,stroke-width:2px
+    classDef approval fill:#fbbf24,color:#000,stroke:#f59e0b,stroke-width:2px
     classDef queued fill:#a78bfa,color:#fff,stroke:#8b5cf6,stroke-width:2px
     classDef running fill:#818cf8,color:#fff,stroke:#6366f1,stroke-width:2px
     classDef review fill:#f59e0b,color:#fff,stroke:#d97706,stroke-width:2px
@@ -76,33 +77,34 @@ stateDiagram-v2
     Merged --> [*]
     Cancelled --> [*]
 
-    class Planning,PendingApproval planning
+    class Planning planning
+    class PendingApproval,PendingDecision approval
     class Queued queued
     class Running running
-    class Reviewing,PendingDecision review
+    class Reviewing review
     class Approved done
     class Merged merged
     class Blocked blocked
     class Cancelled cancelled
 ```
 
-| Step | What happens |
-|------|-------------|
-| **Create** | Describe what you want done. Hit **Enhance** — AI rewrites your title and description into a clear, actionable spec with acceptance criteria, edge cases, and suggested labels. One click turns a vague idea into a well-scoped task. |
-| **Plan** | The planner agent generates a structured execution plan: phases, steps, target files, complexity, risks. |
-| **Approve** | You review the plan. Optionally refine it with AI chat before approving. |
-| **Execute** | Agents run in an isolated git worktree. Live output streams to the dashboard. |
-| **Review** | The reviewer agent inspects the diff and either approves, requests rework, or blocks. |
-| **Approved** | Approved and waiting for merge. You review the diff in the dashboard. |
-| **Merge** | You merge the worktree into your project. Analytics capture lines added/removed. |
+| Step | Who | State | What happens |
+|------|-----|-------|-------------|
+| **Create** | You | → Planning | Describe what you want. Hit **Enhance** — AI rewrites your spec with acceptance criteria, edge cases, and labels. |
+| **Plan** | AI | Planning | The planner generates a structured execution plan: phases, steps, target files, complexity, risks. |
+| **Approve plan** | You | PendingApproval → Queued | You review the plan. Optionally refine with AI chat before approving. |
+| **Execute** | AI | Running | Agents run in an isolated git worktree. Live output streams to the dashboard. |
+| **Review** | AI | Reviewing | The reviewer inspects the diff — approves, requests rework, or blocks. |
+| **Decide** | You | PendingDecision → Approved | You confirm the review. Approve to merge, request rework, or replan. |
+| **Merge** | You | Approved → Merged | Merge the worktree into your project. Analytics capture lines added/removed. |
 
-**Retry operations** are semantically distinct from first-run operations:
+**Retry operations** are semantically distinct — each has its own command, FSM path, and prompt context:
 
-| Retry | What happens |
-|-------|-------------|
-| **Replan** | Archives the current plan, increments plan version, resets execution/review counters, and generates a fresh plan. |
-| **Re-execute** | Retries execution from Blocked state. Prior failure insights are analyzed and injected into the prompt so the agent avoids repeating the same mistake. |
-| **Rework** | Reviewer requested changes. Reviewer feedback is archived as a structured failure insight, and the issue is re-queued for another execution attempt. |
+| Retry | Command | What happens |
+|-------|---------|-------------|
+| **Replan** | `replanIssueCommand` | Archives current plan, increments plan version, resets execution/review counters, generates fresh plan. |
+| **Re-execute** | `retryExecutionCommand` | Retries from Blocked. Prior failure insights analyzed and injected into prompt — agent avoids repeating the same mistake. |
+| **Rework** | `requestReworkCommand` | Reviewer requested changes. Feedback archived as structured failure insight, issue re-queued for another execution attempt. |
 
 Agents run as detached child processes, tracked by PID. If the server restarts mid-run, fifony recovers on the next boot.
 
@@ -276,10 +278,10 @@ FIFONY_LOG_FILE=0                     # set to 1 to also write .fifony/fifony-lo
 
 | Layer | How it works |
 |-------|-------------|
-| **State machine** | Single source of truth. All transitions, side effects (events, field mutations, EC tracking), and guards live in `issue-state-machine.ts`. Dedicated commands for each retry type: `replanIssueCommand`, `retryExecutionCommand`, `requestReworkCommand`. |
+| **State machine** | 10 states, 13 events. States named by actor: AI states (Planning, Running, Reviewing), Human states (PendingApproval, PendingDecision, Approved), terminal (Merged, Cancelled). Legacy names auto-migrated. |
+| **Unified queue** | Single work queue with phase ordering (review → execute → plan). Semaphore for concurrency. No scheduler loop — event-driven dispatch. Planning runs outside the semaphore. |
 | **Persistence** | s3db.js with SQLite backend. Issues, events, sessions, and settings are first-class resources. No external DB. |
 | **Analytics** | `EventualConsistencyPlugin` tracks token usage, code churn (lines added/removed), and event counts with daily cohort rollups. |
-| **Queue** | `S3QueuePlugin` dispatches planning/execution/review jobs to concurrent workers. |
 | **Agents** | Wraps local CLIs (Claude, Codex, Gemini). Per-stage provider, model, and reasoning effort. No proprietary model logic. |
 | **Isolation** | Each issue gets its own git worktree branch. Parallel work on the same repo without file conflicts. |
 | **Routing** | Capability labels derived from issue text and file paths drive automatic agent/provider selection. |

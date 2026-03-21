@@ -344,7 +344,7 @@ export function IssueDetailDrawer({ issue, onClose, onStateChange, onRetry, onCa
             <div
               ref={tabsContainerRef}
               role="tablist"
-              className="tabs tabs-lift overflow-x-auto -webkit-overflow-scrolling-touch scrollbar-none"
+              className="tabs tabs-lift overflow-x-auto flex-nowrap -webkit-overflow-scrolling-touch scrollbar-none"
               style={{ scrollbarWidth: "none" }}
             >
               {getTabs(issue.state).map(({ id, label, icon: Icon }) => (
