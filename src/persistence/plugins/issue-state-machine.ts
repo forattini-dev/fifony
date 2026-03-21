@@ -25,19 +25,9 @@ function emitFsmEvent(issueId: string, kind: string, message: string): void {
 }
 
 // Lazy imports to avoid circular dependency (queue-workers → issue-runner → transition-issue → this)
-async function lazyEnqueueForPlanning(issue: IssueEntry): Promise<void> {
-  const { enqueueForPlanning } = await import("./queue-workers.ts");
-  return enqueueForPlanning(issue);
-}
-
-async function lazyEnqueueForExecution(issue: IssueEntry): Promise<void> {
-  const { enqueueForExecution } = await import("./queue-workers.ts");
-  return enqueueForExecution(issue);
-}
-
-async function lazyEnqueueForReview(issue: IssueEntry): Promise<void> {
-  const { enqueueForReview } = await import("./queue-workers.ts");
-  return enqueueForReview(issue);
+async function lazyEnqueue(issue: IssueEntry, job: "plan" | "execute" | "review"): Promise<void> {
+  const { enqueue } = await import("./queue-workers.ts");
+  return enqueue(issue, job);
 }
 
 export const ISSUE_STATE_MACHINE_ID = "issue-lifecycle";
@@ -165,7 +155,7 @@ export const issueStateMachineConfig = {
         issue.nextRetryAt = undefined;
         issue.lastError = undefined;
         emitFsmEvent(issue.id, "state", `${issue.identifier} entered Planning.`);
-        lazyEnqueueForPlanning(issue).catch(() => {});
+        lazyEnqueue(issue, "plan").catch(() => {});
       }
     },
 
@@ -234,7 +224,7 @@ export const issueStateMachineConfig = {
         issue.lastFailedPhase = undefined;
         logger.info({ issueId: issue.id, identifier: issue.identifier }, "[FSM] onEnterQueued — enqueuing for execution");
         emitFsmEvent(issue.id, "state", `${issue.identifier} queued for execution.`);
-        lazyEnqueueForExecution(issue).catch((err) => {
+        lazyEnqueue(issue, "execute").catch((err) => {
           logger.error({ err, issueId: issue.id }, "[FSM] onEnterQueued — enqueue FAILED");
         });
       }
@@ -247,7 +237,7 @@ export const issueStateMachineConfig = {
         issue.reviewingAt = ts;
         issue.lastError = undefined;
         emitFsmEvent(issue.id, "state", `${issue.identifier} moved to Reviewing.`);
-        lazyEnqueueForReview(issue).catch(() => {});
+        lazyEnqueue(issue, "review").catch(() => {});
       }
       const res = issueResource(machine);
       if (res) {

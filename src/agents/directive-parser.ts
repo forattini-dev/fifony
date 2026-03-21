@@ -54,7 +54,7 @@ export function addTokenUsage(issue: IssueEntry, usage?: AgentTokenUsage, role?:
     model,
   };
 
-  // 4. Legacy per-model totals for EventualConsistency analytics
+  // 4. Per-model totals for EventualConsistency daily cohort analytics
   if (!issue.usage) issue.usage = { tokens: {} };
   issue.usage.tokens[model] = (issue.usage.tokens[model] || 0) + usage.totalTokens;
 }

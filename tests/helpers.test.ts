@@ -255,16 +255,10 @@ describe("normalizeState", () => {
     assert.equal(normalizeState("planned"), "Planning");
   });
 
-  it("migrates legacy state 'Planned' to 'PendingApproval'", () => {
-    assert.equal(normalizeState("Planned"), "PendingApproval");
-  });
-
-  it("migrates legacy state 'Reviewed' to 'PendingDecision'", () => {
-    assert.equal(normalizeState("Reviewed"), "PendingDecision");
-  });
-
-  it("migrates legacy state 'Done' to 'Approved'", () => {
-    assert.equal(normalizeState("Done"), "Approved");
+  it("returns fallback for old state names (no legacy migration)", () => {
+    assert.equal(normalizeState("Planned"), "Planning");
+    assert.equal(normalizeState("Reviewed"), "Planning");
+    assert.equal(normalizeState("Done"), "Planning");
   });
 });
 

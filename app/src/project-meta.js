@@ -1,10 +1,4 @@
 export const PROJECT_SETTING_ID = "system.projectName";
-export const LEGACY_PROJECT_SETTING_IDS = [
-  "runtime.projectName",
-  "ui.projectName",
-  "projectName",
-  "project.name",
-];
 
 export function normalizeProjectName(value) {
   return typeof value === "string"
@@ -22,18 +16,8 @@ export function detectProjectNameFromPath(path) {
 }
 
 export function readSavedProjectName(settings) {
-  const settingIds = [PROJECT_SETTING_ID, ...LEGACY_PROJECT_SETTING_IDS];
   const list = Array.isArray(settings) ? settings : [];
-
-  for (const id of settingIds) {
-    const entry = list.find((setting) => setting?.id === id);
-    const value = normalizeProjectName(entry?.value);
-    if (value) {
-      return value;
-    }
-  }
-
-  return "";
+  return normalizeProjectName(list.find((s) => s?.id === PROJECT_SETTING_ID)?.value);
 }
 
 export function buildQueueTitle(projectName) {

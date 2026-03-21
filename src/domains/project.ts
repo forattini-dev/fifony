@@ -24,12 +24,6 @@ import type { ProjectNameSource, RuntimeSettingRecord } from "../types.ts";
 // ── Project metadata ─────────────────────────────────────────────────────────
 
 export const SETTING_ID_PROJECT_NAME = "system.projectName";
-export const LEGACY_PROJECT_SETTING_IDS = [
-  "runtime.projectName",
-  "ui.projectName",
-  "projectName",
-  "project.name",
-];
 
 export type ProjectMetadata = {
   projectName: string;
@@ -53,16 +47,7 @@ export function detectProjectName(targetRoot: string): string {
 }
 
 export function readSavedProjectName(settings: RuntimeSettingRecord[]): string {
-  const settingIds = [SETTING_ID_PROJECT_NAME, ...LEGACY_PROJECT_SETTING_IDS];
-
-  for (const id of settingIds) {
-    const value = normalizeProjectName(settings.find((setting) => setting.id === id)?.value);
-    if (value) {
-      return value;
-    }
-  }
-
-  return "";
+  return normalizeProjectName(settings.find((s) => s.id === SETTING_ID_PROJECT_NAME)?.value);
 }
 
 export function buildQueueTitle(projectName: string): string {

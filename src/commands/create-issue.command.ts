@@ -54,11 +54,11 @@ export async function createIssueCommand(
 
   // Enqueue based on initial state
   if (issue.state === "Planning") {
-    deps.queuePort.enqueueForPlanning(issue).catch(() => {});
+    deps.queuePort.enqueue(issue, "plan").catch(() => {});
   } else if (issue.state === "Queued" || issue.state === "Running") {
-    deps.queuePort.enqueueForExecution(issue).catch(() => {});
+    deps.queuePort.enqueue(issue, "execute").catch(() => {});
   } else if (issue.state === "Reviewing") {
-    deps.queuePort.enqueueForReview(issue).catch(() => {});
+    deps.queuePort.enqueue(issue, "review").catch(() => {});
   }
 
   return { issue };

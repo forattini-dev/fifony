@@ -41,7 +41,7 @@ describe("backend project metadata", () => {
     assert.equal(metadata.queueTitle, "fifony: my-service");
   });
 
-  it("keeps compatibility with a legacy saved project setting", () => {
+  it("ignores unknown setting IDs (no legacy fallback)", () => {
     const metadata = resolveProjectMetadata([
       {
         id: "runtime.projectName",
@@ -52,10 +52,9 @@ describe("backend project metadata", () => {
       },
     ], "/tmp/current-dir");
 
-    assert.equal(metadata.projectName, "Legacy Workspace");
-    assert.equal(metadata.detectedProjectName, "current-dir");
-    assert.equal(metadata.projectNameSource, "saved");
-    assert.equal(metadata.queueTitle, "fifony: Legacy Workspace");
+    // Old setting IDs are no longer recognized — falls back to detected name
+    assert.equal(metadata.projectName, "current-dir");
+    assert.equal(metadata.projectNameSource, "detected");
   });
 
   it("returns missing metadata when detection fails", () => {

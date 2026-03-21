@@ -248,20 +248,6 @@ export async function enqueue(issue: IssueEntry, job: JobType): Promise<void> {
   drain().catch((err) => logger.error({ err }, "[Queue] Drain loop error"));
 }
 
-// ── Backwards-compat wrappers (called by FSM entry actions via lazy import) ─
-
-export async function enqueueForPlanning(issue: IssueEntry): Promise<void> {
-  return enqueue(issue, "plan");
-}
-
-export async function enqueueForExecution(issue: IssueEntry): Promise<void> {
-  return enqueue(issue, "execute");
-}
-
-export async function enqueueForReview(issue: IssueEntry): Promise<void> {
-  return enqueue(issue, "review");
-}
-
 // ── State recovery (called once after init) ──────────────────────────────
 
 /**
@@ -280,10 +266,8 @@ export async function recoverState(): Promise<void> {
         try {
           const fsmState = await fsmPlugin.getState(ISSUE_STATE_MACHINE_ID, issue.id);
           if (fsmState && fsmState !== issue.state) {
-            const { parseIssueState } = await import("../../concerns/helpers.ts");
-            const normalized = parseIssueState(fsmState) ?? fsmState;
-            logger.warn({ issueId: issue.id, memoryState: issue.state, fsmState, normalized }, "[Queue] Reconciling desync — FSM is source of truth");
-            issue.state = normalized as typeof issue.state;
+            logger.warn({ issueId: issue.id, memoryState: issue.state, fsmState }, "[Queue] Reconciling desync — FSM is source of truth");
+            issue.state = fsmState as typeof issue.state;
           }
         } catch { /* FSM entity may not exist yet */ }
       }

@@ -129,7 +129,6 @@ Uses Node.js native `node:test` module with `assert/strict`. Tests in `tests/`. 
 - **Domain purity**: `src/domains/` must not import from `src/persistence/` or do I/O.
 - **State transitions**: Go through the state machine (`send()`), never mutate `issue.state` directly.
 - **Retry semantics**: Use the specific command for each retry type — `replanIssueCommand` for re-planning, `retryExecutionCommand` for re-execution from Blocked, `requestReworkCommand` for reviewer-requested rework. Never conflate them — they have different counter resets, FSM paths, and prompt injection.
-- **Legacy state names**: `parseIssueState()` auto-migrates `Planned→PendingApproval`, `Reviewed→PendingDecision`, `Done→Approved`. Always pass FSM states through `parseIssueState()` when reading from persistence.
 - **Queue dispatch**: Use `enqueue(issue, "plan"|"execute"|"review")` — never call `runIssueOnce` or `runPlanningJob` directly. The queue handles concurrency, guards, and ordering.
 - **No scheduler**: The unified queue handles stale checks and persist via intervals. `boot.ts` just holds the process alive after queue init.
 

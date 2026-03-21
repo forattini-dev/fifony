@@ -595,7 +595,7 @@ describe("addTokenUsage", () => {
     assert.equal(issue.tokensByModel!["claude-sonnet-4-6"].totalTokens, 240);
   });
 
-  it("updates legacy usage.tokens for EventualConsistency", () => {
+  it("updates usage.tokens for EventualConsistency", () => {
     const issue = makeIssue();
     addTokenUsage(issue, { inputTokens: 100, outputTokens: 20, totalTokens: 120, model: "claude-sonnet-4-6" });
 

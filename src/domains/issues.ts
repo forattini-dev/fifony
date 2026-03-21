@@ -51,17 +51,17 @@ export function normalizeIssue(
   const id = toStringValue(raw.id, "");
   if (!id) return null;
 
-  const createdAt = toStringValue(raw.created_at, now());
-  const updatedAt = toStringValue(raw.updated_at, createdAt);
+  const createdAt = toStringValue(raw.createdAt, now());
+  const updatedAt = toStringValue(raw.updatedAt, createdAt);
   const issue: IssueEntry = {
     id,
     identifier: toStringValue(raw.identifier, id),
     title: toStringValue(raw.title, `Issue ${id}`),
     description: toStringValue(raw.description, ""),
     state: normalizeState(raw.state, raw.plan && typeof raw.plan === "object" ? "PendingApproval" : "Planning"),
-    branchName: toStringValue(raw.branchName) || toStringValue(raw.branch_name),
+    branchName: toStringValue(raw.branchName),
     url: toStringValue(raw.url),
-    assigneeId: toStringValue(raw.assignee_id),
+    assigneeId: toStringValue(raw.assigneeId),
     labels: toStringArray(raw.labels),
     paths: toStringArray(raw.paths),
     inferredPaths: toStringArray(raw.inferredPaths),
@@ -69,13 +69,13 @@ export function normalizeIssue(
     capabilityOverlays: toStringArray(raw.capabilityOverlays),
     capabilityRationale: toStringArray(raw.capabilityRationale),
     blockedBy: toStringArray(raw.blockedBy),
-    assignedToWorker: toBooleanValue(raw.assigned_to_worker, true),
+    assignedToWorker: toBooleanValue(raw.assignedToWorker, true),
     createdAt,
     updatedAt,
     history: [],
     attempts: toNumberValue(raw.attempts, 0),
-    maxAttempts: toNumberValue(raw.max_attempts, 3),
-    nextRetryAt: toStringValue(raw.next_retry_at),
+    maxAttempts: toNumberValue(raw.maxAttempts, 3),
+    nextRetryAt: toStringValue(raw.nextRetryAt),
     planVersion: 0,
     executeAttempt: 0,
     reviewAttempt: 0,
@@ -214,9 +214,7 @@ export function buildRuntimeState(
         labels: toStringArray(existing.labels),
         capabilityOverlays: toStringArray(existing.capabilityOverlays),
         capabilityRationale: toStringArray(existing.capabilityRationale),
-        blockedBy: toStringArray(existing.blockedBy).length > 0
-          ? toStringArray(existing.blockedBy)
-          : toStringArray(existing.blocked_by),
+        blockedBy: toStringArray(existing.blockedBy),
         history: Array.isArray(existing.history) ? existing.history : [],
         attempts: clamp(toNumberValue(existing.attempts, 0), 0, config.maxAttemptsDefault),
         maxAttempts: clamp(toNumberValue(existing.maxAttempts, config.maxAttemptsDefault), 1, config.maxAttemptsDefault),

@@ -6,7 +6,6 @@ import {
   ISSUE_STATE_MACHINE_ID,
 } from "../persistence/plugins/issue-state-machine.ts";
 import { transitionIssue } from "../domains/issues.ts";
-import { parseIssueState } from "../concerns/helpers.ts";
 import { logger } from "../concerns/logger.ts";
 
 export type TransitionIssueInput = {
@@ -34,11 +33,10 @@ export async function transitionIssueCommand(
     const plugin = getIssueStateMachinePlugin();
     if (plugin?.getState) {
       const fsmState = await plugin.getState(ISSUE_STATE_MACHINE_ID, issue.id);
-      const normalized = parseIssueState(fsmState) ?? fsmState;
-      if (normalized && normalized !== currentState) {
-        logger.debug({ issueId: issue.id, memoryState: currentState, fsmState, normalized }, "[Transition] Syncing stale in-memory state with FSM");
-        issue.state = normalized as typeof issue.state;
-        currentState = normalized;
+      if (fsmState && fsmState !== currentState) {
+        logger.debug({ issueId: issue.id, memoryState: currentState, fsmState }, "[Transition] Syncing stale in-memory state with FSM");
+        issue.state = fsmState as typeof issue.state;
+        currentState = fsmState;
       }
     }
   } catch { /* FSM not available — use in-memory */ }
