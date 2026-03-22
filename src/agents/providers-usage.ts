@@ -327,9 +327,10 @@ async function collectClaudeUsage(): Promise<ProviderUsage | null> {
 
   // Claude models (known models for Claude Code)
   const models: ModelInfo[] = [
-    { slug: "claude-opus-4-6", displayName: "claude opus 4.6", description: "Most capable model for complex tasks" },
-    { slug: "claude-sonnet-4-6", displayName: "claude sonnet 4.6", description: "Balanced performance and speed" },
-    { slug: "claude-haiku-4-5", displayName: "claude haiku 4.5", description: "Fast and efficient model" },
+    { slug: "claude-opus-4-6", displayName: "claude-opus-4-6", description: "Most capable for complex work" },
+    { slug: "claude-sonnet-4-6", displayName: "claude-sonnet-4-6", description: "Best for everyday tasks" },
+    { slug: "claude-sonnet-4-6-1m", displayName: "claude-sonnet-4-6 (1m context)", description: "Billed as extra usage · $3/$15 per Mtok" },
+    { slug: "claude-haiku-4-5", displayName: "claude-haiku-4-5", description: "Fastest for quick answers" },
   ];
 
   // Detect subscription type and configured model from settings

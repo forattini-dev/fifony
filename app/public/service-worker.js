@@ -2,7 +2,7 @@ const CACHE_VERSION = "__BUILD_TIMESTAMP__";
 const CORE_CACHE = `fifony-core-${CACHE_VERSION}`;
 const ASSET_CACHE = `fifony-assets-${CACHE_VERSION}`;
 const APP_SHELL_ROUTES = ["/kanban", "/issues", "/agents", "/settings", "/onboarding"];
-const APP_SHELL_FILES = ["/offline.html", "/manifest.webmanifest", "/icon.svg", "/icon-maskable.svg"];
+const APP_SHELL_FILES = ["/offline.html", "/manifest.webmanifest", "/favicon.png", "/icon-192.png", "/icon-512.png"];
 const API_PREFIXES = ["/api/", "/docs", "/ws"];
 
 self.addEventListener("install", (event) => {

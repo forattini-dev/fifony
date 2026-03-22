@@ -330,14 +330,16 @@ function parseClaudeUsageHeading(line: string): { section: ClaudeUsageSection; m
   return null;
 }
 
+/** Convert banner label like "Opus 4.6" → CLI model id "claude-opus-4-6" */
 function formatClaudeModelFromLabel(label: string): string {
   const normalized = label.trim().toLowerCase();
-  const compact = normalized.replace(/\s+/g, "-");
+  // Replace spaces and dots with dashes to match CLI --model format: claude-opus-4-6
+  const compact = normalized.replace(/[\s.]+/g, "-");
   if (compact.includes("opus")) return `claude-${compact}`;
   if (compact.includes("sonnet")) return `claude-${compact}`;
   if (compact.includes("haiku")) return `claude-${compact}`;
   if (compact.startsWith("claude-")) return compact;
-  return label.trim();
+  return label.trim().toLowerCase();
 }
 
 export function parseClaudeUsageFromStatus(raw: string): ProviderUsageSnapshot {

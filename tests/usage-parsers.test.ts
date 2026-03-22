@@ -114,7 +114,7 @@ describe("parseClaudeUsageFromStatus", () => {
 
   it("extracts currentModel from banner", () => {
     const s = parseClaudeUsageFromStatus(CLAUDE_USAGE_FIXTURE);
-    assert.equal(s.currentModel, "claude-opus-4.6");
+    assert.equal(s.currentModel, "claude-opus-4-6");
   });
 
   it("extracts session percent used", () => {
@@ -156,7 +156,7 @@ describe("parseClaudeUsageFromStatus", () => {
     assert.equal(s.version, "2.2.0");
     assert.equal(s.plan, "Claude Pro");
     assert.equal(s.effort, "medium");
-    assert.equal(s.currentModel, "claude-sonnet-4.6");
+    assert.equal(s.currentModel, "claude-sonnet-4-6");
     assert.equal(s.sessionPercentUsed, 1);
     assert.equal(s.weeklyPercentUsed, 45);
   });
