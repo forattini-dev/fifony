@@ -50,6 +50,7 @@ const BASE_CONFIG: RuntimeConfig = {
   agentCommand: "",
   defaultEffort: { default: "medium" },
   runMode: "filesystem",
+  autoReviewApproval: true,
   afterCreateHook: "",
   beforeRunHook: "",
   afterRunHook: "",

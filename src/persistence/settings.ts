@@ -11,7 +11,7 @@ import type {
   WorkflowConfig,
 } from "../types.ts";
 import type { DiscoveredModel } from "../agents/providers.ts";
-import { clamp, now } from "../concerns/helpers.ts";
+import { clamp, now, toBooleanValue } from "../concerns/helpers.ts";
 import { loadPersistedSettings, replacePersistedSetting } from "./store.ts";
 import { getProviderDefaultCommand, normalizeAgentProvider, readCodexConfig } from "../agents/providers.ts";
 
@@ -34,6 +34,7 @@ export const SETTING_ID_WORKFLOW_CONFIG = "runtime.workflowConfig";
 export const SETTING_ID_TEST_COMMAND = "runtime.testCommand";
 export const SETTING_ID_MERGE_MODE = "runtime.mergeMode";
 export const SETTING_ID_PR_BASE_BRANCH = "runtime.prBaseBranch";
+export const SETTING_ID_AUTO_REVIEW_APPROVAL = "runtime.autoReviewApproval";
 
 export async function loadRuntimeSettings(): Promise<RuntimeSettingRecord[]> {
   return loadPersistedSettings();
@@ -55,6 +56,7 @@ export const RUNTIME_CONFIG_SETTING_IDS = new Set<string>([
   SETTING_ID_TEST_COMMAND,
   SETTING_ID_MERGE_MODE,
   SETTING_ID_PR_BASE_BRANCH,
+  SETTING_ID_AUTO_REVIEW_APPROVAL,
 ]);
 
 const VALID_REASONING_EFFORTS = new Set<ReasoningEffort>(["low", "medium", "high", "extra-high"]);
@@ -135,6 +137,7 @@ function buildRuntimeConfigSettings(
     { id: SETTING_ID_TEST_COMMAND, scope: "runtime", value: config.testCommand ?? "", source, updatedAt },
     { id: SETTING_ID_MERGE_MODE, scope: "runtime", value: config.mergeMode ?? "local", source, updatedAt },
     { id: SETTING_ID_PR_BASE_BRANCH, scope: "runtime", value: config.prBaseBranch ?? "", source, updatedAt },
+    { id: SETTING_ID_AUTO_REVIEW_APPROVAL, scope: "runtime", value: config.autoReviewApproval, source, updatedAt },
   ];
 }
 
@@ -243,6 +246,10 @@ export function applyPersistedSettings(config: RuntimeConfig, settings: RuntimeS
         if (typeof setting.value === "string" && setting.value.trim()) {
           nextConfig.prBaseBranch = setting.value.trim();
         }
+        break;
+      }
+      case SETTING_ID_AUTO_REVIEW_APPROVAL: {
+        nextConfig.autoReviewApproval = toBooleanValue(setting.value, true);
         break;
       }
       default:

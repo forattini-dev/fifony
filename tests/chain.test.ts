@@ -39,6 +39,7 @@ const BASE_CONFIG: RuntimeConfig = {
   agentCommand: "",
   defaultEffort: { default: "medium" },
   runMode: "filesystem",
+  autoReviewApproval: true,
 };
 
 function makeIssue(title: string, description: string, extra: Partial<IssueEntry> = {}): IssueEntry {

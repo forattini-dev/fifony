@@ -109,6 +109,7 @@ function makeState(): RuntimeState {
       agentCommand: "",
       defaultEffort: { reasoning: "medium" },
       runMode: "filesystem",
+      autoReviewApproval: true,
       afterCreateHook: "",
       beforeRunHook: "",
       afterRunHook: "",

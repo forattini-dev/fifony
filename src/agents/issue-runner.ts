@@ -119,11 +119,18 @@ async function handleReviewStage(
 
   const container = getContainer();
   const reviewer = routedProviders.find((p) => p.role === "reviewer");
+  const autoReviewApproval = state.config.autoReviewApproval !== false;
   if (!reviewer) {
-    // No reviewer configured → auto-approve
-    issue.mergedReason = "Auto-approved: no reviewer configured.";
-    await transitionIssueCommand({ issue, target: "Approved", note: `No reviewer configured; auto-approved for ${issue.identifier}.` }, container);
-    // completedAt and lastError handled by FSM onEnterDone
+    // No reviewer configured.
+    if (autoReviewApproval) {
+      issue.mergedReason = "Auto-approved: no reviewer configured.";
+      await transitionIssueCommand({ issue, target: "Approved", note: `No reviewer configured; auto-approved for ${issue.identifier}.` }, container);
+      // completedAt and lastError handled by FSM onEnterDone
+      return;
+    }
+
+    issue.mergedReason = "Reviewer not configured; manual approval required.";
+    await transitionIssueCommand({ issue, target: "PendingDecision", note: `No reviewer configured; manual approval required for ${issue.identifier}.` }, container);
     return;
   }
 
@@ -176,8 +183,11 @@ async function handleReviewStage(
   }
 
   if (reviewResult.success) {
-    issue.mergedReason = `Auto-approved by reviewer in ${reviewResult.turns} turn(s).`;
+    issue.mergedReason = autoReviewApproval
+      ? `Auto-approved by reviewer in ${reviewResult.turns} turn(s).`
+      : `Reviewer completed for ${issue.identifier}; waiting for manual approval.`;
     await transitionIssueCommand({ issue, target: "PendingDecision", note: `Reviewer completed for ${issue.identifier}.` }, container);
+    if (!autoReviewApproval) return;
 
     // Run validation gate before transitioning to Done
     const validation = await runValidationGate(issue, state.config);

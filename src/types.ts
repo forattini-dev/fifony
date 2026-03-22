@@ -207,6 +207,8 @@ export type RuntimeConfig = {
   runMode: "filesystem";
   defaultBranch?: string;
   mergeMode?: "local" | "push-pr";
+  /** If true, review approval can still be automatic after reviewer success; if false, reviewer success waits for manual approval. */
+  autoReviewApproval: boolean;
   testCommand?: string;
   prBaseBranch?: string;
   /** Maximum dollar budget per agent execution (claude --max-budget-usd) */

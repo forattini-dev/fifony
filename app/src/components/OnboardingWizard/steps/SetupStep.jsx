@@ -340,11 +340,41 @@ function TestCommandCard({ testCommand, setTestCommand }) {
   );
 }
 
+function ReviewApprovalCard({ autoReviewApproval, setAutoReviewApproval }) {
+  return (
+    <div className="bg-base-200 rounded-2xl p-5 flex flex-col gap-4">
+      <div className="flex items-center gap-2">
+        <ShieldCheck className="size-4 text-primary" />
+        <div className="text-sm font-semibold">Review completion</div>
+      </div>
+      <p className="text-xs text-base-content/50 -mt-2">
+        Control whether completed reviews move issues directly to Done or require manual confirmation.
+      </p>
+      <label className="label cursor-pointer justify-start gap-3">
+        <input
+          type="checkbox"
+          className="toggle toggle-sm toggle-primary"
+          checked={autoReviewApproval}
+          onChange={(e) => setAutoReviewApproval(e.target.checked)}
+        />
+        <span className="label-text text-sm">Automatic review approval</span>
+      </label>
+      <p className="text-xs text-base-content/50">
+        {autoReviewApproval
+          ? "Checked: issues go directly to Done when reviewer succeeds."
+          : "Unchecked: issues stop in Pending Decision and require manual approval action."
+        }
+      </p>
+    </div>
+  );
+}
+
 function SetupStep({
   projectName, setProjectName,
   detectedProjectName, projectSource, workspacePath,
   currentBranch, onGitStatusChange, onBranchCreated,
   mergeMode, setMergeMode, prBaseBranch, setPrBaseBranch,
+  autoReviewApproval, setAutoReviewApproval,
   testCommand, setTestCommand,
 }) {
   const normalizedProjectName = normalizeProjectName(projectName);
@@ -423,6 +453,7 @@ function SetupStep({
 
       <BranchCard currentBranch={currentBranch} onGitStatusChange={onGitStatusChange} onBranchCreated={onBranchCreated} />
       <MergeModeCard mergeMode={mergeMode} setMergeMode={setMergeMode} prBaseBranch={prBaseBranch} setPrBaseBranch={setPrBaseBranch} currentBranch={currentBranch} />
+      <ReviewApprovalCard autoReviewApproval={autoReviewApproval} setAutoReviewApproval={setAutoReviewApproval} />
       <TestCommandCard testCommand={testCommand} setTestCommand={setTestCommand} />
     </div>
   );

@@ -29,9 +29,9 @@ describe("worker concurrency validation", () => {
       agentCommand: "",
       defaultEffort: { default: "medium" },
       runMode: "filesystem",
+      autoReviewApproval: true,
     };
     const errors = validateConfig(config);
     assert.ok(errors.some((item) => item.includes("workerConcurrency out of range")));
   });
 });
-

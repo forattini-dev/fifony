@@ -212,6 +212,7 @@ export async function runHook(
     agentCommand: command,
     maxTurns: 1,
     runMode: "filesystem",
+    autoReviewApproval: true,
   }, "", "", { FIFONY_HOOK_NAME: hookName, ...extraEnv });
 
   if (!result.success) {
