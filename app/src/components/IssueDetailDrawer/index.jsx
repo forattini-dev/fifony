@@ -7,7 +7,11 @@ import { PreviewModal } from "./PreviewModal.jsx";
 import { api } from "../../api.js";
 import { useSwipeToDismiss } from "../../hooks/useSwipeToDismiss.js";
 import { useWorkflowConfig } from "../../hooks/useWorkflowConfig.js";
-import { ISSUE_TYPE_COLORS, getTabs } from "./constants.js";
+import {
+  ISSUE_DRAWER_TABS,
+  ISSUE_TYPE_COLORS,
+  getDefaultIssueDrawerTab,
+} from "./constants.js";
 import { PipelineStepper } from "./PipelineStepper.jsx";
 import { OverviewTab } from "./tabs/OverviewTab.jsx";
 import { ExecutionTab } from "./tabs/ExecutionTab.jsx";
@@ -195,9 +199,14 @@ export function IssueDetailDrawer({ issue, onClose, onStateChange, onRetry, onCa
 
   const { ref: swipeRef, handlers: swipeHandlers } = useSwipeToDismiss({ onDismiss: handleClose, direction: "right" });
 
-  // Reset tab when issue changes — auto-open Review tab when Reviewing/PendingDecision
+  // Initialize the most relevant tab when switching issues.
   useEffect(() => {
-    setTab((issue?.state === "Planning" || issue?.state === "PendingApproval") ? "planning" : (issue?.state === "Reviewing" || issue?.state === "PendingDecision") ? "review" : "overview");
+    if (issue) {
+      setTab(getDefaultIssueDrawerTab(issue.state));
+    }
+  }, [issue?.id]);
+
+  useEffect(() => {
     setMergeBusy(false);
     setMergeError(null);
     setMergeNotice(null);
@@ -275,7 +284,7 @@ export function IssueDetailDrawer({ issue, onClose, onStateChange, onRetry, onCa
     >
       <div
         ref={swipeRef}
-        className={`fixed top-0 right-0 z-50 h-full w-full md:w-[520px] lg:w-[600px] bg-base-100 shadow-2xl flex flex-col ${closing ? "animate-slide-out-right" : "animate-slide-in-right"}`}
+        className={`fixed top-0 right-0 z-50 h-full w-full md:w-[40vw] md:min-w-[520px] lg:min-w-[600px] bg-base-100 shadow-2xl flex flex-col ${closing ? "animate-slide-out-right" : "animate-slide-in-right"}`}
         onClick={(event) => event.stopPropagation()}
         {...swipeHandlers}
       >
@@ -347,7 +356,7 @@ export function IssueDetailDrawer({ issue, onClose, onStateChange, onRetry, onCa
               className="tabs tabs-lift overflow-x-auto flex-nowrap -webkit-overflow-scrolling-touch scrollbar-none"
               style={{ scrollbarWidth: "none" }}
             >
-              {getTabs(issue.state).map(({ id, label, icon: Icon }) => (
+              {ISSUE_DRAWER_TABS.map(({ id, label, icon: Icon }) => (
                 <a
                   key={id}
                   role="tab"

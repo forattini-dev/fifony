@@ -1,7 +1,7 @@
 import {
   Lightbulb, Circle, ListOrdered, PlayCircle, Eye, CheckCircle2,
   AlertTriangle, XCircle, Info, Terminal, Code, Route, Activity, ClipboardCheck,
-  GitMerge,
+  GitMerge, History,
 } from "lucide-react";
 
 // ── State maps ───────────────────────────────────────────────────────────────
@@ -46,25 +46,21 @@ export const ISSUE_TYPE_COLORS = {
 
 // ── Tabs ─────────────────────────────────────────────────────────────────────
 
-export const BASE_TABS = [
+export const ISSUE_DRAWER_TABS = [
   { id: "overview", label: "Overview", icon: Info },
+  { id: "planning", label: "Plan", icon: Lightbulb },
+  { id: "review", label: "Review", icon: ClipboardCheck },
   { id: "execution", label: "Execution", icon: Terminal },
   { id: "diff", label: "Diff", icon: Code },
   { id: "routing", label: "Routing", icon: Route },
-  { id: "history", label: "Events", icon: Activity },
+  { id: "history", label: "History", icon: History },
+  { id: "events", label: "Events", icon: Activity },
 ];
 
-export const PLANNING_TAB = { id: "planning", label: "Plan", icon: Lightbulb };
-export const REVIEW_TAB = { id: "review", label: "Review", icon: ClipboardCheck };
-
-export function getTabs(issueState) {
-  if (issueState === "Planning") {
-    return [PLANNING_TAB, ...BASE_TABS];
-  }
-  if (issueState === "Reviewing" || issueState === "PendingDecision" || issueState === "Approved" || issueState === "Merged" || issueState === "Blocked") {
-    return [BASE_TABS[0], REVIEW_TAB, ...BASE_TABS.slice(1)];
-  }
-  return [BASE_TABS[0], PLANNING_TAB, ...BASE_TABS.slice(1)];
+export function getDefaultIssueDrawerTab(issueState) {
+  if (issueState === "Planning" || issueState === "PendingApproval") return "planning";
+  if (issueState === "Reviewing" || issueState === "PendingDecision") return "review";
+  return "overview";
 }
 
 // ── State machine helpers ────────────────────────────────────────────────────
