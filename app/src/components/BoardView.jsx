@@ -476,6 +476,10 @@ export function BoardView({ issues, onStateChange, onRetry, onCancel, onSelect, 
       else col = "Done";
       buckets[col].push(issue);
     }
+    // Sort each column: most recent first (by createdAt descending)
+    for (const col of COLUMNS) {
+      buckets[col].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    }
     for (const c of COLUMNS) {
       buckets[c].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
     }
