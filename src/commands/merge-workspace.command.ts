@@ -13,6 +13,8 @@ import { runValidationGate } from "../domains/validation.ts";
 export type MergeWorkspaceInput = {
   issue: IssueEntry;
   state: RuntimeState;
+  /** When true, a test squash is already applied to TARGET_ROOT — commit it instead of doing git merge --no-ff */
+  squashAlreadyApplied?: boolean;
 };
 
 export type MergeWorkspaceResult = {
@@ -30,7 +32,7 @@ export async function mergeWorkspaceCommand(
     persistencePort: IPersistencePort;
   },
 ): Promise<MergeWorkspaceResult> {
-  const { issue, state } = input;
+  const { issue, state, squashAlreadyApplied } = input;
 
   if (!["Approved", "Reviewing", "PendingDecision"].includes(issue.state)) {
     throw new Error(`Issue ${issue.identifier} is in state ${issue.state}. Merge is only allowed in Reviewing, PendingDecision, or Approved state.`);
@@ -65,16 +67,6 @@ export async function mergeWorkspaceCommand(
     }
   }
 
-  // Clear residual squash from index
-  try {
-    const indexStatus = execSync("git diff --cached --name-only", { cwd: TARGET_ROOT, encoding: "utf8", stdio: "pipe" }).trim();
-    const wtStatus = execSync("git diff --name-only", { cwd: TARGET_ROOT, encoding: "utf8", stdio: "pipe" }).trim();
-    if (indexStatus && !wtStatus) {
-      execSync("git reset --hard HEAD", { cwd: TARGET_ROOT, stdio: "pipe" });
-      logger.info({ issueId: issue.id }, "[Command] Cleared residual squash from index before merge");
-    }
-  } catch { /* non-critical */ }
-
   // Run validation gate before merge
   const validation = await runValidationGate(issue, state.config);
   if (validation) {
@@ -84,8 +76,38 @@ export async function mergeWorkspaceCommand(
     }
   }
 
-  // Perform the actual git merge
-  const result = mergeWorkspace(issue);
+  let result: MergeWorkspaceResult;
+
+  if (squashAlreadyApplied) {
+    // Test squash already applied to TARGET_ROOT — commit it directly
+    try {
+      execSync("git add -A", { cwd: TARGET_ROOT, stdio: "pipe", timeout: 10_000 });
+      execSync(
+        `git commit -m "fifony: merge ${issue.identifier}"`,
+        { cwd: TARGET_ROOT, stdio: "pipe", timeout: 10_000 },
+      );
+      logger.info({ issueId: issue.id }, "[Merge] Committed existing test squash");
+    } catch (err: any) {
+      throw new Error(`Failed to commit test squash: ${err.stderr || err.stdout || String(err)}`);
+    }
+    issue.testApplied = false;
+    result = { copied: [], deleted: [], skipped: [], conflicts: [] };
+  } else {
+    // Clear residual squash from index (safety)
+    try {
+      const indexStatus = execSync("git diff --cached --name-only", { cwd: TARGET_ROOT, encoding: "utf8", stdio: "pipe" }).trim();
+      const wtStatus = execSync("git diff --name-only", { cwd: TARGET_ROOT, encoding: "utf8", stdio: "pipe" }).trim();
+      if (indexStatus && !wtStatus) {
+        execSync("git reset --hard HEAD", { cwd: TARGET_ROOT, stdio: "pipe" });
+        logger.info({ issueId: issue.id }, "[Command] Cleared residual squash from index before merge");
+      }
+    } catch { /* non-critical */ }
+
+    // Standard git merge --no-ff
+    const mergeResult = mergeWorkspace(issue);
+    result = mergeResult;
+  }
+
   issue.mergeResult = {
     copied: result.copied.length,
     deleted: result.deleted.length,
@@ -95,16 +117,15 @@ export async function mergeWorkspaceCommand(
   };
 
   if (result.conflicts.length > 0) {
-    // Conflicts: do NOT transition to Merged — stay in Done
     deps.eventStore.addEvent(issue.id, "error", `Merge conflicts: ${result.conflicts.join(", ")}`);
     await deps.persistencePort.persistState(state);
     return result;
   }
 
-  // Success: transition Done → Merged (FSM handles: completedAt, mergedAt, EC add(), event)
-  if (!issue.mergedReason) issue.mergedReason = "Merged by user via PreviewModal.";
+  // Success: transition → Merged (FSM handles: completedAt, mergedAt, event)
+  if (!issue.mergedReason) issue.mergedReason = squashAlreadyApplied ? "Approved and shipped after testing." : "Merged by user.";
   await transitionIssueCommand(
-    { issue, target: "Merged", note: `Workspace merged: ${result.copied.length} file(s) copied, ${result.deleted.length} deleted.` },
+    { issue, target: "Merged", note: `Workspace merged for ${issue.identifier}.` },
     deps,
   );
 

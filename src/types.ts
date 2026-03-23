@@ -83,6 +83,8 @@ export type IssueEntry = {
   mergedReason?: string;
   /** Why the issue was cancelled — set for both auto and manual cancels */
   cancelledReason?: string;
+  /** Whether a test squash (git merge --squash) is currently applied to TARGET_ROOT */
+  testApplied?: boolean;
   /** ISO timestamp when issue entered Reviewing state (last time, for code review turnaround KPI) */
   reviewingAt?: string;
   /** Planning process status — driven by scheduler-managed planning job */

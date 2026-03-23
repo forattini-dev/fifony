@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   X, AlertTriangle, Loader, RotateCcw, PlayCircle, GitMerge,
-  ThumbsUp, GitPullRequest, Eye,
+  GitPullRequest,
 } from "lucide-react";
-import { PreviewModal } from "./PreviewModal.jsx";
 import { api } from "../../api.js";
 import { useSwipeToDismiss } from "../../hooks/useSwipeToDismiss.js";
 import { useWorkflowConfig } from "../../hooks/useWorkflowConfig.js";
@@ -27,7 +26,6 @@ function DrawerFooter({ issue, onStateChange, onRetry, onMerge, onPush, mergeBus
   const footerStyle = { paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 0.75rem)" };
   const [executeBusy, setExecuteBusy] = useState(false);
   const [executeError, setExecuteError] = useState(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
 
   const handleExecute = useCallback(async () => {
     setExecuteBusy(true);
@@ -85,36 +83,8 @@ function DrawerFooter({ issue, onStateChange, onRetry, onMerge, onPush, mergeBus
     );
   }
 
-  // Reviewing/PendingDecision: preview + approve/rework actions
-  if (isInReview) {
-    return (
-      <>
-        {previewOpen && <PreviewModal issue={issue} onClose={() => setPreviewOpen(false)} />}
-        <div className="px-6 py-3 border-t border-base-300 shrink-0 space-y-1.5" style={footerStyle}>
-          <button
-            className="btn btn-primary btn-sm btn-soft gap-1.5 w-full"
-            onClick={() => setPreviewOpen(true)}
-          >
-            <Eye className="size-3.5" /> Preview Changes
-          </button>
-          <div className="flex items-center gap-2">
-            <button
-              className="btn btn-success btn-sm gap-1.5 flex-1"
-              onClick={() => onStateChange?.(issue.id, "Approved")}
-            >
-              <ThumbsUp className="size-4" /> Approve
-            </button>
-            <button
-              className="btn btn-warning btn-sm gap-1.5 flex-1"
-              onClick={() => onRetry?.(issue.id)}
-            >
-              <RotateCcw className="size-4" /> Rework
-            </button>
-          </div>
-        </div>
-      </>
-    );
-  }
+  // Reviewing/PendingDecision: actions are now inside ReviewTab
+  if (isInReview) return null;
 
   // Fetch git cleanliness when issue is ready for merge
   const [gitClean, setGitClean] = useState(null); // null = loading, true = clean, false = dirty

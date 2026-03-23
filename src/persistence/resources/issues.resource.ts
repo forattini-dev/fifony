@@ -10,6 +10,7 @@ import { now, toStringValue, parseIssueState } from "../../concerns/helpers.ts";
 import { getContainer } from "../container.ts";
 import { createIssueCommand } from "../../commands/create-issue.command.ts";
 import { cancelIssueCommand } from "../../commands/cancel-issue.command.ts";
+import { mergeWorkspaceCommand } from "../../commands/merge-workspace.command.ts";
 import { transitionIssueCommand } from "../../commands/transition-issue.command.ts";
 import { findIssue } from "../../routes/helpers.ts";
 import { logger } from "../../concerns/logger.ts";
@@ -197,6 +198,40 @@ async function cancelIssue(c: unknown) {
   return { body: { ok: true, issue } };
 }
 
+async function approveAndMerge(c: unknown) {
+  const context = getApiRuntimeContextOrThrow();
+  const issueId = getIssueId(c);
+  if (!issueId) {
+    return { status: 400, body: { ok: false, error: "Issue id is required." } };
+  }
+
+  const issue = findIssue(context.state, issueId);
+  if (!issue) {
+    return { status: 404, body: { ok: false, error: "Issue not found" } };
+  }
+
+  if (issue.state !== "PendingDecision" && issue.state !== "Reviewing" && issue.state !== "Approved") {
+    return { status: 400, body: { ok: false, error: `Cannot approve-and-merge from state ${issue.state}. Expected PendingDecision, Reviewing, or Approved.` } };
+  }
+
+  try {
+    const container = getContainer();
+    logger.info({ issueId, state: issue.state, testApplied: issue.testApplied }, "[API] POST /api/issues/:id/approve-and-merge");
+
+    // mergeWorkspaceCommand handles: approve transition, merge, cleanup
+    await mergeWorkspaceCommand(
+      { issue, squashAlreadyApplied: issue.testApplied ?? false },
+      { ...container, state: context.state },
+    );
+
+    addEvent(context.state, issue.id, "manual", `Approved and merged ${issue.identifier}.`);
+    await persistState(context.state);
+    return { body: { ok: true, issue } };
+  } catch (error) {
+    return { status: 409, body: { ok: false, error: error instanceof Error ? error.message : String(error) } };
+  }
+}
+
 export default {
   name: S3DB_ISSUE_RESOURCE,
   attributes: {
@@ -311,6 +346,13 @@ export default {
     },
     "POST /:id/cancel": async (c: unknown) => {
       const result = await cancelIssue(c);
+      if (result.status) {
+        return c.json(result.body, result.status);
+      }
+      return result.body;
+    },
+    "POST /:id/approve-and-merge": async (c: unknown) => {
+      const result = await approveAndMerge(c);
       if (result.status) {
         return c.json(result.body, result.status);
       }

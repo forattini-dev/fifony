@@ -1,5 +1,5 @@
 import React from "react";
-import { Lightbulb, PlayCircle, Eye, CheckCircle2, GitMerge } from "lucide-react";
+import { Lightbulb, PlayCircle, Eye, GitMerge } from "lucide-react";
 
 // ── Pipeline steps definition ────────────────────────────────────────────────
 
@@ -7,14 +7,12 @@ export const PIPELINE_STEPS = [
   { key: "plan", label: "Plan", icon: Lightbulb, states: ["Planning"] },
   { key: "execute", label: "Execute", icon: PlayCircle, states: ["PendingApproval", "Queued", "Running"] },
   { key: "review", label: "Review", icon: Eye, states: ["Reviewing", "PendingDecision"] },
-  { key: "done", label: "Approved", icon: CheckCircle2, states: ["Approved"] },
-  { key: "merge", label: "Merge", icon: GitMerge, states: ["Merged"] },
+  { key: "ship", label: "Ship", icon: GitMerge, states: ["Approved", "Merged"] },
 ];
 
 export function getPipelineIndex(issue) {
   if (issue.state === "Cancelled") return -1;
-  if (issue.state === "Merged") return 4;
-  if (issue.state === "Approved") return 3;
+  if (issue.state === "Merged" || issue.state === "Approved") return 3;
   if (issue.state === "Reviewing" || issue.state === "PendingDecision") return 2;
   if (["Running", "Queued", "PendingApproval"].includes(issue.state)) return 1;
   if (issue.state === "Blocked") return issue.tokensByPhase?.reviewer?.totalTokens > 0 ? 2 : 1;
@@ -30,22 +28,19 @@ export function PipelineStepper({ issue }) {
   if (isCancelled) return null;
 
   const currentStep = PIPELINE_STEPS[currentIdx];
-  const currentLabel = isMerged ? "Merged" : currentStep?.label;
+  const currentLabel = isMerged ? "Shipped" : currentStep?.label;
 
   return (
     <div className="flex items-center gap-3 py-1.5">
       {currentLabel && (
-        <span className={`text-[10px] shrink-0 font-medium ${isMerged || issue.state === "Approved" ? "text-success" : "text-primary opacity-70"}`}>
+        <span className={`text-[10px] shrink-0 font-medium ${isMerged ? "text-success" : "text-primary opacity-70"}`}>
           {currentLabel}
         </span>
       )}
       <div className="flex items-center flex-1 gap-0">
         {PIPELINE_STEPS.map((step, i) => {
-          const isDone = i < currentIdx || (i === currentIdx && issue.state === "Approved");
-          const isMergeStep = step.key === "merge";
-          const mergeComplete = isMergeStep && isMerged;
-          const isCurrent = (i === currentIdx && issue.state !== "Approved") || (isMergeStep && issue.state === "Approved" && !isMerged);
-          const stepDone = isDone || mergeComplete;
+          const stepDone = i < currentIdx || (i === currentIdx && isMerged);
+          const isCurrent = i === currentIdx && !isMerged;
 
           return (
             <React.Fragment key={step.key}>

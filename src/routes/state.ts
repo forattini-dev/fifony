@@ -231,6 +231,8 @@ export function registerStateRoutes(
         const msg = err.stderr || err.stdout || String(err);
         throw new Error(`git merge --squash failed: ${msg}`);
       }
+      issue.testApplied = true;
+      markIssueDirty(issue.id);
       addEvent(state, issue.id, "manual", `Test squash applied to workspace: git merge --squash ${issue.branchName}`);
     });
   });
@@ -245,6 +247,8 @@ export function registerStateRoutes(
         const msg = err.stderr || err.stdout || String(err);
         throw new Error(`git reset/clean failed: ${msg}`);
       }
+      issue.testApplied = false;
+      markIssueDirty(issue.id);
       addEvent(state, issue.id, "manual", `Test reverted: git reset --hard HEAD && git clean -fd`);
     });
   });

@@ -1,5 +1,5 @@
 import type { AttemptSummary, IssueEntry, IssueState } from "../../types.ts";
-import { S3DB_ISSUE_RESOURCE, TERMINAL_STATES } from "../../concerns/constants.ts";
+import { S3DB_ISSUE_RESOURCE, TARGET_ROOT, TERMINAL_STATES } from "../../concerns/constants.ts";
 import { computeDiffStats, syncIssueDiffStatsToStore } from "../../domains/workspace.ts";
 import { extractFailureInsights } from "../../agents/failure-analyzer.ts";
 import { invalidateMetrics } from "../metrics-cache.ts";
@@ -7,6 +7,7 @@ import { markIssueDirty } from "../dirty-tracker.ts";
 import { isoWeek, now } from "../../concerns/helpers.ts";
 import { logger } from "../../concerns/logger.ts";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { join } from "node:path";
 
 // ── Event emitter callback (set after container init to avoid circular deps) ──
@@ -15,6 +16,19 @@ let fsmEventEmitter: FsmEventEmitter | null = null;
 
 export function setFsmEventEmitter(emitter: FsmEventEmitter | null): void {
   fsmEventEmitter = emitter;
+}
+
+/** Auto-revert a test squash applied to TARGET_ROOT if issue.testApplied is true. */
+function autoRevertTestSquash(issue: IssueEntry): void {
+  if (!issue.testApplied) return;
+  try {
+    execSync("git reset --hard HEAD", { cwd: TARGET_ROOT, stdio: "pipe", timeout: 15_000 });
+    execSync("git clean -fd", { cwd: TARGET_ROOT, stdio: "pipe", timeout: 15_000 });
+    logger.info({ issueId: issue.id }, "[FSM] Auto-reverted test squash from TARGET_ROOT");
+  } catch (err) {
+    logger.warn({ err: String(err), issueId: issue.id }, "[FSM] Failed to auto-revert test squash");
+  }
+  issue.testApplied = false;
 }
 
 /** Emit an event from FSM actions. No-op if container isn't ready yet (early boot). */
@@ -156,6 +170,7 @@ export const issueStateMachineConfig = {
     onEnterPlanning: async (context: Record<string, unknown>, _event: string, _machine: Machine) => {
       const issue = resolveIssue(context);
       if (issue) {
+        autoRevertTestSquash(issue);
         issue.planningStatus = "idle";
         issue.planningError = undefined;
         issue.nextRetryAt = undefined;
@@ -189,6 +204,8 @@ export const issueStateMachineConfig = {
     onEnterQueued: async (context: Record<string, unknown>, event: string, _machine: Machine) => {
       const issue = resolveIssue(context);
       if (issue) {
+        autoRevertTestSquash(issue);
+
         // Event-specific field prep (business rules live here, not in handlers)
         if (event === "REQUEUE") {
           // Reviewer-requested rework — archive the reviewer's feedback
@@ -338,6 +355,7 @@ export const issueStateMachineConfig = {
       const week = isoWeek();
       const reason = typeof context.reason === "string" ? context.reason : (typeof context.note === "string" ? context.note : undefined);
       if (issue) {
+        autoRevertTestSquash(issue);
         issue.completedAt = ts;
         issue.terminalWeek = week;
         issue.nextRetryAt = undefined;

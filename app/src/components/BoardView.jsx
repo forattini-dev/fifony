@@ -279,7 +279,53 @@ function KanbanColumn({ col, issues, empty, badgeClass, dragState, registerColum
             )
           ) : (
             <div className="stagger-children space-y-2">
-              {visibleIssues.map((issue) => {
+              {col === "Done" ? (
+                // Sub-group Done column: Ready to Ship / Shipped / Cancelled
+                <>
+                  {(() => {
+                    const ready = visibleIssues.filter((i) => i.state === "Approved");
+                    const shipped = visibleIssues.filter((i) => i.state === "Merged");
+                    const cancelled = visibleIssues.filter((i) => i.state === "Cancelled");
+                    const renderCard = (issue) => {
+                      const beingDragged = dragState?.issueId === issue.id;
+                      const justDropped = lastDroppedId === issue.id;
+                      const isFocused = focusedIssueId === issue.id;
+                      return (
+                        <div
+                          key={issue.id}
+                          data-issue-id={issue.id}
+                          className={`${beingDragged ? "kanban-card-dragging-source" : ""} ${justDropped ? "animate-pop" : ""} ${isFocused ? "ring-2 ring-primary/50 rounded-lg" : ""}`}
+                          onContextMenu={(e) => { if ('ontouchstart' in window) { e.preventDefault(); onLongPress?.(issue); } }}
+                        >
+                          <IssueCard issue={issue} onSelect={onSelect} dragHandlers={getCardHandlers(issue, col)} isDragging={beingDragged} isSelected={selectedIds?.has(issue.id)} onToggleSelect={onToggleSelect} hasSelection={hasSelection} />
+                        </div>
+                      );
+                    };
+                    return (
+                      <>
+                        {ready.length > 0 && (
+                          <>
+                            <div className="text-[10px] uppercase tracking-wider opacity-40 font-semibold px-1">Ready to Ship</div>
+                            {ready.map(renderCard)}
+                          </>
+                        )}
+                        {shipped.length > 0 && (
+                          <>
+                            <div className="text-[10px] uppercase tracking-wider opacity-40 font-semibold px-1 mt-2">Shipped</div>
+                            {shipped.map((i) => <div key={i.id} className="opacity-60">{renderCard(i)}</div>)}
+                          </>
+                        )}
+                        {cancelled.length > 0 && (
+                          <>
+                            <div className="text-[10px] uppercase tracking-wider opacity-40 font-semibold px-1 mt-2">Cancelled</div>
+                            {cancelled.map((i) => <div key={i.id} className="opacity-40">{renderCard(i)}</div>)}
+                          </>
+                        )}
+                      </>
+                    );
+                  })()}
+                </>
+              ) : visibleIssues.map((issue) => {
                 const beingDragged = dragState?.issueId === issue.id;
                 const justDropped = lastDroppedId === issue.id;
                 const isFocused = focusedIssueId === issue.id;
@@ -289,7 +335,6 @@ function KanbanColumn({ col, issues, empty, badgeClass, dragState, registerColum
                     data-issue-id={issue.id}
                     className={`${beingDragged ? "kanban-card-dragging-source" : ""} ${justDropped ? "animate-pop" : ""} ${isFocused ? "ring-2 ring-primary/50 rounded-lg" : ""}`}
                     onContextMenu={(e) => {
-                      // Long press on mobile triggers context menu — use action sheet instead
                       if ('ontouchstart' in window) {
                         e.preventDefault();
                         onLongPress?.(issue);

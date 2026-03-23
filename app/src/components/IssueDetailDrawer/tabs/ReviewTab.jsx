@@ -1,35 +1,100 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
-  GitMerge, GitBranch, CheckCircle2, AlertTriangle, ClipboardCheck,
-  Code, Terminal, ThumbsUp, ThumbsDown, RotateCcw, ImageIcon, Paperclip, Loader,
-  ExternalLink,
+  Code, FlaskConical, ThumbsUp, RotateCcw, XCircle, AlertTriangle,
+  CheckCircle2, GitMerge, Rocket, Paperclip, Loader,
+  ExternalLink, ImageIcon,
 } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../api.js";
 import { Section } from "../shared.jsx";
 import { DiffFileItem, DiffViewer } from "./DiffTab.jsx";
 
 export function ReviewTab({ issue, issueId, onStateChange, onRetry }) {
+  const qc = useQueryClient();
+
+  // ── Diff state ──────────────────────────────────────────────────────────────
   const [diffData, setDiffData] = useState(null);
   const [diffLoading, setDiffLoading] = useState(false);
-  const [note, setNote] = useState("");
-  const [verdict, setVerdict] = useState(null);
   const [expandedFile, setExpandedFile] = useState(null);
+
+  // ── Merge preview + git status ──────────────────────────────────────────────
+  const [mergePreview, setMergePreview] = useState(null);
+  const [gitClean, setGitClean] = useState(null); // null = loading, true = clean, false = dirty
+
+  // ── Test Live state ─────────────────────────────────────────────────────────
+  const [tested, setTested] = useState(false);
+  const [testBusy, setTestBusy] = useState(false);
+  const [testError, setTestError] = useState(null);
+
+  // ── Evidence images ─────────────────────────────────────────────────────────
   const [reviewImages, setReviewImages] = useState(issue.images ?? []);
   const [imgUploading, setImgUploading] = useState(false);
   const reviewFileRef = useRef(null);
 
+  // ── Rework feedback ─────────────────────────────────────────────────────────
+  const [reworkOpen, setReworkOpen] = useState(false);
+  const [reworkNote, setReworkNote] = useState("");
+
+  // ── Approve & Merge ─────────────────────────────────────────────────────────
+  const [mergeBusy, setMergeBusy] = useState(false);
+  const [mergeError, setMergeError] = useState(null);
+
+  // ── Cancel ──────────────────────────────────────────────────────────────────
+  const [cancelBusy, setCancelBusy] = useState(false);
+
+  // ── Derived state ───────────────────────────────────────────────────────────
+  const isInReview = issue.state === "Reviewing" || issue.state === "PendingDecision";
+  const isApproved = issue.state === "Approved";
+  const isMergedState = issue.state === "Merged";
+  const isMerged = !!issue.mergedAt || isMergedState;
+  const mergeResult = issue.mergeResult;
+
+  // ── Fetch diff ──────────────────────────────────────────────────────────────
   const fetchDiff = useCallback(async () => {
     setDiffLoading(true);
     try {
       const res = await api.get(`/diff/${encodeURIComponent(issueId)}`);
       setDiffData(res);
-    } catch { setDiffData(null); }
-    finally { setDiffLoading(false); }
+    } catch {
+      setDiffData(null);
+    } finally {
+      setDiffLoading(false);
+    }
   }, [issueId]);
 
-  useEffect(() => { setDiffData(null); setVerdict(null); setNote(""); setExpandedFile(null); setReviewImages(issue.images ?? []); }, [issueId]);
-  useEffect(() => { fetchDiff(); }, [fetchDiff]);
+  // ── Fetch merge preview ─────────────────────────────────────────────────────
+  const fetchMergePreview = useCallback(async () => {
+    try {
+      const res = await api.get(`/issues/${encodeURIComponent(issueId)}/merge-preview`);
+      setMergePreview(res);
+    } catch {
+      setMergePreview(null);
+    }
+  }, [issueId]);
 
+  // ── Reset on issue change ───────────────────────────────────────────────────
+  useEffect(() => {
+    setDiffData(null);
+    setExpandedFile(null);
+    setMergePreview(null);
+    setGitClean(null);
+    setTested(false);
+    setTestError(null);
+    setReworkOpen(false);
+    setReworkNote("");
+    setMergeError(null);
+    setReviewImages(issue.images ?? []);
+  }, [issueId]);
+
+  useEffect(() => { fetchDiff(); }, [fetchDiff]);
+  useEffect(() => { fetchMergePreview(); }, [fetchMergePreview]);
+  useEffect(() => {
+    api.get("/git/status")
+      .then((s) => setGitClean(s.isClean !== false))
+      .catch(() => setGitClean(null));
+  }, [issueId]);
+
+  // ── Paste handler for images ────────────────────────────────────────────────
   const uploadReviewImages = useCallback(async (files) => {
     if (!files.length) return;
     setImgUploading(true);
@@ -42,15 +107,12 @@ export function ReviewTab({ issue, issueId, onStateChange, onRetry }) {
       })));
       const res = await api.post(`/issues/${encodeURIComponent(issueId)}/images`, { files: encoded });
       if (res.ok && res.paths) setReviewImages((prev) => [...prev, ...res.paths]);
-    } catch {}
+    } catch { /* ignore */ }
     finally {
       setImgUploading(false);
       if (reviewFileRef.current) reviewFileRef.current.value = "";
     }
   }, [issueId]);
-
-  const isInReview = issue.state === "Reviewing" || issue.state === "PendingDecision";
-  const isDone = issue.state === "Approved";
 
   useEffect(() => {
     if (!isInReview) return;
@@ -65,10 +127,9 @@ export function ReviewTab({ issue, issueId, onStateChange, onRetry }) {
     return () => window.removeEventListener("paste", handlePaste);
   }, [isInReview, uploadReviewImages]);
 
+  // ── Diff parsing ────────────────────────────────────────────────────────────
   const files = diffData?.files || [];
   const diff = diffData?.diff || "";
-
-  // Parse diff into per-file chunks
   const diffChunks = {};
   if (diff) {
     for (const chunk of diff.split(/(?=^diff --git )/m)) {
@@ -77,31 +138,95 @@ export function ReviewTab({ issue, issueId, onStateChange, onRetry }) {
     }
   }
 
-  const handleApprove = () => { setVerdict("approved"); onStateChange?.(issue.id, "Approved"); };
-  const handleRework = () => {
-    setVerdict("rework");
-    onRetry?.(issue.id, note || undefined);
-  };
-  const handleReject = () => { setVerdict("rejected"); onStateChange?.(issue.id, "Blocked"); };
+  // ── Action handlers ─────────────────────────────────────────────────────────
+  const handleTryLive = useCallback(async () => {
+    setTestBusy(true);
+    setTestError(null);
+    try {
+      await api.post(`/issues/${encodeURIComponent(issue.id)}/try`);
+      setTested(true);
+    } catch (err) {
+      setTestError(err.message);
+    } finally {
+      setTestBusy(false);
+    }
+  }, [issue.id]);
 
-  const mergeResult = issue.mergeResult;
-  const isMerged = !!issue.mergedAt;
+  const handleRevertTry = useCallback(async () => {
+    setTestBusy(true);
+    setTestError(null);
+    try {
+      await api.post(`/issues/${encodeURIComponent(issue.id)}/revert-try`);
+      setTested(false);
+    } catch (err) {
+      setTestError(err.message);
+    } finally {
+      setTestBusy(false);
+    }
+  }, [issue.id]);
+
+  const handleApproveAndMerge = useCallback(async () => {
+    setMergeBusy(true);
+    setMergeError(null);
+    try {
+      await api.post(`/issues/${encodeURIComponent(issue.id)}/approve-and-merge`);
+      qc.invalidateQueries({ queryKey: ["runtime-state"] });
+    } catch (err) {
+      setMergeError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setMergeBusy(false);
+    }
+  }, [issue.id, qc]);
+
+  const handleApproveOnly = useCallback(async () => {
+    onStateChange?.(issue.id, "Approved");
+  }, [issue.id, onStateChange]);
+
+  const handleRework = useCallback(async () => {
+    onRetry?.(issue.id, reworkNote || undefined);
+    setReworkOpen(false);
+    setReworkNote("");
+  }, [issue.id, reworkNote, onRetry]);
+
+  const handleCancel = useCallback(async () => {
+    setCancelBusy(true);
+    try {
+      await api.post(`/issues/${encodeURIComponent(issue.id)}/cancel`);
+      qc.invalidateQueries({ queryKey: ["runtime-state"] });
+    } catch { /* ignore */ }
+    finally {
+      setCancelBusy(false);
+    }
+  }, [issue.id, qc]);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // RENDER
+  // ═══════════════════════════════════════════════════════════════════════════
 
   return (
-    <div className="space-y-5">
-      {/* Merge / approval banner */}
+    <div className="space-y-6">
+
+      {/* ── Status Banners ─────────────────────────────────────────────────── */}
+
+      {isApproved && !isMerged && (!mergeResult || mergeResult.conflicts === 0) && (
+        <div className="alert border border-success/30 bg-success/5 text-sm">
+          <CheckCircle2 className="size-4 shrink-0 text-success" />
+          <span className="font-semibold">Approved — ready to merge</span>
+        </div>
+      )}
+
       {isMerged && (
         <div className={`alert border text-sm ${mergeResult?.conflicts > 0 ? "border-warning/30 bg-warning/5" : "border-success/30 bg-success/5"}`}>
           <GitMerge className={`size-4 shrink-0 ${mergeResult?.conflicts > 0 ? "text-warning" : "text-success"}`} />
           <div>
-            <span className="font-semibold">Code merged to project root</span>
+            <span className="font-semibold">Merged</span>
             {mergeResult && (
               <span className="opacity-70"> — {mergeResult.copied} file{mergeResult.copied !== 1 ? "s" : ""} copied{mergeResult.deleted > 0 ? `, ${mergeResult.deleted} deleted` : ""}</span>
             )}
             {mergeResult?.conflicts > 0 && (
               <>
                 <p className="text-xs text-warning font-medium mt-0.5">
-                  Merge aborted — {mergeResult.conflicts} file{mergeResult.conflicts !== 1 ? "s" : ""} had conflicts. No changes were applied.
+                  Merge aborted — {mergeResult.conflicts} file{mergeResult.conflicts !== 1 ? "s" : ""} had conflicts.
                 </p>
                 {mergeResult.conflictFiles?.length > 0 && (
                   <ul className="text-xs text-warning/80 mt-1 ml-4 list-disc space-y-0.5">
@@ -118,30 +243,14 @@ export function ReviewTab({ issue, issueId, onStateChange, onRetry }) {
           </div>
         </div>
       )}
-      {issue.prUrl && (
-        <div className="alert border border-primary/30 bg-primary/5 text-sm">
-          <ExternalLink className="size-4 shrink-0 text-primary" />
-          <div>
-            <span className="font-semibold">Pull request created</span>
-            <a
-              href={issue.prUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="block text-xs text-primary hover:underline mt-0.5 font-mono break-all"
-            >
-              {issue.prUrl}
-            </a>
-          </div>
-        </div>
-      )}
-      {!isMerged && isDone && mergeResult?.conflicts > 0 && (
+
+      {!isMerged && isApproved && mergeResult?.conflicts > 0 && (
         <div className="alert border border-warning/30 bg-warning/5 text-sm">
           <AlertTriangle className="size-4 shrink-0 text-warning" />
           <div className="flex-1">
             <span className="font-semibold">Merge failed due to conflicts</span>
             <p className="text-xs opacity-70 mt-0.5">
-              The branch {issue.branchName ? <span className="font-mono">{issue.branchName}</span> : ""} could not be merged because {mergeResult.conflicts} file{mergeResult.conflicts !== 1 ? "s" : ""} diverged from the base branch.
-              You can send it back for rework so the agent resolves the conflicts.
+              The branch {issue.branchName ? <span className="font-mono">{issue.branchName}</span> : ""} could not be merged — {mergeResult.conflicts} file{mergeResult.conflicts !== 1 ? "s" : ""} diverged.
             </p>
             {mergeResult.conflictFiles?.length > 0 && (
               <ul className="text-xs opacity-60 mt-1 ml-4 list-disc space-y-0.5">
@@ -159,60 +268,42 @@ export function ReviewTab({ issue, issueId, onStateChange, onRetry }) {
           </div>
         </div>
       )}
-      {!isMerged && isDone && (!mergeResult || mergeResult.conflicts === 0) && (
-        <div className="alert border border-info/30 bg-info/5 text-sm">
-          <GitBranch className="size-4 shrink-0 text-info" />
+
+      {issue.prUrl && (
+        <div className="alert border border-primary/30 bg-primary/5 text-sm">
+          <ExternalLink className="size-4 shrink-0 text-primary" />
           <div>
-            <span className="font-semibold">Review approved, merge still pending</span>
-            <p className="text-xs opacity-70 mt-0.5">
-              The code is still isolated on {issue.branchName ? <span className="font-mono">{issue.branchName}</span> : "the issue branch"} and in the worktree until you run Merge.
-            </p>
+            <span className="font-semibold">Pull request created</span>
+            <a
+              href={issue.prUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="block text-xs text-primary hover:underline mt-0.5 font-mono break-all"
+            >
+              {issue.prUrl}
+            </a>
           </div>
         </div>
       )}
 
-      {/* Status banners */}
-      {isDone && (
-        <div className="alert alert-success text-sm"><CheckCircle2 className="size-4" /> This issue has been approved.</div>
-      )}
-      {issue.state === "Blocked" && (
-        <div className="alert alert-error text-sm"><AlertTriangle className="size-4" /> Review failed. Check execution output.</div>
-      )}
-      {verdict === "approved" && isInReview && (
-        <div className="alert alert-success text-sm"><ThumbsUp className="size-4" /> Approved! Moving to Approved.</div>
-      )}
-      {verdict === "rework" && (
-        <div className="alert alert-warning text-sm"><RotateCcw className="size-4" /> Sent back for rework.</div>
-      )}
 
-      {/* Checklist */}
-      {isInReview && !verdict && (
-        <Section title="Review Checklist" icon={ClipboardCheck}>
-          <div className="space-y-2 text-sm">
-            <p className="opacity-60">Before deciding, consider:</p>
-            <ul className="list-disc ml-5 space-y-1 opacity-80">
-              <li>Does the diff address the issue title and description?</li>
-              <li>Are there unintended side effects or regressions?</li>
-              <li>Is the scope appropriate — no unnecessary changes?</li>
-              <li>Are there files that shouldn't have been modified?</li>
-            </ul>
-          </div>
-        </Section>
-      )}
+      {/* ── Phase 1: Review Changes ────────────────────────────────────────── */}
 
-      {/* Changes — GitHub PR style */}
-      <Section title="Changes" icon={Code}>
+      <Section title="Review Changes" icon={Code}>
         {diffLoading ? (
           <div className="flex items-center gap-2 text-sm opacity-50 py-4">
             <span className="loading loading-spinner loading-xs" /> Loading changes...
           </div>
         ) : files.length > 0 ? (
           <div className="space-y-3">
+            {/* Diff stats bar */}
             <div className="flex items-center gap-3 text-sm">
-              <span className="opacity-60">{files.length} file{files.length !== 1 ? "s" : ""}</span>
+              <span className="opacity-60">{files.length} file{files.length !== 1 ? "s" : ""} changed</span>
               <span className="text-success font-mono text-xs">+{diffData?.totalAdditions || 0}</span>
               <span className="text-error font-mono text-xs">-{diffData?.totalDeletions || 0}</span>
             </div>
+
+            {/* File list with expandable diffs */}
             <div className="space-y-1">
               {files.map((file) => (
                 <DiffFileItem
@@ -229,100 +320,233 @@ export function ReviewTab({ issue, issueId, onStateChange, onRetry }) {
                 <DiffViewer lines={diffChunks[expandedFile]} />
               </div>
             )}
+
+            {/* Merge preview */}
+            {mergePreview?.willConflict && (
+              <div className="alert alert-warning text-xs py-2 gap-1.5">
+                <AlertTriangle className="size-3.5 shrink-0" />
+                <div>
+                  <span className="font-semibold">Merge will conflict</span>
+                  <span className="opacity-70"> — {mergePreview.conflictFiles.length} file{mergePreview.conflictFiles.length !== 1 ? "s" : ""}</span>
+                  {mergePreview.conflictFiles.length > 0 && (
+                    <ul className="mt-1 ml-4 list-disc space-y-0.5 font-mono opacity-80">
+                      {mergePreview.conflictFiles.map((f) => <li key={f}>{f}</li>)}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            )}
+            {mergePreview && !mergePreview.willConflict && (
+              <div className="alert alert-success text-xs py-2 gap-1.5">
+                <CheckCircle2 className="size-3.5 shrink-0" />
+                <span>Merge is clean — no conflicts detected.</span>
+              </div>
+            )}
           </div>
         ) : (
           <div className="text-sm opacity-40 py-4">No changes detected.</div>
         )}
+
+        {/* Git dirty warning */}
+        {gitClean === false && (
+          <div className="alert alert-warning text-xs py-2 gap-1.5 mt-3">
+            <AlertTriangle className="size-3.5 shrink-0" />
+            <span>Project has uncommitted changes — merge and test will fail. Commit or stash them first.</span>
+          </div>
+        )}
+
+        {/* AI reviewer output */}
+        {issue.lastError && (
+          <pre className="text-xs bg-error/10 rounded-box p-3 overflow-x-auto whitespace-pre-wrap max-h-40 overflow-y-auto mt-3">
+            {issue.lastError}
+          </pre>
+        )}
+        {issue.commandOutputTail && !issue.lastError && (
+          <pre className="text-xs bg-base-200 rounded-box p-3 overflow-x-auto whitespace-pre-wrap max-h-40 overflow-y-auto mt-3">
+            {issue.commandOutputTail}
+          </pre>
+        )}
       </Section>
 
-      {/* Agent output context */}
-      {(issue.lastError || issue.commandOutputTail) && (
-        <Section title="Agent Output" icon={Terminal}>
-          {issue.lastError && (
-            <pre className="text-xs bg-error/10 rounded-box p-3 overflow-x-auto whitespace-pre-wrap max-h-40 overflow-y-auto mb-2">
-              {issue.lastError}
-            </pre>
-          )}
-          {issue.commandOutputTail && !issue.lastError && (
-            <pre className="text-xs bg-base-200 rounded-box p-3 overflow-x-auto whitespace-pre-wrap max-h-40 overflow-y-auto">
-              {issue.commandOutputTail}
-            </pre>
-          )}
-        </Section>
-      )}
 
-      {/* Evidence Images */}
-      {(isInReview || isDone) && (
-        <Section title="Evidence" icon={ImageIcon}>
-          <input
-            ref={reviewFileRef}
-            type="file"
-            multiple
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => uploadReviewImages(Array.from(e.target.files ?? []))}
-          />
-          {reviewImages.length > 0 ? (
-            <div className="flex flex-wrap gap-2">
-              {reviewImages.map((imgPath, i) => {
-                const filename = imgPath.split("/").pop();
-                const src = `/api/issues/${encodeURIComponent(issueId)}/images/${encodeURIComponent(filename)}`;
-                return (
-                  <a key={i} href={src} target="_blank" rel="noreferrer" className="block">
-                    <img src={src} alt={filename} className="size-20 object-cover rounded-lg border border-base-300 hover:opacity-80 transition-opacity" />
-                  </a>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="text-xs opacity-40">No screenshots attached yet.</p>
-          )}
-          {isInReview && (
-            <button
-              type="button"
-              className="btn btn-xs btn-soft btn-ghost gap-1 mt-2"
-              onClick={() => reviewFileRef.current?.click()}
-              disabled={imgUploading}
-            >
-              {imgUploading ? <Loader className="size-3 animate-spin" /> : <Paperclip className="size-3" />}
-              Attach Screenshot
-            </button>
-          )}
-        </Section>
-      )}
+      {/* ── Phase 2: Test Live (collapsible) ───────────────────────────────── */}
 
-      {/* Note */}
-      {isInReview && !verdict && (
-        <Section title="Review Note" icon={Terminal}>
-          <textarea
-            className="textarea textarea-bordered w-full text-sm"
-            rows={3}
-            placeholder="Describe what needs to change (sent to the agent on Rework)..."
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-          />
-        </Section>
-      )}
-
-      {/* Decision buttons */}
-      {isInReview && !verdict && (
-        <div className="border-t border-base-300 pt-4 space-y-3">
-          <div className="text-sm font-semibold">Verdict</div>
-          <div className="flex flex-wrap gap-2">
-            <button className="btn btn-success btn-sm gap-1.5 flex-1" onClick={handleApprove}>
-              <ThumbsUp className="size-4" /> Approve
-            </button>
-            <button className="btn btn-warning btn-sm gap-1.5 flex-1" onClick={handleRework}>
-              <RotateCcw className="size-4" /> Request Rework
-            </button>
-            <button className="btn btn-error btn-sm gap-1.5 flex-1" onClick={handleReject}>
-              <ThumbsDown className="size-4" /> Reject
-            </button>
+      {isInReview && (
+        <div className="collapse collapse-arrow border border-base-300 rounded-box bg-base-100">
+          <input type="checkbox" />
+          <div className="collapse-title text-sm font-semibold flex items-center gap-1.5 py-3 min-h-0">
+            <FlaskConical className="size-4 opacity-50" />
+            Optional: Test in your workspace
           </div>
-          <p className="text-xs opacity-40">
-            <strong>Approve</strong> moves to Approved. <strong>Rework</strong> sends back to executor. <strong>Reject</strong> blocks the issue.
-          </p>
+          <div className="collapse-content space-y-4">
+            {testError && (
+              <div className="alert alert-error text-xs py-2 gap-1.5">
+                <AlertTriangle className="size-3.5 shrink-0" /> {testError}
+              </div>
+            )}
+
+            {!tested ? (
+              <div className="space-y-3">
+                <p className="text-xs opacity-60">
+                  Apply the branch changes to your workspace to test with hot reload before deciding.
+                </p>
+                <button
+                  className="btn btn-info btn-sm btn-soft gap-1.5 w-full"
+                  onClick={handleTryLive}
+                  disabled={testBusy || gitClean === false}
+                  title={gitClean === false ? "Cannot test — working tree has uncommitted changes" : "Apply changes to workspace for testing"}
+                >
+                  {testBusy ? <Loader className="size-3.5 animate-spin" /> : <FlaskConical className="size-3.5" />}
+                  Apply Changes
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="alert alert-info text-xs py-2 gap-1.5">
+                  <FlaskConical className="size-3.5 shrink-0" />
+                  <span>Changes applied to your dev server. Test them, then decide below.</span>
+                </div>
+                <button
+                  className="btn btn-warning btn-sm btn-soft gap-1.5 w-full"
+                  onClick={handleRevertTry}
+                  disabled={testBusy}
+                >
+                  {testBusy ? <Loader className="size-3.5 animate-spin" /> : <RotateCcw className="size-3.5" />}
+                  Revert Changes
+                </button>
+              </div>
+            )}
+
+            {/* Evidence images */}
+            <div className="space-y-2 pt-2 border-t border-base-300">
+              <div className="text-xs font-semibold flex items-center gap-1.5 opacity-70">
+                <ImageIcon className="size-3.5" /> Evidence
+              </div>
+              <input
+                ref={reviewFileRef}
+                type="file"
+                multiple
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => uploadReviewImages(Array.from(e.target.files ?? []))}
+              />
+              {reviewImages.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {reviewImages.map((imgPath, i) => {
+                    const filename = imgPath.split("/").pop();
+                    const src = `/api/issues/${encodeURIComponent(issueId)}/images/${encodeURIComponent(filename)}`;
+                    return (
+                      <a key={i} href={src} target="_blank" rel="noreferrer" className="block">
+                        <img src={src} alt={filename} className="size-20 object-cover rounded-lg border border-base-300 hover:opacity-80 transition-opacity" />
+                      </a>
+                    );
+                  })}
+                </div>
+              )}
+              {reviewImages.length === 0 && (
+                <p className="text-xs opacity-40">No screenshots attached. Paste or upload images as evidence.</p>
+              )}
+              <button
+                type="button"
+                className="btn btn-xs btn-soft btn-ghost gap-1"
+                onClick={() => reviewFileRef.current?.click()}
+                disabled={imgUploading}
+              >
+                {imgUploading ? <Loader className="size-3 animate-spin" /> : <Paperclip className="size-3" />}
+                Attach Screenshot
+              </button>
+            </div>
+          </div>
         </div>
+      )}
+
+
+      {/* ── Phase 3: Decision ──────────────────────────────────────────────── */}
+
+      {isInReview && (
+        <Section title="Decision" icon={ThumbsUp}>
+          <div className="space-y-4">
+            {mergeError && (
+              <div className="alert alert-error text-xs py-2 gap-1.5">
+                <AlertTriangle className="size-3.5 shrink-0" /> {mergeError}
+              </div>
+            )}
+
+            {/* Approve & Merge */}
+            <button
+              className="btn btn-success w-full gap-1.5"
+              onClick={handleApproveAndMerge}
+              disabled={mergeBusy}
+            >
+              {mergeBusy ? (
+                <Loader className="size-4 animate-spin" />
+              ) : tested ? (
+                <Rocket className="size-4" />
+              ) : (
+                <GitMerge className="size-4" />
+              )}
+              {mergeBusy ? "Merging..." : tested ? "Ship It" : "Approve & Merge"}
+            </button>
+
+            {/* Approve Only */}
+            <button
+              className="btn btn-success btn-outline btn-sm w-full gap-1.5"
+              onClick={handleApproveOnly}
+            >
+              <ThumbsUp className="size-3.5" />
+              Approve Only
+            </button>
+
+            {/* Request Rework */}
+            {!reworkOpen ? (
+              <button
+                className="btn btn-warning btn-outline btn-sm w-full gap-1.5"
+                onClick={() => setReworkOpen(true)}
+              >
+                <RotateCcw className="size-3.5" />
+                Request Rework
+              </button>
+            ) : (
+              <div className="border border-warning/30 rounded-box p-3 space-y-3 bg-warning/5">
+                <textarea
+                  className="textarea textarea-bordered w-full text-sm"
+                  rows={3}
+                  placeholder="Describe what needs to change (sent to the agent)..."
+                  value={reworkNote}
+                  onChange={(e) => setReworkNote(e.target.value)}
+                  autoFocus
+                />
+                <div className="flex items-center gap-2">
+                  <button
+                    className="btn btn-ghost btn-sm flex-1"
+                    onClick={() => { setReworkOpen(false); setReworkNote(""); }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="btn btn-warning btn-sm flex-1 gap-1.5"
+                    onClick={handleRework}
+                  >
+                    <RotateCcw className="size-3.5" />
+                    Send Rework
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Cancel Issue */}
+            <div className="pt-2 border-t border-base-300">
+              <button
+                className="btn btn-ghost btn-sm text-error w-full gap-1.5"
+                onClick={handleCancel}
+                disabled={cancelBusy}
+              >
+                {cancelBusy ? <Loader className="size-3.5 animate-spin" /> : <XCircle className="size-3.5" />}
+                Cancel Issue
+              </button>
+            </div>
+          </div>
+        </Section>
       )}
     </div>
   );
