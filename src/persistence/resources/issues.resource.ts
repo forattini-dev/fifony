@@ -288,8 +288,6 @@ export default {
     tokenUsage: "json|optional",
     tokensByPhase: "json|optional",
     tokensByModel: "json|optional",
-    plan: "json|optional",
-    planHistory: "json|optional",
     planVersion: "number|optional",
     planningStatus: "string|optional",
     planningStartedAt: "datetime|optional",

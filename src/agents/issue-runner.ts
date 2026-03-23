@@ -14,7 +14,7 @@ import type {
 import { SOURCE_ROOT, TARGET_ROOT, WORKSPACE_ROOT } from "../concerns/constants.ts";
 import { now, idToSafePath } from "../concerns/helpers.ts";
 import { logger } from "../concerns/logger.ts";
-import { markIssueDirty, markIssuePlanDirty } from "../persistence/dirty-tracker.ts";
+import { markIssueDirty } from "../persistence/dirty-tracker.ts";
 import { getEffectiveAgentProviders } from "./providers.ts";
 import { addEvent, computeMetrics, getNextRetryAt } from "../domains/issues.ts";
 import { compileReview, buildExecutionAudit, persistExecutionAudit } from "./adapters/index.ts";
@@ -62,23 +62,14 @@ export async function runPlanningJob(
 
     issue.plan = plan;
     issue.planVersion = Math.max((issue.planVersion ?? 0), 1);
-    markIssuePlanDirty(issue.id);
 
-    // Flush plan to issue_plans resource immediately (don't wait for persist cycle)
+    // Save plan to issue_plans resource (1:N model — marks previous plans as not current)
     try {
-      const { getIssuePlanResource } = await import("../persistence/store.ts");
-      const planRes = getIssuePlanResource();
-      if (planRes) {
-        await (planRes as any).replace(issue.id, {
-          id: issue.id,
-          plan: issue.plan,
-          planHistory: issue.planHistory,
-          planVersion: issue.planVersion,
-        });
-        logger.debug({ issueId: issue.id, planVersion: issue.planVersion }, "[Agent] Plan flushed to issue_plans resource");
-      }
-    } catch (flushErr) {
-      logger.warn({ err: String(flushErr), issueId: issue.id }, "[Agent] Failed to flush plan to issue_plans resource");
+      const { savePlanForIssue } = await import("../persistence/store.ts");
+      await savePlanForIssue(issue.id, plan, issue.planVersion);
+      logger.debug({ issueId: issue.id, planVersion: issue.planVersion }, "[Agent] Plan saved to issue_plans resource");
+    } catch (err) {
+      logger.warn({ err: String(err), issueId: issue.id }, "[Agent] Failed to save plan");
     }
 
     // Apply plan suggestions (paths, effort)

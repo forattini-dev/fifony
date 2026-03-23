@@ -1,6 +1,5 @@
 import type { IssueEntry } from "../types.ts";
 import type { IIssueRepository, IEventStore } from "../ports/index.ts";
-import { markIssuePlanDirty } from "../persistence/dirty-tracker.ts";
 import { TERMINAL_STATES } from "../concerns/constants.ts";
 import { transitionIssueCommand } from "./transition-issue.command.ts";
 
@@ -27,13 +26,9 @@ export async function replanIssueCommand(
     throw new Error(`Cannot replan issue in ${issue.state} state — wait for it to finish or cancel it first.`);
   }
 
-  // Archive current plan
-  if (issue.plan) {
-    if (!Array.isArray(issue.planHistory)) issue.planHistory = [];
-    issue.planHistory.push(issue.plan);
-    issue.plan = undefined;
-    markIssuePlanDirty(issue.id);
-  }
+  // Previous plans stay in issue_plans resource (1:N model — they become history automatically).
+  // Just clear the in-memory plan so the planner generates a new one.
+  issue.plan = undefined;
 
   issue.planVersion = (issue.planVersion ?? 0) + 1;
   issue.executeAttempt = 0;

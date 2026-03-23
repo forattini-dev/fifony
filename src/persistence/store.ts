@@ -65,6 +65,69 @@ export function getEventStateResource(): S3dbResource | null { return eventState
 export function getSettingStateResource(): S3dbResource | null { return settingStateResource; }
 export function getAgentSessionResource(): S3dbResource | null { return agentSessionResource; }
 export function getAgentPipelineResource(): S3dbResource | null { return agentPipelineResource; }
+
+// ── Plan resource helpers (1:N model) ─────────────────────────────────────
+
+import { randomUUID } from "node:crypto";
+
+/** Save a new plan version for an issue. Marks previous plans as not current. */
+export async function savePlanForIssue(issueId: string, plan: unknown, version: number): Promise<string> {
+  if (!issuePlanResource) throw new Error("Issue plan resource not initialized");
+  // Mark previous current plans as not current
+  try {
+    const existing = await (issuePlanResource as any).list({
+      partition: "byIssueCurrent",
+      partitionValues: { issueId, current: true },
+    });
+    if (Array.isArray(existing)) {
+      for (const old of existing) {
+        if (old?.id) await (issuePlanResource as any).patch(old.id, { current: false });
+      }
+    }
+  } catch { /* first plan or partition not ready */ }
+
+  const planId = `plan-${randomUUID()}`;
+  await (issuePlanResource as any).insert({
+    id: planId,
+    issueId,
+    version,
+    current: true,
+    plan,
+  });
+  return planId;
+}
+
+/** Get the current (active) plan for an issue. Returns null if none. */
+export async function getCurrentPlanForIssue(issueId: string): Promise<{ id: string; plan: unknown; version: number } | null> {
+  if (!issuePlanResource) return null;
+  try {
+    const results = await (issuePlanResource as any).list({
+      partition: "byIssueCurrent",
+      partitionValues: { issueId, current: true },
+      limit: 1,
+    });
+    if (Array.isArray(results) && results.length > 0 && results[0]?.plan) {
+      return { id: results[0].id, plan: results[0].plan, version: results[0].version ?? 1 };
+    }
+  } catch { /* partition not ready or no plans */ }
+  return null;
+}
+
+/** Get all plans for an issue, ordered by version. */
+export async function getPlansForIssue(issueId: string): Promise<Array<{ id: string; plan: unknown; version: number; current: boolean }>> {
+  if (!issuePlanResource) return [];
+  try {
+    const results = await (issuePlanResource as any).list({
+      partition: "byIssue",
+      partitionValues: { issueId },
+    });
+    if (!Array.isArray(results)) return [];
+    return results
+      .filter((r: any) => r?.id && r?.plan)
+      .map((r: any) => ({ id: r.id, plan: r.plan, version: r.version ?? 1, current: !!r.current }))
+      .sort((a: any, b: any) => a.version - b.version);
+  } catch { return []; }
+}
 export function setActiveApiPlugin(plugin: { stop?: () => Promise<void> } | null): void { activeApiPlugin = plugin; }
 let activeWebSocketPlugin: { stop?: () => Promise<void> } | null = null;
 
@@ -255,18 +318,16 @@ async function recoverStateFromIssueResource(): Promise<RuntimeState | null> {
 
     logger.info(`Recovered ${issues.length} issue(s) from s3db issue resource.`);
 
-    if (issuePlanResource) {
-      for (const issue of issues) {
-        try {
-          const planRecord = await issuePlanResource.get(issue.id) as Record<string, unknown> | null | undefined;
-          if (planRecord?.plan) {
-            issue.plan = planRecord.plan as IssueEntry["plan"];
-            logger.debug({ issueId: issue.id, hasSteps: !!(issue.plan as any)?.steps?.length }, "[Recovery] Hydrated plan from issue_plans resource");
-          }
-          if (planRecord?.planHistory) issue.planHistory = planRecord.planHistory as IssueEntry["planHistory"];
-        } catch (err) {
-          logger.warn({ issueId: issue.id, err: String(err) }, "[Recovery] Failed to load plan from issue_plans resource");
+    // Hydrate current plan for each issue from the 1:N issue_plans resource
+    for (const issue of issues) {
+      try {
+        const current = await getCurrentPlanForIssue(issue.id);
+        if (current) {
+          issue.plan = current.plan as IssueEntry["plan"];
+          logger.debug({ issueId: issue.id, version: current.version }, "[Recovery] Hydrated current plan");
         }
+      } catch (err) {
+        logger.warn({ issueId: issue.id, err: String(err) }, "[Recovery] Failed to load plan");
       }
     }
 
@@ -339,22 +400,9 @@ export async function persistState(state: RuntimeState): Promise<void> {
     }
   }
 
-  const dirtyIssuePlans = issuePlanResource ? snapshotAndClearDirtyIssuePlanIds() : new Set<string>();
-  if (issuePlanResource && dirtyIssuePlans.size > 0) {
-    for (const issue of state.issues) {
-      if (!dirtyIssuePlans.has(issue.id)) continue;
-      try {
-        await issuePlanResource.replace(issue.id, {
-          id: issue.id,
-          plan: issue.plan,
-          planHistory: issue.planHistory,
-          planVersion: issue.planVersion ?? 0,
-        });
-      } catch (error) {
-        logger.warn(`Failed to persist issue plan ${issue.id}: ${String(error)}`);
-      }
-    }
-  }
+  // Plans are flushed immediately via savePlanForIssue() on generation — no dirty cycle needed.
+  // Clear any stale dirty plan IDs from the tracker.
+  snapshotAndClearDirtyIssuePlanIds();
 
   const dirtyEvents = eventStateResource ? snapshotAndClearDirtyEventIds() : new Set<string>();
   if (eventStateResource && dirtyEvents.size > 0) {
