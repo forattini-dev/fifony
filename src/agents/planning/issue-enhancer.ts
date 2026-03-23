@@ -32,7 +32,10 @@ function getProviderCommand(
   provider: string,
   config: RuntimeConfig,
 ): string {
-  return resolveAgentCommand(provider, config.agentCommand || "", "", "");
+  // Only use config.agentCommand when the provider matches the configured one.
+  // Otherwise each provider falls through to its own default command.
+  const explicit = provider === config.agentProvider ? (config.agentCommand || "") : "";
+  return resolveAgentCommand(provider, explicit, "", "");
 }
 
 async function buildPrompt(field: EnhancementField, title: string, description: string, issueType?: string, images?: string[]): Promise<string> {

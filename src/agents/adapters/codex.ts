@@ -42,7 +42,6 @@ export function buildCodexCommand(options: ProviderCommandOptions): string {
     "exec",
     "--skip-git-repo-check",
     "--dangerously-bypass-approvals-and-sandbox",
-    "--no-alt-screen",
   ];
 
   if (options.model && options.model !== "codex") {

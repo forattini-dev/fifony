@@ -92,7 +92,6 @@ describe("buildCodexCommand", () => {
     const cmd = buildCodexCommand({});
     assert.ok(cmd.startsWith("codex exec"), "starts with 'codex exec'");
     assert.ok(cmd.includes("--skip-git-repo-check"), "has skip-git-repo-check");
-    assert.ok(cmd.includes("--no-alt-screen"), "has no-alt-screen flag");
     assert.ok(cmd.endsWith('< "$FIFONY_PROMPT_FILE"'), "ends with stdin redirection");
   });
 
