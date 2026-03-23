@@ -55,6 +55,7 @@ function usage() {
     "  --poll <ms>            Scheduler interval in ms\n" +
     "  --timeout <ms>         Agent command timeout in ms (default: 1800000)\n" +
     "  --dev                   Start Vite dev server alongside API (HMR on port+1)\n" +
+    "  --no-tls                Disable HTTPS (use plain HTTP)\n" +
     "  --once                  Process once and exit\n" +
     "  --skip-source           Skip source snapshot copy\n" +
     "  --skip-scan             Skip project analysis\n" +
@@ -144,12 +145,13 @@ async function main() {
   debugBoot("main:container-early-init");
 
   if (dashboardPort) {
-    await startApiServer(apiState, dashboardPort);
+    const useTls = !args.includes("--no-tls");
+    await startApiServer(apiState, dashboardPort, { tls: useTls });
     debugBoot("main:api-server-early-start");
 
     if (devMode) {
       const devPort = dashboardPort + 1;
-      await startDevFrontend(dashboardPort, devPort);
+      await startDevFrontend(dashboardPort, devPort, { tls: useTls });
     }
   }
 

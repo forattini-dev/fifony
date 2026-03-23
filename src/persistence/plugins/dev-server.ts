@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { PACKAGE_ROOT } from "../../concerns/constants.ts";
 import { logger } from "../../concerns/logger.ts";
 
-export async function startDevFrontend(apiPort: number, devPort: number): Promise<void> {
+export async function startDevFrontend(apiPort: number, devPort: number, options?: { tls?: boolean }): Promise<void> {
   const VITE_CONFIG_PATH = resolve(PACKAGE_ROOT, "app/vite.config.js");
   let createViteServer: typeof import("vite").createServer;
   try {
@@ -13,10 +13,16 @@ export async function startDevFrontend(apiPort: number, devPort: number): Promis
     return;
   }
 
+  const tls = options?.tls ?? false;
+  const scheme = tls ? "https" : "http";
+  const wsScheme = tls ? "wss" : "ws";
+
   // Wait for the API server to be ready before starting the proxy
   for (let attempt = 0; attempt < 20; attempt++) {
     try {
-      const res = await fetch(`http://localhost:${apiPort}/api/health`);
+      const res = await fetch(`${scheme}://localhost:${apiPort}/api/health`, {
+        ...(tls ? { dispatcher: undefined } : {}),
+      });
       if (res.ok) break;
     } catch {
       await new Promise((r) => setTimeout(r, 250));
@@ -45,10 +51,11 @@ export async function startDevFrontend(apiPort: number, devPort: number): Promis
         port: devPort,
         host: true,
         proxy: {
-          "/api": `http://localhost:${apiPort}`,
+          "/api": { target: `${scheme}://localhost:${apiPort}`, secure: false },
           "/ws": {
-            target: `ws://localhost:${apiPort}`,
+            target: `${wsScheme}://localhost:${apiPort}`,
             ws: true,
+            secure: false,
             configure: (proxy) => {
               const silence = (err: any) => {
                 logger.debug(`[Vite] WS proxy transient: ${err.code || err.message}`);
@@ -59,13 +66,13 @@ export async function startDevFrontend(apiPort: number, devPort: number): Promis
               });
             },
           },
-          "/docs": `http://localhost:${apiPort}`,
-          "/health": `http://localhost:${apiPort}`,
-          "/manifest.webmanifest": `http://localhost:${apiPort}`,
-          "/service-worker.js": `http://localhost:${apiPort}`,
-          "/icon.svg": `http://localhost:${apiPort}`,
-          "/icon-maskable.svg": `http://localhost:${apiPort}`,
-          "/offline.html": `http://localhost:${apiPort}`,
+          "/docs": { target: `${scheme}://localhost:${apiPort}`, secure: false },
+          "/health": { target: `${scheme}://localhost:${apiPort}`, secure: false },
+          "/manifest.webmanifest": { target: `${scheme}://localhost:${apiPort}`, secure: false },
+          "/service-worker.js": { target: `${scheme}://localhost:${apiPort}`, secure: false },
+          "/icon.svg": { target: `${scheme}://localhost:${apiPort}`, secure: false },
+          "/icon-maskable.svg": { target: `${scheme}://localhost:${apiPort}`, secure: false },
+          "/offline.html": { target: `${scheme}://localhost:${apiPort}`, secure: false },
         },
       },
     });

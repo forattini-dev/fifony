@@ -53,6 +53,7 @@ class RouteCollector {
 export async function startApiServer(
   state: RuntimeState,
   port: number,
+  options?: { tls?: boolean },
 ): Promise<void> {
   logger.info({ port }, "[API] Starting API server");
   const stateDb = getStateDb();
@@ -127,6 +128,7 @@ export async function startApiServer(
   const apiPlugin = new ApiPlugin({
     port,
     host: "0.0.0.0",
+    tls: options?.tls ?? false,
     versionPrefix: false,
     metrics: {
       logLevel: 'info'
