@@ -30,6 +30,11 @@ export function registerMiscRoutes(
   app: any,
   state: RuntimeState,
 ): void {
+  app.get("/api/queue/stats", async (c: any) => {
+    const { getQueueStats } = await import("../persistence/plugins/queue-workers.ts");
+    return c.json(await getQueueStats());
+  });
+
   app.post("/api/issues/:id/push", async (c: any) => {
     const issueId = parseIssue(c);
     if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);

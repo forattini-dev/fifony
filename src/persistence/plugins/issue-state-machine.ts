@@ -38,10 +38,18 @@ function emitFsmEvent(issueId: string, kind: string, message: string): void {
   }
 }
 
-// Lazy imports to avoid circular dependency (queue-workers → issue-runner → transition-issue → this)
+// Enqueue callback — injected at runtime to avoid circular dependency
+// (queue-workers → issue-runner → transition-issue → this)
+type EnqueueFn = (issue: IssueEntry, job: "plan" | "execute" | "review") => Promise<void>;
+let enqueueFn: EnqueueFn | null = null;
+
+export function setEnqueueFn(fn: EnqueueFn | null): void {
+  enqueueFn = fn;
+}
+
 async function lazyEnqueue(issue: IssueEntry, job: "plan" | "execute" | "review"): Promise<void> {
-  const { enqueue } = await import("./queue-workers.ts");
-  return enqueue(issue, job);
+  if (enqueueFn) return enqueueFn(issue, job);
+  logger.warn({ issueId: issue.id, job }, "[FSM] lazyEnqueue called but enqueueFn not set — job dropped");
 }
 
 export const ISSUE_STATE_MACHINE_ID = "issue-lifecycle";
