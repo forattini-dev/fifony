@@ -66,24 +66,24 @@
     "raffel": "^1.0.19",
     "react-hotkeys-hook": "^5.2.4",
     "recker": "^1.0.86",
-    "s3db.js": "21.3.11",
+    "s3db.js": "21.3.16",
     "yaml": "^2.8.3"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.2",
-    "@tanstack/react-query": "^5.95.0",
-    "@tanstack/react-router": "^1.168.2",
-    "@tanstack/router-plugin": "^1.167.3",
+    "@tanstack/react-query": "^5.95.2",
+    "@tanstack/react-router": "^1.168.3",
+    "@tanstack/router-plugin": "^1.167.4",
     "@vitejs/plugin-react": "^6.0.1",
     "daisyui": "^5.5.19",
-    "lucide-react": "^0.577.0",
+    "lucide-react": "^1.0.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "sharp": "^0.34.5",
     "tailwindcss": "^4.2.2",
     "tsup": "^8.5.1",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3",
-    "vite": "^8.0.1"
+    "typescript": "^6.0.2",
+    "vite": "^8.0.2"
   }
 }
