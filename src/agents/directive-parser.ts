@@ -230,6 +230,23 @@ export function readAgentDirective(workspacePath: string, output: string, succes
     };
   }
 
+  // 1b. Try JSON code blocks in text output (codex/gemini echo prompt then emit ```json ... ```)
+  const codeBlocks = [...output.matchAll(/```(?:json)?\s*([\s\S]*?)\s*```/gi)].map((m) => m[1].trim()).reverse();
+  for (const block of codeBlocks) {
+    try {
+      const parsed = JSON.parse(block) as JsonRecord;
+      if (parsed?.status) {
+        return {
+          status: normalizeAgentDirectiveStatus(parsed.status, fallbackStatus),
+          summary: toStringValue(parsed.summary) || toStringValue(parsed.message) || "",
+          nextPrompt: toStringValue(parsed.nextPrompt) || toStringValue(parsed.next_prompt) || "",
+          tokenUsage,
+          ...extractUsageArrays(parsed),
+        };
+      }
+    } catch { /* not valid JSON */ }
+  }
+
   // 2. Try result.json file
   if (existsSync(resultFile)) {
     try {
