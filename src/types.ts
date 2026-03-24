@@ -66,6 +66,14 @@ export type IssueEntry = {
   tokenUsage?: AgentTokenUsage; // aggregated across all turns/attempts
   tokensByPhase?: Record<AgentProviderRole, AgentTokenUsage>; // per-phase breakdown (planner/executor/reviewer)
   tokensByModel?: Record<string, AgentTokenUsage>; // full per-model breakdown with input/output
+  /** Tools the CLI actually used (accumulated across all turns) */
+  toolsUsed?: string[];
+  /** Skills (slash commands) actually invoked during execution */
+  skillsUsed?: string[];
+  /** Subagents actually spawned during execution */
+  agentsUsed?: string[];
+  /** Shell commands actually executed */
+  commandsRun?: string[];
   images?: string[]; // absolute paths to attached image files (screenshots, evidence)
   issueType?: string; // template type selected at creation (blank/bug/feature/refactor/docs/chore)
   eventsCount?: number; // total events added to this issue — tracked via EventualConsistency plugin
@@ -321,6 +329,14 @@ export type AgentDirective = {
   summary: string;
   nextPrompt: string;
   tokenUsage?: AgentTokenUsage;
+  /** Tools the CLI actually used (Read, Write, Edit, Bash, etc.) */
+  toolsUsed?: string[];
+  /** Skills (slash commands) actually invoked during execution */
+  skillsUsed?: string[];
+  /** Subagents actually spawned during execution */
+  agentsUsed?: string[];
+  /** Shell commands actually executed */
+  commandsRun?: string[];
 };
 
 export type AgentSessionResult = {
@@ -347,6 +363,10 @@ export type AgentSessionTurn = {
   directiveSummary: string;
   nextPrompt: string;
   tokenUsage?: AgentTokenUsage;
+  toolsUsed?: string[];
+  skillsUsed?: string[];
+  agentsUsed?: string[];
+  commandsRun?: string[];
 };
 
 export type AgentSessionState = {

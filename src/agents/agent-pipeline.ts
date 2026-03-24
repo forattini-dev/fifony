@@ -162,6 +162,12 @@ export async function runAgentSession(
     addEvent(state, issue.id, "info", parts.join(" "));
   }
 
+  // Accumulate tools/skills/agents/commands used across turns
+  if (directive.toolsUsed?.length) issue.toolsUsed = [...new Set([...(issue.toolsUsed ?? []), ...directive.toolsUsed])];
+  if (directive.skillsUsed?.length) issue.skillsUsed = [...new Set([...(issue.skillsUsed ?? []), ...directive.skillsUsed])];
+  if (directive.agentsUsed?.length) issue.agentsUsed = [...new Set([...(issue.agentsUsed ?? []), ...directive.agentsUsed])];
+  if (directive.commandsRun?.length) issue.commandsRun = [...new Set([...(issue.commandsRun ?? []), ...directive.commandsRun])];
+
   session.turns.push({
     turn: turnIndex,
     role: provider.role,
@@ -177,6 +183,10 @@ export async function runAgentSession(
     directiveSummary: directive.summary,
     nextPrompt: directive.nextPrompt,
     tokenUsage: directive.tokenUsage,
+    toolsUsed: directive.toolsUsed,
+    skillsUsed: directive.skillsUsed,
+    agentsUsed: directive.agentsUsed,
+    commandsRun: directive.commandsRun,
   });
 
   session.lastCode = lastCode;

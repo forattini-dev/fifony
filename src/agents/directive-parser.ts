@@ -193,6 +193,21 @@ export function tryParseJsonOutput(output: string): JsonRecord | null {
   return null;
 }
 
+/** Extract usage arrays (tools, skills, agents, commands) from parsed JSON output. */
+function extractUsageArrays(obj: JsonRecord | null): Pick<AgentDirective, "toolsUsed" | "skillsUsed" | "agentsUsed" | "commandsRun"> {
+  if (!obj) return {};
+  const toArr = (v: unknown): string[] | undefined => {
+    if (!Array.isArray(v) || v.length === 0) return undefined;
+    return v.filter((s): s is string => typeof s === "string" && s.length > 0);
+  };
+  return {
+    toolsUsed: toArr(obj.tools_used ?? obj.toolsUsed),
+    skillsUsed: toArr(obj.skills_used ?? obj.skillsUsed),
+    agentsUsed: toArr(obj.agents_used ?? obj.agentsUsed),
+    commandsRun: toArr(obj.commands_run ?? obj.commandsRun),
+  };
+}
+
 export function readAgentDirective(workspacePath: string, output: string, success: boolean): AgentDirective {
   const fallbackStatus: AgentDirectiveStatus = success ? "done" : "failed";
   const resultFile = join(workspacePath, "result.json");
@@ -211,6 +226,7 @@ export function readAgentDirective(workspacePath: string, output: string, succes
       summary: toStringValue(jsonOutput.summary) || toStringValue(jsonOutput.message) || "",
       nextPrompt: toStringValue(jsonOutput.nextPrompt) || toStringValue(jsonOutput.next_prompt) || "",
       tokenUsage,
+      ...extractUsageArrays(jsonOutput),
     };
   }
 
@@ -240,5 +256,5 @@ export function readAgentDirective(workspacePath: string, output: string, succes
     || toStringValue(resultPayload.next_prompt)
     || "";
 
-  return { status, summary, nextPrompt, tokenUsage };
+  return { status, summary, nextPrompt, tokenUsage, ...extractUsageArrays(resultPayload) };
 }

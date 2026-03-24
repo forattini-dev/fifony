@@ -30,7 +30,11 @@ Return a JSON object with this exact schema when finished:
   "validation": { "commands_run": ["..."], "result": "pass" | "partial" | "fail" },
   "open_questions": ["..."],
   "followups": ["..."],
-  "nextPrompt": "guidance for next turn if status is continue"
+  "nextPrompt": "guidance for next turn if status is continue",
+  "tools_used": ["list of tools you used, e.g. Read, Write, Edit, Bash, Grep, Glob"],
+  "skills_used": ["list of slash commands you invoked, e.g. /commit, /review-pr"],
+  "agents_used": ["list of subagents you spawned, e.g. code-reviewer, build-error-resolver"],
+  "commands_run": ["list of shell commands you executed, e.g. npm test, git status"]
 }
 `.trim();
 

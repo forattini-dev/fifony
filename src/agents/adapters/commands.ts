@@ -17,6 +17,10 @@ export const CLAUDE_RESULT_SCHEMA = JSON.stringify({
     status: { type: "string", enum: ["done", "continue", "blocked", "failed"] },
     summary: { type: "string" },
     nextPrompt: { type: "string" },
+    tools_used: { type: "array", items: { type: "string" } },
+    skills_used: { type: "array", items: { type: "string" } },
+    agents_used: { type: "array", items: { type: "string" } },
+    commands_run: { type: "array", items: { type: "string" } },
   },
   required: ["status"],
 });
