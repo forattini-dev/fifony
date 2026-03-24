@@ -33,7 +33,8 @@
     "prepack": "pnpm build",
     "prepublishOnly": "pnpm build",
     "mcp": "pnpm prompts:generate && node ./bin/fifony.js mcp",
-    "test": "node --import tsx/esm --test 'tests/**/*.test.ts'"
+    "test": "node --import tsx/esm --test 'tests/**/*.test.ts'",
+    "typecheck": "tsc --noEmit"
   },
   "files": [
     "bin/",

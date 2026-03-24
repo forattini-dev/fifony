@@ -503,7 +503,7 @@ function ProjectSettings() {
       )}
 
       <div className="text-xs text-base-content/40">
-        <p>These settings mirror the onboarding setup. Use Workflow for pipeline, Agents for catalog installs and worker concurrency, and Preferences for theme.</p>
+        <p>These settings mirror the onboarding setup. Use Workflow for pipeline, Agents for catalog installs and worker concurrency.</p>
       </div>
     </div>
   );

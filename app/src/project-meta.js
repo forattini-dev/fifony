@@ -1,3 +1,6 @@
+// NOTE: Core functions (normalizeProjectName, buildQueueTitle, readSavedProjectName)
+// are intentionally duplicated from src/domains/project.ts because the frontend
+// cannot import backend modules that depend on Node.js APIs (fs, crypto, etc).
 export const PROJECT_SETTING_ID = "system.projectName";
 
 export function normalizeProjectName(value) {
