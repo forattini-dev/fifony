@@ -120,21 +120,44 @@ export async function mergeWorkspaceCommand(
       });
 
       if (resolution.resolved) {
-        // Agent resolved all conflicts — complete the merge commit
-        try {
-          execSync("git add -A", { cwd: TARGET_ROOT, stdio: "pipe", timeout: 10_000 });
-          execSync(
-            `git commit --no-edit`,
-            { cwd: TARGET_ROOT, stdio: "pipe", timeout: 10_000 },
-          );
-          result.conflicts = [];
-          deps.eventStore.addEvent(issue.id, "info", `Agent (${resolution.provider}) resolved ${resolution.resolvedFiles.length} conflict(s) in ${Math.round(resolution.durationMs / 1000)}s.`);
-          logger.info({ issueId: issue.id, provider: resolution.provider, durationMs: resolution.durationMs }, "[Merge] Agent resolved all conflicts — merge committed");
-        } catch (commitErr) {
-          // Commit failed even after resolution — abort
+        // Final safety check: grep all conflict files for leftover markers
+        const leftoverMarkers: string[] = [];
+        for (const file of result.conflicts) {
+          try {
+            const check = execSync(
+              `grep -c "^<<<<<<<" "${file}" 2>/dev/null || echo 0`,
+              { cwd: TARGET_ROOT, encoding: "utf8", timeout: 5_000 },
+            ).trim();
+            if (parseInt(check, 10) > 0) leftoverMarkers.push(file);
+          } catch { /* non-critical */ }
+        }
+
+        if (leftoverMarkers.length > 0) {
+          // Agent left markers — treat as failed resolution
+          logger.warn({ issueId: issue.id, leftoverMarkers }, "[Merge] Agent claimed resolution but conflict markers remain");
           try { execSync("git merge --abort", { cwd: TARGET_ROOT, stdio: "pipe" }); } catch {}
-          deps.eventStore.addEvent(issue.id, "error", `Agent resolved conflicts but merge commit failed: ${String(commitErr)}`);
-          logger.error({ issueId: issue.id, err: String(commitErr) }, "[Merge] Commit after conflict resolution failed");
+          deps.eventStore.addEvent(issue.id, "error", `Agent left conflict markers in ${leftoverMarkers.length} file(s): ${leftoverMarkers.join(", ")}. Merge aborted.`);
+          resolution.resolved = false;
+        } else {
+          // All clean — complete the merge commit
+          try {
+            // Stage only the resolved conflict files (not git add -A which could stage unrelated files)
+            for (const file of result.conflicts) {
+              execSync(`git add "${file}"`, { cwd: TARGET_ROOT, stdio: "pipe", timeout: 5_000 });
+            }
+            execSync(
+              `git commit --no-edit`,
+              { cwd: TARGET_ROOT, stdio: "pipe", timeout: 10_000 },
+            );
+            result.conflicts = [];
+            deps.eventStore.addEvent(issue.id, "info", `Agent (${resolution.provider}) resolved ${resolution.resolvedFiles.length} conflict(s) in ${Math.round(resolution.durationMs / 1000)}s.`);
+            logger.info({ issueId: issue.id, provider: resolution.provider, durationMs: resolution.durationMs }, "[Merge] Agent resolved all conflicts — merge committed");
+          } catch (commitErr) {
+            // Commit failed even after resolution — abort
+            try { execSync("git merge --abort", { cwd: TARGET_ROOT, stdio: "pipe" }); } catch {}
+            deps.eventStore.addEvent(issue.id, "error", `Agent resolved conflicts but merge commit failed: ${String(commitErr)}`);
+            logger.error({ issueId: issue.id, err: String(commitErr) }, "[Merge] Commit after conflict resolution failed");
+          }
         }
       } else {
         // Agent failed to resolve — abort the merge
