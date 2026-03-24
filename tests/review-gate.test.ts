@@ -1,7 +1,7 @@
 /**
  * Review gate invariant tests — verifies that Reviewing state
  * cannot approve, merge, or push directly. Only PendingDecision
- * and Approved can proceed to merge.
+ * and Approved can proceed to merge or push.
  *
  * Run with: pnpm test tests/review-gate.test.ts
  */
@@ -113,6 +113,48 @@ describe("review gate: merge command rejects Reviewing", () => {
       () => mergeWorkspaceCommand({ issue, state: { config: {} } as any }, deps),
       (err: Error) => !err.message.includes("not allowed") && !err.message.includes("must complete"),
       "PendingDecision should pass state guard (fail later on another reason)"
+    );
+  });
+});
+
+describe("review gate: push command rejects Reviewing", () => {
+  it("pushWorkspaceCommand rejects Reviewing state", async () => {
+    const { pushWorkspaceCommand } = await import("../src/commands/push-workspace.command.ts");
+    const issue = {
+      id: "test-review-gate-push",
+      identifier: "#RGP",
+      state: "Reviewing",
+      title: "Test",
+    } as any;
+    const deps = {
+      issueRepository: { save() {}, findById: () => null, findAll: () => [], markDirty() {} },
+      eventStore: { addEvent() {} },
+      persistencePort: { persistState: async () => {}, loadState: async () => null },
+    };
+    await assert.rejects(
+      () => pushWorkspaceCommand({ issue, state: { config: {} } as any }, deps),
+      /Reviewing.*must complete first|PendingDecision or Approved|only allowed/i,
+      "push should reject Reviewing state",
+    );
+  });
+
+  it("pushWorkspaceCommand accepts PendingDecision state", async () => {
+    const { pushWorkspaceCommand } = await import("../src/commands/push-workspace.command.ts");
+    const issue = {
+      id: "test-review-gate-push-pd",
+      identifier: "#RGPPD",
+      state: "PendingDecision",
+      title: "Test",
+    } as any;
+    const deps = {
+      issueRepository: { save() {}, findById: () => null, findAll: () => [], markDirty() {} },
+      eventStore: { addEvent() {} },
+      persistencePort: { persistState: async () => {}, loadState: async () => null },
+    };
+    await assert.rejects(
+      () => pushWorkspaceCommand({ issue, state: { config: {} } as any }, deps),
+      (err: Error) => !err.message.includes("not allowed") && !err.message.includes("must complete"),
+      "PendingDecision should pass push state guard (fail later on another reason)",
     );
   });
 });

@@ -117,8 +117,8 @@ async function loadS3dbModule(): Promise<S3dbModule> {
   try {
     const imported = await import("s3db.js");
     return {
-      default: imported.default,
-      SqliteClient: imported.SqliteClient,
+      default: imported.default as unknown as S3dbModule["default"],
+      SqliteClient: imported.SqliteClient as unknown as S3dbModule["SqliteClient"],
     };
   } catch (error) {
     throw new Error(`Unable to load s3db.js: ${String(error)}`);

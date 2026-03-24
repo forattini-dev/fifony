@@ -1,18 +1,18 @@
 import { S3DB_ISSUE_RESOURCE } from "../../concerns/constants.ts";
 import type { JsonRecord, RuntimeState } from "../../types.ts";
-import { TERMINAL_STATES } from "../../concerns/constants.ts";
 import { loadAgentPipelineSnapshotForIssue, loadAgentSessionSnapshotsForIssue } from "../../agents/agent.ts";
 import { getApiRuntimeContextOrThrow } from "../plugins/api-runtime-context.ts";
 import { persistState } from "../store.ts";
 import { getEffectiveAgentProviders } from "../../agents/providers.ts";
 import { addEvent } from "../../domains/issues.ts";
-import { now, toStringValue, parseIssueState } from "../../concerns/helpers.ts";
+import { toStringValue, parseIssueState } from "../../concerns/helpers.ts";
 import { getContainer } from "../container.ts";
 import { createIssueCommand } from "../../commands/create-issue.command.ts";
 import { cancelIssueCommand } from "../../commands/cancel-issue.command.ts";
 import { deleteIssueCommand } from "../../commands/delete-issue.command.ts";
 import { mergeWorkspaceCommand } from "../../commands/merge-workspace.command.ts";
 import { pushWorkspaceCommand } from "../../commands/push-workspace.command.ts";
+import { retryIssueCommand } from "../../commands/retry-issue.command.ts";
 import { transitionIssueCommand } from "../../commands/transition-issue.command.ts";
 import { findIssue } from "../../routes/helpers.ts";
 import { logger } from "../../concerns/logger.ts";
@@ -20,21 +20,19 @@ import { logger } from "../../concerns/logger.ts";
 // Reuse shared parseIssue helper (single source of truth for issue ID parsing)
 import { parseIssue as getIssueId } from "../../routes/helpers.ts";
 
-async function getIssuePipeline(c: unknown) {
-  const context = getApiRuntimeContextOrThrow();
-  const issueId = getIssueId(c);
-  if (!issueId) {
-    return { status: 400, body: { ok: false, error: "Issue id is required." } };
-  }
+type ApiContext = {
+  json: (body: unknown, status?: number) => unknown;
+};
 
-  const issue = findIssue(context.state, issueId);
-  if (!issue) {
-    return { status: 404, body: { ok: false, error: "Issue not found" } };
+function respond(c: unknown, result: { body: unknown; status?: number }, createdStatus?: number) {
+  const context = c as ApiContext;
+  if (result.status) {
+    return context.json(result.body, result.status);
   }
-
-  const providers = getEffectiveAgentProviders(context.state, issue, null);
-  const pipeline = await loadAgentPipelineSnapshotForIssue(issue, providers);
-  return { body: { ok: true, issueId: issue.id, pipeline } };
+  if (createdStatus) {
+    return context.json(result.body, createdStatus);
+  }
+  return result.body;
 }
 
 async function getIssueSessions(c: unknown) {
@@ -110,48 +108,7 @@ async function retryIssue(c: unknown) {
 
   const container = getContainer();
   logger.info({ issueId, state: issue.state, lastFailedPhase: issue.lastFailedPhase, attempts: issue.attempts }, "[API] Retry — dispatching");
-
-  // Intent → FSM target mapping. No business logic here — FSM entry actions handle everything.
-  const note = feedback
-    ? `Rework requested for ${issue.identifier}: ${feedback.slice(0, 200)}`
-    : `Manual retry for ${issue.identifier}.`;
-
-  if (TERMINAL_STATES.has(issue.state)) {
-    // REOPEN → Planning. If plan exists, fast-track through PendingApproval → Queued.
-    await transitionIssueCommand({ issue, target: "Planning", note }, container);
-    if (issue.plan?.steps?.length) {
-      await transitionIssueCommand({ issue, target: "PendingApproval", note: "Existing plan found." }, container);
-      await transitionIssueCommand({ issue, target: "Queued", note: "Auto-queued after plan approval." }, container);
-    }
-  } else if (issue.state === "Blocked" && issue.lastFailedPhase === "review") {
-    // Execution was fine, only review failed — go directly to Reviewing (REVIEW event)
-    issue.lastError = undefined;
-    issue.lastFailedPhase = undefined;
-    await transitionIssueCommand({ issue, target: "Reviewing", note }, container);
-  } else if (issue.state === "Blocked") {
-    // UNBLOCK → Queued. FSM onEnterQueued handles attempts++ and archival.
-    await transitionIssueCommand({ issue, target: "Queued", note }, container);
-  } else if (issue.state === "Approved") {
-    // REOPEN → Planning for rework
-    await transitionIssueCommand({ issue, target: "Planning", note }, container);
-    if (issue.plan?.steps?.length) {
-      await transitionIssueCommand({ issue, target: "PendingApproval", note: "Existing plan found." }, container);
-      await transitionIssueCommand({ issue, target: "Queued", note: "Auto-queued for rework." }, container);
-    }
-  } else if (issue.state === "Reviewing" || issue.state === "PendingDecision") {
-    // REQUEUE → Queued. FSM onEnterQueued handles feedback archival via event="REQUEUE".
-    const reworkNote = feedback || issue.lastError || "Manual rework request.";
-    await transitionIssueCommand({ issue, target: "Queued", note: reworkNote }, container);
-  } else if (issue.state === "PendingApproval") {
-    // QUEUE → Queued
-    await transitionIssueCommand({ issue, target: "Queued", note }, container);
-  } else {
-    issue.lastError = undefined;
-    issue.nextRetryAt = undefined;
-    issue.updatedAt = now();
-  }
-
-  addEvent(context.state, issue.id, "manual", `Manual retry requested for ${issue.id}.`);
+  await retryIssueCommand({ issue, feedback }, container);
   await persistState(context.state);
   return { body: { ok: true, issue } };
 }
@@ -247,12 +204,12 @@ async function approveAndMerge(c: unknown) {
           container,
         );
       }
-      await pushWorkspaceCommand({ issue }, { ...container, state: context.state });
+      await pushWorkspaceCommand({ issue, state: context.state }, container);
     } else {
       // Local merge mode: approve + merge (squash or git merge --no-ff)
       await mergeWorkspaceCommand(
-        { issue, squashAlreadyApplied: issue.testApplied ?? false },
-        { ...container, state: context.state },
+        { issue, state: context.state },
+        container,
       );
     }
 
@@ -304,6 +261,7 @@ export default {
     terminalWeek: "string|optional",
     usage: "json|optional",
     testApplied: "boolean|optional",
+    testWorkspacePath: "string|optional",
     tokenUsage: "json|optional",
     tokensByPhase: "json|optional",
     tokensByModel: "json|optional",
@@ -335,66 +293,35 @@ export default {
     description: "Issue registry for orchestration runtime",
     "POST /create": async (c: unknown) => {
       const result = await createIssue(c);
-      if (result.status) {
-        return c.json(result.body, result.status);
-      }
-      return c.json(result.body, 201);
+      return respond(c, result, 201);
     },
     "POST /": async (c: unknown) => {
       const result = await createIssue(c);
-      if (result.status) {
-        return c.json(result.body, result.status);
-      }
-      return c.json(result.body, 201);
-    },
-    "GET /:id/pipeline": async (c: unknown) => {
-      const result = await getIssuePipeline(c);
-      if (result.status) {
-        return c.json(result.body, result.status);
-      }
-      return result.body;
+      return respond(c, result, 201);
     },
     "GET /:id/sessions": async (c: unknown) => {
       const result = await getIssueSessions(c);
-      if (result.status) {
-        return c.json(result.body, result.status);
-      }
-      return result.body;
+      return respond(c, result);
     },
     "POST /:id/state": async (c: unknown) => {
       const result = await patchIssueState(c);
-      if (result.status) {
-        return c.json(result.body, result.status);
-      }
-      return result.body;
+      return respond(c, result);
     },
     "POST /:id/retry": async (c: unknown) => {
       const result = await retryIssue(c);
-      if (result.status) {
-        return c.json(result.body, result.status);
-      }
-      return result.body;
+      return respond(c, result);
     },
     "POST /:id/cancel": async (c: unknown) => {
       const result = await cancelIssue(c);
-      if (result.status) {
-        return c.json(result.body, result.status);
-      }
-      return result.body;
+      return respond(c, result);
     },
     "POST /:id/approve-and-merge": async (c: unknown) => {
       const result = await approveAndMerge(c);
-      if (result.status) {
-        return c.json(result.body, result.status);
-      }
-      return result.body;
+      return respond(c, result);
     },
     "POST /:id/delete": async (c: unknown) => {
       const result = await deleteIssue(c);
-      if (result.status) {
-        return c.json(result.body, result.status);
-      }
-      return result.body;
+      return respond(c, result);
     },
   },
 };

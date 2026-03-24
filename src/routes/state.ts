@@ -4,9 +4,10 @@ import { logger } from "../concerns/logger.ts";
 import { persistState } from "../persistence/store.ts";
 import { markIssueDirty } from "../persistence/dirty-tracker.ts";
 import { addEvent, computeMetrics } from "../domains/issues.ts";
-import { ATTACHMENTS_ROOT, TARGET_ROOT } from "../concerns/constants.ts";
+import { ATTACHMENTS_ROOT } from "../concerns/constants.ts";
+import type { RouteRegistrar } from "./http.ts";
 import { findIssue, mutateIssueState, parseIssue } from "../routes/helpers.ts";
-import { cleanWorkspace } from "../domains/workspace.ts";
+import { cleanWorkspace, createTestWorkspace, removeTestWorkspace } from "../domains/workspace.ts";
 import { detectAvailableProviders } from "../agents/providers.ts";
 import { analyzeParallelizability } from "../persistence/plugins/scheduler.ts";
 import {
@@ -15,7 +16,6 @@ import {
 } from "../agents/providers-usage.ts";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { execSync } from "node:child_process";
 import { basename, extname, join } from "node:path";
 
 // Hexagonal architecture
@@ -77,15 +77,15 @@ function getWorkspaceActionErrorStatus(error: unknown): number {
 }
 
 export function registerStateRoutes(
-  app: any,
+  app: RouteRegistrar,
   state: RuntimeState,
 ): void {
-  app.get("/api/state", async (c: any) => {
+  app.get("/api/state", async (c) => {
     const showAll = c.req.query("all") === "1";
     return c.json(getStateQuery(state, showAll));
   });
 
-  app.get("/api/status", async (c: any) =>
+  app.get("/api/status", async (c) =>
     c.json({
       status: "ok",
       updatedAt: state.updatedAt,
@@ -94,17 +94,17 @@ export function registerStateRoutes(
     }),
   );
 
-  app.get("/api/providers", async (c: any) => {
+  app.get("/api/providers", async (c) => {
     const providers = detectAvailableProviders();
     return c.json({ providers });
   });
 
-  app.get("/api/parallelism", async (c: any) => {
+  app.get("/api/parallelism", async (c) => {
     return c.json(analyzeParallelizability(state.issues));
   });
 
   // RESTful: /api/providers/:slug/usage
-  app.get("/api/providers/:slug/usage", async (c: any) => {
+  app.get("/api/providers/:slug/usage", async (c) => {
     const provider = c.req.param("slug") || "";
     try {
       const usage = await collectProviderUsage(provider);
@@ -119,7 +119,7 @@ export function registerStateRoutes(
   });
 
   // Aggregate: /api/providers/usage (all providers)
-  app.get("/api/providers/usage", async (c: any) => {
+  app.get("/api/providers/usage", async (c) => {
     try {
       const usage = await collectProvidersUsage();
       return c.json(usage);
@@ -132,7 +132,7 @@ export function registerStateRoutes(
   // NOTE: create, state, retry, cancel routes live in issues.resource.ts (s3db resource routes).
   // They have priority over collector routes. Do NOT duplicate them here.
 
-  app.post("/api/issues/:id/approve", async (c: any) => {
+  app.post("/api/issues/:id/approve", async (c) => {
     logger.info({ issueId: parseIssue(c) }, "[API] POST /api/issues/:id/approve");
     return mutateIssueState(state, c, async (issue) => {
       const container = getContainer();
@@ -140,7 +140,7 @@ export function registerStateRoutes(
     });
   });
 
-  app.post("/api/issues/:id/execute", async (c: any) => {
+  app.post("/api/issues/:id/execute", async (c) => {
     logger.info({ issueId: parseIssue(c) }, "[API] POST /api/issues/:id/execute");
     return mutateIssueState(state, c, async (issue) => {
       const container = getContainer();
@@ -148,7 +148,7 @@ export function registerStateRoutes(
     });
   });
 
-  app.post("/api/issues/:id/replan", async (c: any) => {
+  app.post("/api/issues/:id/replan", async (c) => {
     logger.info({ issueId: parseIssue(c) }, "[API] POST /api/issues/:id/replan");
     return mutateIssueState(state, c, async (issue) => {
       const container = getContainer();
@@ -156,7 +156,7 @@ export function registerStateRoutes(
     });
   });
 
-  app.post("/api/issues/:id/merge", async (c: any) => {
+  app.post("/api/issues/:id/merge", async (c) => {
     logger.info({ issueId: parseIssue(c) }, "[API] POST /api/issues/:id/merge");
     try {
       const issueId = parseIssue(c);
@@ -168,7 +168,7 @@ export function registerStateRoutes(
         const result = await pushWorkspaceCommand({ issue, state }, container);
         return c.json({ ok: true, prUrl: result.prUrl, ghAvailable: result.ghAvailable });
       }
-      const result = await mergeWorkspaceCommand({ issue, state, squashAlreadyApplied: issue.testApplied ?? false }, container);
+      const result = await mergeWorkspaceCommand({ issue, state }, container);
       return c.json({ ok: true, ...result });
     } catch (error) {
       const issueId = parseIssue(c);
@@ -177,7 +177,7 @@ export function registerStateRoutes(
     }
   });
 
-  app.get("/api/issues/:id/merge-preview", async (c: any) => {
+  app.get("/api/issues/:id/merge-preview", async (c) => {
     logger.info({ issueId: parseIssue(c) }, "[API] GET /api/issues/:id/merge-preview");
     try {
       const issueId = parseIssue(c);
@@ -193,7 +193,7 @@ export function registerStateRoutes(
     }
   });
 
-  app.post("/api/issues/:id/rebase", async (c: any) => {
+  app.post("/api/issues/:id/rebase", async (c) => {
     logger.info({ issueId: parseIssue(c) }, "[API] POST /api/issues/:id/rebase");
     try {
       const issueId = parseIssue(c);
@@ -213,49 +213,28 @@ export function registerStateRoutes(
     }
   });
 
-  app.post("/api/issues/:id/try", async (c: any) => {
+  app.post("/api/issues/:id/try", async (c) => {
     logger.info({ issueId: parseIssue(c) }, "[API] POST /api/issues/:id/try");
     return mutateIssueState(state, c, async (issue) => {
       if (!["Reviewing", "PendingDecision"].includes(issue.state)) {
-        throw new Error(`Cannot apply test for issue in state ${issue.state}.`);
+        throw new Error(`Cannot create a test workspace for issue in state ${issue.state}.`);
       }
-      if (!issue.branchName) {
-        throw new Error("No branch name found for this issue.");
-      }
-      try {
-        execSync(
-          `git merge --squash "${issue.branchName}"`,
-          { encoding: "utf8", cwd: TARGET_ROOT, stdio: "pipe", timeout: 30_000 },
-        );
-      } catch (err: any) {
-        const msg = err.stderr || err.stdout || String(err);
-        throw new Error(`git merge --squash failed: ${msg}`);
-      }
-      issue.testApplied = true;
+      const testWorkspacePath = createTestWorkspace(issue);
       markIssueDirty(issue.id);
-      addEvent(state, issue.id, "manual", `Test squash applied to workspace: git merge --squash ${issue.branchName}`);
+      addEvent(state, issue.id, "manual", `Isolated test workspace created at ${testWorkspacePath}.`);
     });
   });
 
-  app.post("/api/issues/:id/revert-try", async (c: any) => {
+  app.post("/api/issues/:id/revert-try", async (c) => {
     logger.info({ issueId: parseIssue(c) }, "[API] POST /api/issues/:id/revert-try");
     return mutateIssueState(state, c, async (issue) => {
-      try {
-        // Safe revert: unstage squash changes and restore tracked files to HEAD
-        // WITHOUT destroying untracked files (no git clean)
-        execSync("git reset HEAD", { cwd: TARGET_ROOT, stdio: "pipe", timeout: 15_000 });
-        execSync("git checkout -- .", { cwd: TARGET_ROOT, stdio: "pipe", timeout: 15_000 });
-      } catch (err: any) {
-        const msg = err.stderr || err.stdout || String(err);
-        throw new Error(`git revert-try failed: ${msg}`);
-      }
-      issue.testApplied = false;
+      removeTestWorkspace(issue);
       markIssueDirty(issue.id);
-      addEvent(state, issue.id, "manual", `Test reverted safely (untracked files preserved).`);
+      addEvent(state, issue.id, "manual", "Isolated test workspace removed.");
     });
   });
 
-  app.post("/api/issues/:id/rollback", async (c: any) => {
+  app.post("/api/issues/:id/rollback", async (c) => {
     logger.info({ issueId: parseIssue(c) }, "[API] POST /api/issues/:id/rollback");
     return mutateIssueState(state, c, async (issue) => {
       if (!["Reviewing", "PendingDecision", "Approved"].includes(issue.state)) {
@@ -264,8 +243,8 @@ export function registerStateRoutes(
       if (issue.workspacePath) {
         try {
           await cleanWorkspace(issue.id, issue, state);
-          issue.workspacePath = undefined as any;
-          issue.worktreePath = undefined as any;
+          delete issue.workspacePath;
+          delete issue.worktreePath;
         } catch (error) {
           logger.warn({ err: error }, `[API] Workspace cleanup failed during rollback for ${issue.id}`);
         }
@@ -279,7 +258,7 @@ export function registerStateRoutes(
     });
   });
 
-  app.post("/api/issues/:id/images", async (c: any) => {
+  app.post("/api/issues/:id/images", async (c) => {
     try {
       const issueId = parseIssue(c);
       if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
@@ -314,11 +293,11 @@ export function registerStateRoutes(
     }
   });
 
-  app.get("/api/issues/:id/images/:filename", async (c: any) => {
+  app.get("/api/issues/:id/images/:filename", async (c) => {
     try {
       const issueId = parseIssue(c);
       if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
-      const filename = c.req.param?.("filename") ?? c.req.params?.filename ?? "";
+      const filename = c.req.param("filename") ?? "";
       if (!filename) return c.json({ ok: false, error: "Filename is required." }, 400);
       const safeName = basename(filename);
       const filePath = join(ATTACHMENTS_ROOT, issueId, safeName);
@@ -337,7 +316,7 @@ export function registerStateRoutes(
     }
   });
 
-  app.get("/api/issues/:id/history", async (c: any) => {
+  app.get("/api/issues/:id/history", async (c) => {
     const issueId = parseIssue(c);
     if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
     const issue = findIssue(state, issueId);
@@ -353,7 +332,7 @@ export function registerStateRoutes(
     }
   });
 
-  app.get("/api/state-machine/transitions", async (c: any) => {
+  app.get("/api/state-machine/transitions", async (c) => {
     try {
       const { getStateMachineTransitions } = await import("../persistence/plugins/issue-state-machine.ts");
       return c.json({ ok: true, transitions: getStateMachineTransitions() });
@@ -362,7 +341,7 @@ export function registerStateRoutes(
     }
   });
 
-  app.get("/api/state-machine/visualize", async (c: any) => {
+  app.get("/api/state-machine/visualize", async (c) => {
     try {
       const { visualizeStateMachine } = await import("../persistence/plugins/issue-state-machine.ts");
       const dot = visualizeStateMachine();
@@ -373,7 +352,7 @@ export function registerStateRoutes(
     }
   });
 
-  app.post("/api/refresh", async (c: any) => {
+  app.post("/api/refresh", async (c) => {
     addEvent(state, undefined, "manual", "Manual refresh requested via API.");
     await persistState(state);
     return c.json({ queued: true, requestedAt: now() }, 202);

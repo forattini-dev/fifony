@@ -16,8 +16,6 @@ import { resolvePlanStageConfig } from "../agents/planning/planning-prompts.ts";
 export type MergeWorkspaceInput = {
   issue: IssueEntry;
   state: RuntimeState;
-  /** When true, a test squash is already applied to TARGET_ROOT — commit it instead of doing git merge --no-ff */
-  squashAlreadyApplied?: boolean;
 };
 
 export type MergeWorkspaceResult = {
@@ -35,7 +33,7 @@ export async function mergeWorkspaceCommand(
     persistencePort: IPersistencePort;
   },
 ): Promise<MergeWorkspaceResult> {
-  const { issue, state, squashAlreadyApplied } = input;
+  const { issue, state } = input;
 
   if (!["Approved", "PendingDecision"].includes(issue.state)) {
     throw new Error(`Issue ${issue.identifier} is in state ${issue.state}. Merge is only allowed in PendingDecision or Approved state. Reviewing must complete first.`);
@@ -81,7 +79,7 @@ export async function mergeWorkspaceCommand(
 
   // ── Auto-rebase: bring issue branch up to date with base before merge ──
   // This resolves trivial conflicts caused by parallel issues that merged first.
-  if (!squashAlreadyApplied && issue.worktreePath && issue.baseBranch) {
+  if (issue.worktreePath && issue.baseBranch) {
     try {
       const rebase = rebaseWorktree(issue);
       issue.rebaseResult = { success: rebase.success, conflictFiles: rebase.conflictFiles, rebasedAt: now() };
@@ -102,93 +100,66 @@ export async function mergeWorkspaceCommand(
 
   let result: MergeWorkspaceResult;
 
-  if (squashAlreadyApplied) {
-    // Test squash already applied to TARGET_ROOT — commit it directly
+  // Standard git merge --no-ff (don't abort on conflict — agent may resolve)
+  const mergeResult = mergeWorkspace(issue, /* abortOnConflict */ false);
+  result = mergeResult;
+
+  // ── Layer 2: Agent-based conflict resolution ──────────────────────────
+  if (result.conflicts.length > 0) {
+    deps.eventStore.addEvent(issue.id, "info", `Merge conflicts in ${result.conflicts.length} file(s): ${result.conflicts.join(", ")}. Attempting agent-based resolution...`);
+    logger.info({ issueId: issue.id, conflicts: result.conflicts }, "[Merge] Conflicts detected — spawning agent to resolve");
+
     try {
-      execSync("git add -A", { cwd: TARGET_ROOT, stdio: "pipe", timeout: 10_000 });
-      execSync(
-        `git commit -m "fifony: merge ${issue.identifier}"`,
-        { cwd: TARGET_ROOT, stdio: "pipe", timeout: 10_000 },
-      );
-      logger.info({ issueId: issue.id }, "[Merge] Committed existing test squash");
-    } catch (err: any) {
-      throw new Error(`Failed to commit test squash: ${err.stderr || err.stdout || String(err)}`);
-    }
-    issue.testApplied = false;
-    result = { copied: [], deleted: [], skipped: [], conflicts: [] };
-  } else {
-    // Clear residual squash from index (safety — unstage without destroying untracked files)
-    try {
-      const indexStatus = execSync("git diff --cached --name-only", { cwd: TARGET_ROOT, encoding: "utf8", stdio: "pipe" }).trim();
-      const wtStatus = execSync("git diff --name-only", { cwd: TARGET_ROOT, encoding: "utf8", stdio: "pipe" }).trim();
-      if (indexStatus && !wtStatus) {
-        execSync("git reset HEAD", { cwd: TARGET_ROOT, stdio: "pipe" });
-        execSync("git checkout -- .", { cwd: TARGET_ROOT, stdio: "pipe" });
-        logger.info({ issueId: issue.id }, "[Command] Cleared residual squash from index before merge");
-      }
-    } catch { /* non-critical */ }
+      const { provider, model } = await resolvePlanStageConfig(state.config);
+      const resolution = await resolveConflictsWithAgent({
+        issue,
+        conflictFiles: result.conflicts,
+        provider,
+        model,
+        targetRoot: TARGET_ROOT,
+      });
 
-    // Standard git merge --no-ff (don't abort on conflict — agent may resolve)
-    const mergeResult = mergeWorkspace(issue, /* abortOnConflict */ false);
-    result = mergeResult;
-
-    // ── Layer 2: Agent-based conflict resolution ──────────────────────────
-    if (result.conflicts.length > 0) {
-      deps.eventStore.addEvent(issue.id, "info", `Merge conflicts in ${result.conflicts.length} file(s): ${result.conflicts.join(", ")}. Attempting agent-based resolution...`);
-      logger.info({ issueId: issue.id, conflicts: result.conflicts }, "[Merge] Conflicts detected — spawning agent to resolve");
-
-      try {
-        const { provider, model } = await resolvePlanStageConfig(state.config);
-        const resolution = await resolveConflictsWithAgent({
-          issue,
-          conflictFiles: result.conflicts,
-          provider,
-          model,
-          targetRoot: TARGET_ROOT,
-        });
-
-        if (resolution.resolved) {
-          // Agent resolved all conflicts — complete the merge commit
-          try {
-            execSync("git add -A", { cwd: TARGET_ROOT, stdio: "pipe", timeout: 10_000 });
-            execSync(
-              `git commit --no-edit`,
-              { cwd: TARGET_ROOT, stdio: "pipe", timeout: 10_000 },
-            );
-            result.conflicts = [];
-            deps.eventStore.addEvent(issue.id, "info", `Agent (${resolution.provider}) resolved ${resolution.resolvedFiles.length} conflict(s) in ${Math.round(resolution.durationMs / 1000)}s.`);
-            logger.info({ issueId: issue.id, provider: resolution.provider, durationMs: resolution.durationMs }, "[Merge] Agent resolved all conflicts — merge committed");
-          } catch (commitErr) {
-            // Commit failed even after resolution — abort
-            try { execSync("git merge --abort", { cwd: TARGET_ROOT, stdio: "pipe" }); } catch {}
-            deps.eventStore.addEvent(issue.id, "error", `Agent resolved conflicts but merge commit failed: ${String(commitErr)}`);
-            logger.error({ issueId: issue.id, err: String(commitErr) }, "[Merge] Commit after conflict resolution failed");
-          }
-        } else {
-          // Agent failed to resolve — abort the merge
+      if (resolution.resolved) {
+        // Agent resolved all conflicts — complete the merge commit
+        try {
+          execSync("git add -A", { cwd: TARGET_ROOT, stdio: "pipe", timeout: 10_000 });
+          execSync(
+            `git commit --no-edit`,
+            { cwd: TARGET_ROOT, stdio: "pipe", timeout: 10_000 },
+          );
+          result.conflicts = [];
+          deps.eventStore.addEvent(issue.id, "info", `Agent (${resolution.provider}) resolved ${resolution.resolvedFiles.length} conflict(s) in ${Math.round(resolution.durationMs / 1000)}s.`);
+          logger.info({ issueId: issue.id, provider: resolution.provider, durationMs: resolution.durationMs }, "[Merge] Agent resolved all conflicts — merge committed");
+        } catch (commitErr) {
+          // Commit failed even after resolution — abort
           try { execSync("git merge --abort", { cwd: TARGET_ROOT, stdio: "pipe" }); } catch {}
-          deps.eventStore.addEvent(issue.id, "error", `Agent-based conflict resolution failed (${resolution.provider}, ${Math.round(resolution.durationMs / 1000)}s). ${resolution.resolvedFiles.length}/${result.conflicts.length} files resolved.`);
-          logger.warn({ issueId: issue.id, resolvedFiles: resolution.resolvedFiles, provider: resolution.provider }, "[Merge] Agent failed to resolve all conflicts");
+          deps.eventStore.addEvent(issue.id, "error", `Agent resolved conflicts but merge commit failed: ${String(commitErr)}`);
+          logger.error({ issueId: issue.id, err: String(commitErr) }, "[Merge] Commit after conflict resolution failed");
         }
-
-        // Store resolution info on the issue
-        issue.mergeResult = {
-          ...issue.mergeResult!,
-          conflictResolution: {
-            resolved: resolution.resolved,
-            provider: resolution.provider,
-            resolvedFiles: resolution.resolvedFiles,
-            durationMs: resolution.durationMs,
-            output: resolution.output.slice(-500),
-            resolvedAt: resolution.resolvedAt,
-          },
-        };
-      } catch (err) {
-        // Resolution threw — abort merge and continue with normal conflict flow
+      } else {
+        // Agent failed to resolve — abort the merge
         try { execSync("git merge --abort", { cwd: TARGET_ROOT, stdio: "pipe" }); } catch {}
-        deps.eventStore.addEvent(issue.id, "error", `Agent conflict resolution threw: ${String(err)}`);
-        logger.error({ issueId: issue.id, err: String(err) }, "[Merge] Conflict resolution threw unexpectedly");
+        deps.eventStore.addEvent(issue.id, "error", `Agent-based conflict resolution failed (${resolution.provider}, ${Math.round(resolution.durationMs / 1000)}s). ${resolution.resolvedFiles.length}/${result.conflicts.length} files resolved.`);
+        logger.warn({ issueId: issue.id, resolvedFiles: resolution.resolvedFiles, provider: resolution.provider }, "[Merge] Agent failed to resolve all conflicts");
       }
+
+      // Store resolution info on the issue
+      issue.mergeResult = {
+        ...issue.mergeResult!,
+        conflictResolution: {
+          resolved: resolution.resolved,
+          provider: resolution.provider,
+          resolvedFiles: resolution.resolvedFiles,
+          durationMs: resolution.durationMs,
+          output: resolution.output.slice(-500),
+          resolvedAt: resolution.resolvedAt,
+        },
+      };
+    } catch (err) {
+      // Resolution threw — abort merge and continue with normal conflict flow
+      try { execSync("git merge --abort", { cwd: TARGET_ROOT, stdio: "pipe" }); } catch {}
+      deps.eventStore.addEvent(issue.id, "error", `Agent conflict resolution threw: ${String(err)}`);
+      logger.error({ issueId: issue.id, err: String(err) }, "[Merge] Conflict resolution threw unexpectedly");
     }
   }
 
@@ -208,7 +179,7 @@ export async function mergeWorkspaceCommand(
   }
 
   // Success: transition → Merged (FSM handles: completedAt, mergedAt, event)
-  if (!issue.mergedReason) issue.mergedReason = squashAlreadyApplied ? "Approved and shipped after testing." : "Merged by user.";
+  if (!issue.mergedReason) issue.mergedReason = issue.testApplied ? "Merged by user after isolated testing." : "Merged by user.";
   await transitionIssueCommand(
     { issue, target: "Merged", note: `Workspace merged for ${issue.identifier}.` },
     deps,

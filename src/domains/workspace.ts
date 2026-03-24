@@ -322,6 +322,80 @@ function copyCliConfigDirs(sourceRoot: string, worktreePath: string): void {
   }
 }
 
+function isGitWorkingTree(dir: string): boolean {
+  try {
+    execSync("git rev-parse --git-dir", { cwd: dir, stdio: "pipe", timeout: 5_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveTestWorkspacePath(issue: IssueEntry): string {
+  const workspaceRoot = issue.workspacePath ?? join(WORKSPACE_ROOT, idToSafePath(issue.id));
+  return join(workspaceRoot, "test-worktree");
+}
+
+export function createTestWorkspace(issue: IssueEntry): string {
+  ensureGitRepoReadyForWorktrees(TARGET_ROOT, "create isolated test workspaces");
+  assertIssueHasGitWorktree(issue, "create a test workspace");
+
+  const workspaceRoot = issue.workspacePath ?? join(WORKSPACE_ROOT, idToSafePath(issue.id));
+  const testWorkspacePath = issue.testWorkspacePath ?? resolveTestWorkspacePath(issue);
+  mkdirSync(workspaceRoot, { recursive: true });
+
+  if (existsSync(testWorkspacePath)) {
+    if (isGitWorkingTree(testWorkspacePath)) {
+      issue.testWorkspacePath = testWorkspacePath;
+      issue.testApplied = true;
+      return testWorkspacePath;
+    }
+    rmSync(testWorkspacePath, { recursive: true, force: true });
+  }
+
+  try {
+    execSync(`git worktree add --detach "${testWorkspacePath}" "${issue.branchName}"`, {
+      cwd: TARGET_ROOT,
+      stdio: "pipe",
+      timeout: 30_000,
+    });
+  } catch (err: any) {
+    const msg = err.stderr || err.stdout || String(err);
+    throw new Error(`Failed to create isolated test workspace: ${msg}`);
+  }
+
+  copyCliConfigDirs(TARGET_ROOT, testWorkspacePath);
+  issue.testWorkspacePath = testWorkspacePath;
+  issue.testApplied = true;
+  return testWorkspacePath;
+}
+
+export function removeTestWorkspace(issue: IssueEntry): void {
+  const testWorkspacePath = issue.testWorkspacePath;
+  issue.testApplied = false;
+  issue.testWorkspacePath = undefined;
+
+  if (!testWorkspacePath) return;
+
+  try {
+    execSync(`git worktree remove --force "${testWorkspacePath}"`, {
+      cwd: TARGET_ROOT,
+      stdio: "pipe",
+      timeout: 30_000,
+    });
+    logger.info({ issueId: issue.id, testWorkspacePath }, "[Workspace] Removed isolated test workspace");
+    return;
+  } catch (error) {
+    logger.warn({ issueId: issue.id, testWorkspacePath, err: String(error) }, "[Workspace] Failed to remove isolated test workspace via git worktree");
+  }
+
+  try {
+    rmSync(testWorkspacePath, { recursive: true, force: true });
+  } catch (error) {
+    logger.warn({ issueId: issue.id, testWorkspacePath, err: String(error) }, "[Workspace] Failed to remove isolated test workspace directory");
+  }
+}
+
 /** Create a git worktree for the issue at the given path. */
 export async function createGitWorktree(issue: IssueEntry, worktreePath: string, baseBranch?: string): Promise<void> {
   let headCommitAtStart = "";
@@ -418,6 +492,10 @@ export async function cleanWorkspace(
     } catch (error) {
       logger.warn(`before_remove hook failed for ${issueId}: ${String(error)}`);
     }
+  }
+
+  if (issue?.testWorkspacePath) {
+    removeTestWorkspace(issue);
   }
 
   // Git worktree cleanup
@@ -725,9 +803,19 @@ export function dryMerge(issue: IssueEntry): DryMergeResult {
     } catch {}
   }
 
-  // Always clean up: abort if conflicted, reset if succeeded (was --no-commit)
-  try { execSync("git merge --abort", { cwd: TARGET_ROOT, stdio: "pipe" }); } catch {
-    try { execSync("git reset --hard HEAD", { cwd: TARGET_ROOT, stdio: "pipe" }); } catch {}
+  // Always clean up without destructive resets or cleaning untracked files.
+  try {
+    execSync("git merge --abort", { cwd: TARGET_ROOT, stdio: "pipe" });
+  } catch {
+    try {
+      execSync("git reset --merge ORIG_HEAD", { cwd: TARGET_ROOT, stdio: "pipe" });
+    } catch {
+      try {
+        execSync("git reset --merge", { cwd: TARGET_ROOT, stdio: "pipe" });
+      } catch (error) {
+        logger.warn({ issueId: issue.id, err: String(error) }, "[Workspace] Failed to safely clean dry-merge state");
+      }
+    }
   }
 
   let changedFiles = 0;

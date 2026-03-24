@@ -11,6 +11,82 @@ function formatDuration(ms) {
   return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
+function getTurnDurationMs(turn) {
+  const startedAt = turn?.startedAt ? Date.parse(turn.startedAt) : NaN;
+  const completedAt = turn?.completedAt ? Date.parse(turn.completedAt) : NaN;
+  if (!Number.isFinite(startedAt) || !Number.isFinite(completedAt) || completedAt < startedAt) {
+    return 0;
+  }
+  return completedAt - startedAt;
+}
+
+function summarizeSessions(sessions) {
+  const summary = {
+    sessionCount: sessions.length,
+    turnCount: 0,
+    totalTokens: 0,
+    totalDurationMs: 0,
+    byStatus: {},
+    byProvider: {},
+    byRole: {},
+  };
+
+  for (const entry of sessions) {
+    const provider = entry?.provider || "unknown";
+    const role = entry?.role || "unknown";
+    const status = entry?.session?.status || "unknown";
+    const turns = Array.isArray(entry?.session?.turns) ? entry.session.turns : [];
+
+    summary.byStatus[status] = (summary.byStatus[status] || 0) + 1;
+    summary.byProvider[provider] = summary.byProvider[provider] || { sessions: 0, turns: 0, tokens: 0 };
+    summary.byRole[role] = summary.byRole[role] || { sessions: 0, turns: 0, tokens: 0 };
+    summary.byProvider[provider].sessions += 1;
+    summary.byRole[role].sessions += 1;
+
+    for (const turn of turns) {
+      const totalTokens = turn?.tokenUsage?.totalTokens || 0;
+      summary.turnCount += 1;
+      summary.totalTokens += totalTokens;
+      summary.totalDurationMs += getTurnDurationMs(turn);
+      summary.byProvider[provider].turns += 1;
+      summary.byProvider[provider].tokens += totalTokens;
+      summary.byRole[role].turns += 1;
+      summary.byRole[role].tokens += totalTokens;
+    }
+  }
+
+  return summary;
+}
+
+function MetricCard({ label, value, icon: Icon, tone = "" }) {
+  return (
+    <div className="rounded-box border border-base-300 bg-base-200/20 px-3 py-2">
+      <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide opacity-45">
+        {Icon && <Icon className="size-3" />}
+        {label}
+      </div>
+      <div className={`mt-1 text-sm font-semibold ${tone}`}>{value}</div>
+    </div>
+  );
+}
+
+function DistributionStrip({ title, entries, formatter }) {
+  if (!entries.length) return null;
+  return (
+    <div className="space-y-1.5">
+      <div className="text-[10px] uppercase tracking-wide opacity-40">{title}</div>
+      <div className="flex flex-wrap gap-1.5">
+        {entries.map(([key, value]) => (
+          <span key={key} className="badge badge-sm badge-ghost gap-1.5">
+            <span className="font-mono">{key}</span>
+            <span className="opacity-60">{formatter(value)}</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function TokenBadge({ usage }) {
   if (!usage?.totalTokens) return null;
   return (
@@ -78,6 +154,7 @@ function TurnCard({ turn }) {
 function SessionCard({ entry }) {
   const { session, provider, role, cycle } = entry;
   const [expanded, setExpanded] = useState(true);
+  const sessionDurationMs = (session.turns || []).reduce((sum, turn) => sum + getTurnDurationMs(turn), 0);
 
   return (
     <div className="border border-base-300 rounded-box overflow-hidden">
@@ -93,6 +170,12 @@ function SessionCard({ entry }) {
         <span className={`badge badge-xs ${session.status === "done" ? "badge-success" : session.status === "failed" ? "badge-error" : "badge-info"}`}>
           {session.status}
         </span>
+        {sessionDurationMs > 0 && (
+          <span className="text-[10px] opacity-40 flex items-center gap-1">
+            <Clock className="size-3" />
+            {formatDuration(sessionDurationMs)}
+          </span>
+        )}
         <span className="text-[10px] opacity-40 ml-auto">{session.turns?.length || 0} turn(s)</span>
       </button>
 
@@ -147,6 +230,13 @@ export function SessionsTab({ issueId }) {
 
   const sessions = data?.sessions || [];
   const pipeline = data?.pipeline;
+  const summary = summarizeSessions(sessions);
+  const providerEntries = Object.entries(summary.byProvider)
+    .sort((a, b) => b[1].tokens - a[1].tokens || b[1].sessions - a[1].sessions);
+  const roleEntries = Object.entries(summary.byRole)
+    .sort((a, b) => b[1].tokens - a[1].tokens || b[1].sessions - a[1].sessions);
+  const statusEntries = Object.entries(summary.byStatus)
+    .sort((a, b) => b[1] - a[1]);
 
   if (sessions.length === 0) {
     return (
@@ -158,6 +248,33 @@ export function SessionsTab({ issueId }) {
 
   return (
     <div className="space-y-4">
+      <Section title="Summary" icon={Clock}>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <MetricCard label="Sessions" icon={Cpu} value={summary.sessionCount} />
+            <MetricCard label="Turns" icon={Terminal} value={summary.turnCount} />
+            <MetricCard label="Tokens" icon={Zap} value={summary.totalTokens.toLocaleString()} />
+            <MetricCard label="Runtime" icon={Clock} value={formatDuration(summary.totalDurationMs)} />
+          </div>
+
+          <DistributionStrip
+            title="Status"
+            entries={statusEntries}
+            formatter={(count) => `${count} session${count === 1 ? "" : "s"}`}
+          />
+          <DistributionStrip
+            title="Providers"
+            entries={providerEntries}
+            formatter={({ sessions: count, tokens }) => `${count}s • ${tokens.toLocaleString()} tok`}
+          />
+          <DistributionStrip
+            title="Roles"
+            entries={roleEntries}
+            formatter={({ sessions: count, tokens }) => `${count}s • ${tokens.toLocaleString()} tok`}
+          />
+        </div>
+      </Section>
+
       {pipeline && (
         <Section title="Pipeline" icon={Cpu}>
           <div className="flex items-center gap-2 text-xs">

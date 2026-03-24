@@ -8,8 +8,9 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { APP_SHELL_ROUTES } from "../src/concerns/app-shell-routes.ts";
 
 // ══════════════════════════════════════════════════════════════════════════════
 // 1. SPA routes served by backend match frontend router
@@ -18,6 +19,7 @@ import { join } from "node:path";
 describe("product contract: SPA routes", () => {
   // Frontend routes declared in TanStack Router (file-based)
   const FRONTEND_ROUTES = [
+    "/onboarding",
     "/kanban",
     "/issues",
     "/analytics",
@@ -30,13 +32,13 @@ describe("product contract: SPA routes", () => {
     "/settings/workflow",
     "/settings/providers",
     "/settings/hotkeys",
-    "/onboarding",
   ];
 
   // Routes that should NOT be served (ghost routes)
   const GHOST_ROUTES = [
     "/settings/preferences",
   ];
+  const sortRoutes = (routes: readonly string[]) => [...routes].sort();
 
   it("every frontend route has a corresponding route file", () => {
     const routeDir = join(process.cwd(), "app/src/routes");
@@ -44,6 +46,7 @@ describe("product contract: SPA routes", () => {
 
     // Map routes to expected file paths
     const routeFiles: Record<string, string> = {
+      "/onboarding": join(routeDir, "onboarding.jsx"),
       "/kanban": join(routeDir, "kanban.jsx"),
       "/issues": join(routeDir, "issues.jsx"),
       "/analytics": join(routeDir, "analytics.lazy.jsx"),
@@ -63,6 +66,14 @@ describe("product contract: SPA routes", () => {
     }
   });
 
+  it("backend app-shell routes match the frontend route contract", () => {
+    assert.deepEqual(
+      sortRoutes(APP_SHELL_ROUTES),
+      sortRoutes(FRONTEND_ROUTES),
+      "Backend app-shell routes should stay aligned with the frontend router contract",
+    );
+  });
+
   it("ghost routes do NOT have route files", () => {
     for (const route of GHOST_ROUTES) {
       const segments = route.split("/").filter(Boolean);
@@ -71,6 +82,18 @@ describe("product contract: SPA routes", () => {
       const filePath = join(dir, `${fileName}.jsx`);
       assert.ok(!existsSync(filePath), `Ghost route ${route} should NOT have file: ${filePath}`);
     }
+  });
+
+  it("service worker precaches the same app-shell routes", () => {
+    const source = readFileSync(join(process.cwd(), "app/public/service-worker.js"), "utf8");
+    const match = source.match(/const APP_SHELL_ROUTES = \[(?<body>[\s\S]*?)\];/);
+    assert.ok(match?.groups?.body, "service-worker.js should define APP_SHELL_ROUTES");
+    const routes = [...match.groups.body.matchAll(/"([^"]+)"/g)].map((entry) => entry[1]);
+    assert.deepEqual(
+      sortRoutes(routes),
+      sortRoutes(FRONTEND_ROUTES),
+      "Service worker app-shell routes should match frontend routes",
+    );
   });
 });
 
@@ -143,6 +166,7 @@ describe("product contract: API endpoints have implementations", () => {
     const { executeIssueCommand } = await import("../src/commands/execute-issue.command.ts");
     const { mergeWorkspaceCommand } = await import("../src/commands/merge-workspace.command.ts");
     const { replanIssueCommand } = await import("../src/commands/replan-issue.command.ts");
+    const { retryIssueCommand } = await import("../src/commands/retry-issue.command.ts");
     const { retryExecutionCommand } = await import("../src/commands/retry-execution.command.ts");
     const { requestReworkCommand } = await import("../src/commands/request-rework.command.ts");
     const { cancelIssueCommand } = await import("../src/commands/cancel-issue.command.ts");
@@ -152,10 +176,21 @@ describe("product contract: API endpoints have implementations", () => {
     assert.ok(typeof executeIssueCommand === "function");
     assert.ok(typeof mergeWorkspaceCommand === "function");
     assert.ok(typeof replanIssueCommand === "function");
+    assert.ok(typeof retryIssueCommand === "function");
     assert.ok(typeof retryExecutionCommand === "function");
     assert.ok(typeof requestReworkCommand === "function");
     assert.ok(typeof cancelIssueCommand === "function");
     assert.ok(typeof createIssueCommand === "function");
+  });
+
+  it("issue resource exposes sessions but not orphan pipeline route", async () => {
+    const issuesResource = (await import("../src/persistence/resources/issues.resource.ts")).default as {
+      api?: Record<string, unknown>;
+    };
+    const routes = Object.keys(issuesResource.api || {});
+
+    assert.ok(routes.includes("GET /:id/sessions"), "sessions route should exist");
+    assert.ok(!routes.includes("GET /:id/pipeline"), "orphan pipeline route should not exist");
   });
 
   it("drawer tabs all have corresponding components", () => {
@@ -173,6 +208,21 @@ describe("product contract: API endpoints have implementations", () => {
     for (const path of tabComponents) {
       assert.ok(existsSync(join(process.cwd(), path)), `Tab component should exist: ${path}`);
     }
+  });
+
+  it("MCP exposes capability resource and resolver tool", async () => {
+    const { listTools } = await import("../src/mcp/tools/tool-list.ts");
+    const tools = listTools().map((tool) => tool.name);
+    assert.ok(tools.includes("fifony.resolve_capabilities"), "resolve_capabilities tool should exist");
+
+    const resourceHandlersSource = readFileSync(
+      join(process.cwd(), "src/mcp/resources/resource-handlers.ts"),
+      "utf8",
+    );
+    assert.ok(
+      resourceHandlersSource.includes('fifony://capabilities'),
+      "capabilities resource should be backed by resource handlers",
+    );
   });
 });
 

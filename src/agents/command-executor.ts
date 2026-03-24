@@ -11,6 +11,27 @@ import { appendFileTail } from "../concerns/helpers.ts";
 import { logger } from "../concerns/logger.ts";
 import { normalizeAgentProvider } from "./providers.ts";
 
+const HOOK_RUNTIME_CONFIG: RuntimeConfig = {
+  pollIntervalMs: 0,
+  workerConcurrency: 1,
+  maxConcurrentByState: {},
+  commandTimeoutMs: 300_000,
+  maxAttemptsDefault: 1,
+  maxTurns: 1,
+  retryDelayMs: 0,
+  staleInProgressTimeoutMs: 0,
+  logLinesTail: 12_000,
+  maxPreviousOutputChars: 12_000,
+  agentProvider: "codex",
+  agentCommand: "",
+  defaultEffort: { default: "medium" },
+  runMode: "filesystem",
+  autoReviewApproval: true,
+  afterCreateHook: "",
+  beforeRunHook: "",
+  afterRunHook: "",
+  beforeRemoveHook: "",
+};
 
 export async function runCommandWithTimeout(
   command: string,
@@ -200,19 +221,9 @@ export async function runHook(
   if (!command.trim()) return;
 
   const result = await runCommandWithTimeout(command, workspacePath, issue, {
-    pollIntervalMs: 0,
-    workerConcurrency: 1,
-    maxConcurrentByState: {},
-    commandTimeoutMs: 300_000,
-    maxAttemptsDefault: 1,
-    retryDelayMs: 0,
-    staleInProgressTimeoutMs: 0,
-    logLinesTail: 12_000,
+    ...HOOK_RUNTIME_CONFIG,
     agentProvider: normalizeAgentProvider(env.FIFONY_AGENT_PROVIDER ?? "codex"),
     agentCommand: command,
-    maxTurns: 1,
-    runMode: "filesystem",
-    autoReviewApproval: true,
   }, "", "", { FIFONY_HOOK_NAME: hookName, ...extraEnv });
 
   if (!result.success) {

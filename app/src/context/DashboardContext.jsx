@@ -110,8 +110,6 @@ export function DashboardProvider({ children }) {
     });
   }, [issues, stateFilter, query]);
 
-  const categoryOptions = useMemo(() => ["all"], []);
-
   const issueOptions = useMemo(() => [...new Set(issues.map((i) => i.id))].sort(), [issues]);
 
   useEffect(() => {
@@ -237,7 +235,7 @@ export function DashboardProvider({ children }) {
     data, issues, filtered, metrics, eventsData, providers, parallelism,
     projectName: projectMeta.projectName,
     queueTitle: projectMeta.queueTitle,
-    categoryOptions, issueOptions,
+    issueOptions,
     runtime,
     // Filters
     query, setQuery,
@@ -270,7 +268,7 @@ export function DashboardProvider({ children }) {
     confetti, showConfetti, clearConfetti,
   }), [
     theme, status, wsStatus, liveMode, data, issues, filtered, metrics, eventsData,
-    providers, parallelism, categoryOptions, issueOptions, runtime,
+    providers, parallelism, issueOptions, runtime,
     projectMeta,
     query, stateFilter, completionFilter,
     isEventsOpen, eventKind, eventIssueId,

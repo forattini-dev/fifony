@@ -1,6 +1,7 @@
 import type { RuntimeState } from "../types.ts";
 import { logger } from "../concerns/logger.ts";
 import { toStringValue } from "../concerns/helpers.ts";
+import type { RouteRegistrar } from "./http.ts";
 import { addEvent } from "../domains/issues.ts";
 import { mutateIssueState } from "../routes/helpers.ts";
 import { applyPlanUsage, applyPlanSuggestions } from "../routes/helpers.ts";
@@ -17,17 +18,17 @@ import {
 import { enhanceIssueField } from "../agents/planning/issue-enhancer.ts";
 
 export function registerPlanRoutes(
-  app: any,
+  app: RouteRegistrar,
   state: RuntimeState,
 ): void {
-  app.get("/api/planning/session", async (c: any) => {
+  app.get("/api/planning/session", async (c) => {
     const session = await loadPlanningSession();
     return c.json({ ok: true, session });
   });
 
-  app.post("/api/planning/save", async (c: any) => {
+  app.post("/api/planning/save", async (c) => {
     try {
-      const payload = await c.req.json();
+      const payload = await c.req.json() as Record<string, unknown>;
       const title = toStringValue(payload.title);
       const description = toStringValue(payload.description);
       const session = await savePlanningInput(title, description);
@@ -37,9 +38,9 @@ export function registerPlanRoutes(
     }
   });
 
-  app.post("/api/planning/generate", async (c: any) => {
+  app.post("/api/planning/generate", async (c) => {
     try {
-      const payload = await c.req.json();
+      const payload = await c.req.json() as Record<string, unknown>;
       const title = toStringValue(payload.title);
       const description = toStringValue(payload.description);
       if (!title) return c.json({ ok: false, error: "Title is required." }, 400);
@@ -52,15 +53,15 @@ export function registerPlanRoutes(
     }
   });
 
-  app.post("/api/planning/clear", async (c: any) => {
+  app.post("/api/planning/clear", async (c) => {
     await clearPlanningSession();
     return c.json({ ok: true });
   });
 
   // Legacy alias
-  app.post("/api/issues/plan", async (c: any) => {
+  app.post("/api/issues/plan", async (c) => {
     try {
-      const payload = await c.req.json();
+      const payload = await c.req.json() as Record<string, unknown>;
       const title = toStringValue(payload.title);
       const description = toStringValue(payload.description);
       if (!title) return c.json({ ok: false, error: "Title is required." }, 400);
@@ -72,7 +73,7 @@ export function registerPlanRoutes(
     }
   });
 
-  app.post("/api/issues/:id/plan", async (c: any) => {
+  app.post("/api/issues/:id/plan", async (c) => {
     return mutateIssueState(state, c, async (issue) => {
       if (issue.state !== "Planning") {
         throw new Error(`Cannot plan issue in state ${issue.state}. Must be in Planning.`);
@@ -85,7 +86,7 @@ export function registerPlanRoutes(
 
       // Fire-and-forget — plan runs in background, updates via WS
       generatePlanInBackground(issue, state.config, null, {
-        addEvent: (issueId, kind, message) => addEvent(state, issueId, kind as any, message),
+        addEvent: (issueId, kind, message) => addEvent(state, issueId, kind, message),
         persistState: () => persistState(state),
         applyUsage: (iss, usage) => applyPlanUsage(iss, usage),
         applySuggestions: (iss, plan) => applyPlanSuggestions(iss, plan),
@@ -95,7 +96,7 @@ export function registerPlanRoutes(
     });
   });
 
-  app.post("/api/issues/:id/plan/refine", async (c: any) => {
+  app.post("/api/issues/:id/plan/refine", async (c) => {
     return mutateIssueState(state, c, async (issue) => {
       if (issue.state !== "Planning") {
         throw new Error(`Cannot refine plan for issue in state ${issue.state}. Must be in Planning.`);
@@ -114,7 +115,7 @@ export function registerPlanRoutes(
 
       // Fire-and-forget — refinement runs in background, updates via WS
       refinePlanInBackground(issue, feedback, state.config, null, {
-        addEvent: (issueId, kind, message) => addEvent(state, issueId, kind as any, message),
+        addEvent: (issueId, kind, message) => addEvent(state, issueId, kind, message),
         persistState: () => persistState(state),
         applyUsage: (iss, usage) => applyPlanUsage(iss, usage),
         applySuggestions: (iss, plan) => {
@@ -127,9 +128,9 @@ export function registerPlanRoutes(
     });
   });
 
-  app.post("/api/issues/enhance", async (c: any) => {
+  app.post("/api/issues/enhance", async (c) => {
     try {
-      const payload = await c.req.json();
+      const payload = await c.req.json() as Record<string, unknown>;
       const field = payload.field === "description" ? "description" : payload.field === "title" ? "title" : null;
       if (!field) {
         return c.json({ ok: false, error: 'Invalid field. Expected "title" or "description".' }, 400);

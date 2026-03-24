@@ -1,5 +1,6 @@
 import type { IssueEntry, RuntimeEvent, RuntimeState } from "../types.ts";
 import type { PlanningSessionUsage } from "../agents/planning/issue-planner.ts";
+import type { ApiRouteContext } from "./http.ts";
 import { logger } from "../concerns/logger.ts";
 import { now } from "../concerns/helpers.ts";
 import { getEventStateResource } from "../persistence/store.ts";
@@ -41,14 +42,19 @@ export function findIssue(state: RuntimeState, issueId: string): IssueEntry | un
   return state.issues.find((issue) => issue.id === issueId || issue.identifier === issueId);
 }
 
-/** Minimal type for raffel/s3db route context — avoids `any` at critical boundaries. */
-export type RouteContext = {
-  req: { param: (name: string) => string | undefined; json: () => Promise<Record<string, unknown>> };
-  json: (body: unknown, status?: number) => Response;
-};
+/** Minimal type for route helpers that only need params + JSON responses. */
+export type RouteContext = Pick<ApiRouteContext, "req" | "json">;
 
-export function parseIssue(c: RouteContext | any): string | null {
-  const value = c.req?.param ? c.req.param("id") : undefined;
+function hasRouteRequest(value: unknown): value is Pick<ApiRouteContext, "req"> {
+  if (!value || typeof value !== "object") return false;
+  const request = (value as { req?: unknown }).req;
+  if (!request || typeof request !== "object") return false;
+  return typeof (request as { param?: unknown }).param === "function";
+}
+
+export function parseIssue(c: unknown): string | null {
+  if (!hasRouteRequest(c)) return null;
+  const value = c.req.param("id");
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
@@ -64,7 +70,7 @@ export function applyPlanUsage(issue: IssueEntry, usage: PlanningSessionUsage): 
     totalTokens: prev.totalTokens + usage.totalTokens,
     model: usage.model || prev.model,
   };
-  if (!issue.tokensByPhase) issue.tokensByPhase = {} as any;
+  if (!issue.tokensByPhase) issue.tokensByPhase = {} as NonNullable<IssueEntry["tokensByPhase"]>;
   const prevPlanner = issue.tokensByPhase.planner ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
   issue.tokensByPhase.planner = {
     inputTokens: prevPlanner.inputTokens + usage.inputTokens,

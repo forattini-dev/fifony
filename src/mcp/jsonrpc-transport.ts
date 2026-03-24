@@ -6,9 +6,9 @@ import { callTool } from "./tools/tool-executor.js";
 import { listPrompts } from "./prompts/prompt-list.js";
 import { getPrompt } from "./prompts/prompt-handler.js";
 
-export let incomingBuffer = Buffer.alloc(0);
+export let incomingBuffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);
 
-export function setIncomingBuffer(buffer: Buffer): void {
+export function setIncomingBuffer(buffer: Buffer<ArrayBufferLike>): void {
   incomingBuffer = buffer;
 }
 

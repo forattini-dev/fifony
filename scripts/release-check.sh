@@ -32,6 +32,11 @@ echo "  Fifony Release Checklist"
 echo "═══════════════════════════════════════════════════"
 echo ""
 
+echo "▶ Static checks"
+check "pnpm lint" pnpm lint
+check "pnpm typecheck" pnpm typecheck
+
+echo ""
 echo "▶ Build"
 check "pnpm build" pnpm build
 

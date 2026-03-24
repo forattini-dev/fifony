@@ -1,4 +1,4 @@
-import type { IssuePlan, RuntimeConfig, IssueEntry } from "../../types.ts";
+import type { IssuePlan, RuntimeConfig, IssueEntry, RuntimeEventType } from "../../types.ts";
 import { now } from "../../concerns/helpers.ts";
 import { logger } from "../../concerns/logger.ts";
 import { type PlanningSessionUsage } from "./planning-session.ts";
@@ -8,7 +8,7 @@ import { refinePlan } from "./plan-refiner.ts";
 // ── Callbacks type ────────────────────────────────────────────────────────────
 
 export type PlanCallbacks = {
-  addEvent: (issueId: string, kind: string, message: string) => void;
+  addEvent: (issueId: string, kind: RuntimeEventType, message: string) => void;
   persistState: () => Promise<void>;
   applyUsage: (issue: IssueEntry, usage: PlanningSessionUsage) => void;
   applySuggestions: (issue: IssueEntry, plan: IssuePlan) => void;

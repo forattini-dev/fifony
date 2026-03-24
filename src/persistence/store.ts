@@ -144,7 +144,7 @@ export async function loadS3dbModule(): Promise<S3dbModule> {
       ApiPlugin: ApiPlugin as S3dbModule["ApiPlugin"],
       WebSocketPlugin: imported.WebSocketPlugin as S3dbModule["WebSocketPlugin"],
       StateMachinePlugin: imported.StateMachinePlugin as S3dbModule["StateMachinePlugin"],
-      EventualConsistencyPlugin: imported.EventualConsistencyPlugin as S3dbModule["EventualConsistencyPlugin"],
+      EventualConsistencyPlugin: imported.EventualConsistencyPlugin as unknown as S3dbModule["EventualConsistencyPlugin"],
       S3QueuePlugin: imported.S3QueuePlugin as S3dbModule["S3QueuePlugin"],
     };
     return loadedS3dbModule;
@@ -540,7 +540,7 @@ export async function closeStateStore(): Promise<void> {
   clearApiRuntimeContext();
 
   try {
-    const { stopQueueWorkers } = await import("./queue-workers.ts");
+    const { stopQueueWorkers } = await import("./plugins/queue-workers.ts");
     await stopQueueWorkers();
   } catch (error) {
     logger.warn(`Failed to stop queue workers: ${String(error)}`);

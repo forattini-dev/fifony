@@ -41,7 +41,16 @@ export type TokenAnalytics = {
   daily: DailyBucket[];
   dailyByPhase: Record<string, DailyBucket[]>;
   dailyByModel: Record<string, DailyBucket[]>;
-  topIssues: Array<{ id: string; identifier: string; title: string; totalTokens: number }>;
+  topIssues: Array<{
+    id: string;
+    identifier: string;
+    title: string;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    costUsd?: number;
+    byPhase?: Partial<Record<AgentProviderRole, TokenBucket>>;
+  }>;
 };
 
 // ── Internal state ───────────────────────────────────────────────────────────
@@ -67,7 +76,15 @@ const dailyByPhase = new Map<string, TokenBucket>();
 const dailyByModel = new Map<string, TokenBucket>();
 
 /** Per-issue totals (for top-N) */
-const byIssue = new Map<string, { identifier: string; title: string; totalTokens: number }>();
+const byIssue = new Map<string, {
+  identifier: string;
+  title: string;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  costUsd?: number;
+  byPhase: Partial<Record<AgentProviderRole, TokenBucket>>;
+}>();
 
 /** Daily event counts: date → count */
 const dailyEvents = new Map<string, number>();
@@ -161,14 +178,32 @@ export function record(
   // By issue
   const prev = byIssue.get(issue.id);
   if (prev) {
+    prev.inputTokens += usage.inputTokens;
+    prev.outputTokens += usage.outputTokens;
     prev.totalTokens += usage.totalTokens;
+    if (typeof usage.costUsd === "number") {
+      prev.costUsd = (prev.costUsd || 0) + usage.costUsd;
+    }
     prev.title = issue.title; // keep fresh
   } else {
     byIssue.set(issue.id, {
       identifier: issue.identifier,
       title: issue.title,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
       totalTokens: usage.totalTokens,
+      costUsd: usage.costUsd,
+      byPhase: {},
     });
+  }
+
+  if (role) {
+    const summary = byIssue.get(issue.id);
+    if (summary) {
+      const phaseBucket = summary.byPhase[role] ?? { ...EMPTY };
+      addTo(phaseBucket, usage);
+      summary.byPhase[role] = phaseBucket;
+    }
   }
 }
 
@@ -219,21 +254,55 @@ export function hydrate(issues: IssueEntry[]): void {
   dailyEvents.clear();
 
   for (const issue of issues) {
+    const issueSummary = {
+      identifier: issue.identifier,
+      title: issue.title,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      costUsd: 0,
+      byPhase: {} as Partial<Record<AgentProviderRole, TokenBucket>>,
+    };
+
     // Per-issue totals
     if (issue.tokenUsage && issue.tokenUsage.totalTokens > 0) {
-      byIssue.set(issue.id, {
-        identifier: issue.identifier,
-        title: issue.title,
-        totalTokens: issue.tokenUsage.totalTokens,
-      });
+      issueSummary.inputTokens = issue.tokenUsage.inputTokens;
+      issueSummary.outputTokens = issue.tokenUsage.outputTokens;
+      issueSummary.totalTokens = issue.tokenUsage.totalTokens;
+      issueSummary.costUsd = issue.tokenUsage.costUsd || 0;
       addTo(overall, issue.tokenUsage);
     }
 
     // Per-phase
     if (issue.tokensByPhase) {
       for (const [phase, pu] of Object.entries(issue.tokensByPhase)) {
-        if (pu.totalTokens > 0) addTo(getOrCreate(byPhase, phase), pu);
+        if (pu.totalTokens > 0) {
+          addTo(getOrCreate(byPhase, phase), pu);
+          issueSummary.byPhase[phase as AgentProviderRole] = {
+            inputTokens: pu.inputTokens,
+            outputTokens: pu.outputTokens,
+            totalTokens: pu.totalTokens,
+          };
+          if (issueSummary.totalTokens === 0) {
+            issueSummary.inputTokens += pu.inputTokens;
+            issueSummary.outputTokens += pu.outputTokens;
+            issueSummary.totalTokens += pu.totalTokens;
+            issueSummary.costUsd += pu.costUsd || 0;
+          }
+        }
       }
+    }
+
+    if (issueSummary.totalTokens > 0) {
+      byIssue.set(issue.id, {
+        identifier: issueSummary.identifier,
+        title: issueSummary.title,
+        inputTokens: issueSummary.inputTokens,
+        outputTokens: issueSummary.outputTokens,
+        totalTokens: issueSummary.totalTokens,
+        costUsd: issueSummary.costUsd || undefined,
+        byPhase: issueSummary.byPhase,
+      });
     }
 
     // Per-model
@@ -290,7 +359,15 @@ export function getAnalytics(topN = 20): TokenAnalytics {
 
   // Top issues
   const topIssues = [...byIssue.entries()]
-    .map(([id, data]) => ({ id, ...data }))
+    .map(([id, data]) => ({
+      id,
+      ...data,
+      byPhase: Object.keys(data.byPhase).length > 0
+        ? Object.fromEntries(
+          Object.entries(data.byPhase).map(([phase, bucket]) => [phase, { ...bucket! }]),
+        )
+        : undefined,
+    }))
     .sort((a, b) => b.totalTokens - a.totalTokens)
     .slice(0, topN);
 

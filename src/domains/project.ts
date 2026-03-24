@@ -16,10 +16,24 @@ import { env } from "node:process";
 import { logger } from "../concerns/logger.ts";
 import { getSettingStateResource } from "../persistence/store.ts";
 import type { ProjectNameSource, RuntimeSettingRecord } from "../types.ts";
+import {
+  PROJECT_NAME_SETTING_ID,
+  buildProjectDraft,
+  buildQueueTitle,
+  detectProjectNameFromPath,
+  normalizeProjectName,
+  readSavedProjectName,
+} from "../shared/project-meta.ts";
+
+export {
+  buildQueueTitle,
+  normalizeProjectName,
+  readSavedProjectName,
+} from "../shared/project-meta.ts";
 
 // ── Project metadata ─────────────────────────────────────────────────────────
 
-export const SETTING_ID_PROJECT_NAME = "system.projectName";
+export const SETTING_ID_PROJECT_NAME = PROJECT_NAME_SETTING_ID;
 
 export type ProjectMetadata = {
   projectName: string;
@@ -28,42 +42,24 @@ export type ProjectMetadata = {
   queueTitle: string;
 };
 
-export function normalizeProjectName(value: unknown): string {
-  return typeof value === "string"
-    ? value.trim().replace(/\s+/g, " ")
-    : "";
-}
-
 export function detectProjectName(targetRoot: string): string {
-  const normalizedPath = typeof targetRoot === "string"
-    ? targetRoot.trim().replace(/[\\/]+$/, "")
-    : "";
-  if (!normalizedPath) return "";
-  return normalizeProjectName(basename(normalizedPath));
-}
-
-export function readSavedProjectName(settings: RuntimeSettingRecord[]): string {
-  return normalizeProjectName(settings.find((s) => s.id === SETTING_ID_PROJECT_NAME)?.value);
-}
-
-export function buildQueueTitle(projectName: string): string {
-  const normalizedProjectName = normalizeProjectName(projectName);
-  return normalizedProjectName ? `fifony: ${normalizedProjectName}` : "fifony";
+  return detectProjectNameFromPath(targetRoot);
 }
 
 export function resolveProjectMetadata(
   settings: RuntimeSettingRecord[],
   targetRoot: string,
 ): ProjectMetadata {
-  const savedProjectName = readSavedProjectName(settings);
-  const detectedProjectName = detectProjectName(targetRoot);
-  const projectName = savedProjectName || detectedProjectName;
+  const draft = buildProjectDraft({
+    savedProjectName: readSavedProjectName(settings),
+    detectedProjectName: detectProjectName(targetRoot),
+  });
 
   return {
-    projectName,
-    detectedProjectName,
-    projectNameSource: savedProjectName ? "saved" : detectedProjectName ? "detected" : "missing",
-    queueTitle: buildQueueTitle(projectName),
+    projectName: draft.projectName,
+    detectedProjectName: draft.detectedProjectName,
+    projectNameSource: draft.source as ProjectNameSource,
+    queueTitle: buildQueueTitle(draft.projectName),
   };
 }
 

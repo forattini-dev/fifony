@@ -36,7 +36,7 @@ export async function transitionIssueCommand(
       if (fsmState && fsmState !== currentState) {
         logger.debug({ issueId: issue.id, memoryState: currentState, fsmState }, "[Transition] Syncing stale in-memory state with FSM");
         issue.state = fsmState as typeof issue.state;
-        currentState = fsmState;
+        currentState = fsmState as IssueState;
       }
     }
   } catch { /* FSM not available — use in-memory */ }

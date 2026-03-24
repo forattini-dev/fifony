@@ -41,6 +41,7 @@ const {
   shouldSkipMergePath,
   detectDefaultBranch,
   createGitWorktree,
+  createTestWorkspace,
   ensureGitRepoReadyForWorktrees,
   ensureWorktreeCommitted,
   getGitRepoStatus,
@@ -50,6 +51,7 @@ const {
   mergeWorkspace,
   cleanWorkspace,
   dryMerge,
+  removeTestWorkspace,
   rebaseWorktree,
 } = await import("../src/domains/workspace.ts");
 
@@ -775,6 +777,70 @@ describe("createGitWorktree retry", () => {
 
     issue.workspacePath = ws;
     await cleanWorkspace(issue.id, issue, makeState());
+  });
+});
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// isolated test workspace lifecycle
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("isolated test workspace lifecycle", () => {
+  it("creates an isolated test workspace without touching TARGET_ROOT", async () => {
+    const baseBranch = git("rev-parse --abbrev-ref HEAD");
+    const issue = makeIssue({ identifier: "TEST-WS-001" });
+    const ws = join(WORKTREE_BASE, "test-workspace-lifecycle");
+    const wt = join(ws, "worktree");
+    mkdirSync(ws, { recursive: true });
+    await createGitWorktree(issue, wt, baseBranch);
+    issue.workspacePath = ws;
+
+    writeFileSync(join(wt, "isolated-feature.ts"), "export const isolated = true;\n");
+    git("add -A", wt);
+    git('commit -m "add isolated feature"', wt);
+
+    const headBefore = git("rev-parse HEAD");
+    const statusBefore = git("status --porcelain");
+
+    const testWt = createTestWorkspace(issue);
+
+    assert.ok(existsSync(testWt), "isolated test workspace should exist");
+    assert.equal(issue.testApplied, true, "issue should track active test workspace");
+    assert.equal(issue.testWorkspacePath, testWt);
+    assert.ok(existsSync(join(testWt, "isolated-feature.ts")), "test workspace should contain issue changes");
+
+    assert.equal(git("rev-parse HEAD"), headBefore, "TARGET_ROOT HEAD must not change");
+    assert.equal(git("status --porcelain"), statusBefore, "TARGET_ROOT must stay clean");
+    assert.ok(!existsSync(join(TEST_ROOT, "isolated-feature.ts")), "issue file must not appear in TARGET_ROOT");
+
+    removeTestWorkspace(issue);
+    assert.equal(issue.testApplied, false, "test workspace flag should be cleared");
+    assert.equal(issue.testWorkspacePath, undefined, "test workspace path should be cleared");
+    assert.ok(!existsSync(testWt), "isolated test workspace should be removed");
+
+    await cleanWorkspace(issue.id, issue, makeState());
+  });
+
+  it("cleanWorkspace removes an active isolated test workspace together with the main worktree", async () => {
+    const baseBranch = git("rev-parse --abbrev-ref HEAD");
+    const issue = makeIssue({ identifier: "TEST-WS-CLEANUP" });
+    const ws = join(WORKTREE_BASE, "test-workspace-cleanup");
+    const wt = join(ws, "worktree");
+    mkdirSync(ws, { recursive: true });
+    await createGitWorktree(issue, wt, baseBranch);
+    issue.workspacePath = ws;
+
+    writeFileSync(join(wt, "cleanup-feature.ts"), "export const cleanup = true;\n");
+    git("add -A", wt);
+    git('commit -m "add cleanup feature"', wt);
+
+    const testWt = createTestWorkspace(issue);
+    assert.ok(existsSync(testWt), "isolated test workspace should exist before cleanup");
+
+    await cleanWorkspace(issue.id, issue, makeState());
+
+    assert.ok(!existsSync(wt), "main issue worktree should be removed");
+    assert.ok(!existsSync(testWt), "isolated test workspace should be removed");
   });
 });
 

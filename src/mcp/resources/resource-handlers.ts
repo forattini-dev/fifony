@@ -1,4 +1,5 @@
 import { discoverIntegrations } from "../../agents/integrations/catalog.js";
+import { getCapabilitiesSnapshot } from "../../agents/capability-resolver.ts";
 import {
   getIssues,
   getIssue,
@@ -23,6 +24,7 @@ export async function listResourcesMcp(): Promise<Array<Record<string, unknown>>
     { uri: "fifony://state/summary", name: "Fifony state summary", description: "Compact summary of the current runtime, issue, and pipeline state.", mimeType: "application/json" },
     { uri: "fifony://issues", name: "Fifony issues", description: "Full issue list from the durable Fifony store.", mimeType: "application/json" },
     { uri: "fifony://integrations", name: "Fifony integrations", description: "Discovered local integrations such as agency-agents and impeccable skills.", mimeType: "application/json" },
+    { uri: "fifony://capabilities", name: "Fifony capabilities", description: "Workspace-local agents, skills, and commands discovered under .codex/ and .claude/.", mimeType: "application/json" },
   ];
 
   resources.push(
@@ -54,6 +56,10 @@ export async function readResource(uri: string): Promise<Array<Record<string, un
 
   if (uri === "fifony://integrations") {
     return [{ uri, mimeType: "application/json", text: JSON.stringify(discoverIntegrations(WORKSPACE_ROOT), null, 2) }];
+  }
+
+  if (uri === "fifony://capabilities") {
+    return [{ uri, mimeType: "application/json", text: JSON.stringify(getCapabilitiesSnapshot(WORKSPACE_ROOT), null, 2) }];
   }
 
   if (uri === "fifony://analytics") {
