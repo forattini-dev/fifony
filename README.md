@@ -153,7 +153,7 @@ The Setup step blocks execution until the workspace is a git repository with at 
 | `/kanban` | Drag-and-drop board with 5 columns: Planning, In Progress, Reviewing, Blocked, Done. |
 | `/issues` | Searchable list with multi-state filters and sort options. |
 | `/agents` | Live cockpit: worker slots, queue depth, real-time log tail, token totals. |
-| `/analytics` | Token usage trends, daily and weekly rollups, top issues by tokens, per-model breakdown. |
+| `/analytics` | Token usage trends, daily and weekly rollups, top issues by tokens and cost, per-model breakdown. |
 | `/settings` | General, Workflow pipeline config, Notifications, Providers, Hotkeys reference. |
 
 The **Issue Detail Drawer** shows the full plan (phases and steps), the workspace diff, and a per-phase token breakdown — Plan / Execute / Review — with input and output counts per model.

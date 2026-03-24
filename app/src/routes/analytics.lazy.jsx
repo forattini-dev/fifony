@@ -319,6 +319,7 @@ function TopIssuesTable({ topIssues }) {
             <th className="w-20">Issue</th>
             <th>Title</th>
             <th className="text-right">Tokens</th>
+            <th className="text-right hidden sm:table-cell">Cost</th>
             <th className="hidden sm:table-cell">Phase Split</th>
           </tr>
         </thead>
@@ -332,6 +333,9 @@ function TopIssuesTable({ topIssues }) {
                 <td className="font-mono text-xs font-semibold text-primary">{issue.identifier}</td>
                 <td className="max-w-[200px] truncate text-sm" title={issue.title}>{issue.title || "-"}</td>
                 <td className="text-right font-mono text-xs font-semibold">{formatTokens(total)}</td>
+                <td className="text-right font-mono text-xs hidden sm:table-cell">
+                  {issue.costUsd ? `$${issue.costUsd.toFixed(3)}` : <span className="opacity-30">—</span>}
+                </td>
                 <td className="hidden sm:table-cell">
                   {byPhase ? (
                     <div className="flex h-1.5 rounded-full overflow-hidden bg-base-300 w-24">
@@ -746,7 +750,7 @@ function TopIssuesSection() {
     <section className="bg-base-200 rounded-box p-5">
       <h2 className="text-sm font-semibold flex items-center gap-2 mb-4">
         <Zap className="size-4 text-accent" />
-        Top Issues by Token Usage
+        Top Issues by Usage
       </h2>
       <TopIssuesTable topIssues={topIssues} />
     </section>
