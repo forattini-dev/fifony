@@ -151,7 +151,7 @@ The Setup step blocks execution until the workspace is a git repository with at 
 | Route | What you see |
 |-------|-------------|
 | `/kanban` | Drag-and-drop board with 5 columns: Planning, In Progress, Reviewing, Blocked, Done. |
-| `/issues` | Searchable list with multi-state filters and sort options. |
+| `/issues` | Searchable list with multi-state filters, issue type filters (bug/feature/refactor/docs/chore), and sort options. |
 | `/agents` | Live cockpit: worker slots, queue depth, real-time log tail, token totals with hourly sparkline. |
 | `/analytics` | Token usage trends, daily and weekly rollups, top issues by tokens and cost, per-model breakdown. |
 | `/settings` | General, Workflow pipeline config, Notifications, Providers, Hotkeys reference. |

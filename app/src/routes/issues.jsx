@@ -14,6 +14,14 @@ const STATE_GROUPS = [
 
 const ALL_STATES = STATE_GROUPS.flatMap((g) => g.states);
 
+const ISSUE_TYPES = [
+  { value: "bug", label: "Bug", color: "badge-error" },
+  { value: "feature", label: "Feature", color: "badge-primary" },
+  { value: "refactor", label: "Refactor", color: "badge-warning" },
+  { value: "docs", label: "Docs", color: "badge-info" },
+  { value: "chore", label: "Chore", color: "badge-secondary" },
+];
+
 const STATE_COLOR = {
   Planning: "badge-info", PendingApproval: "badge-warning", Queued: "badge-info", Running: "badge-primary",
   Reviewing: "badge-secondary", PendingDecision: "badge-success", Blocked: "badge-error", Approved: "badge-success",
@@ -45,6 +53,17 @@ function IssuesPage() {
 
   // Multi-select state filter: Set of active states (empty = all)
   const [activeStates, setActiveStates] = useState(new Set());
+  // Multi-select type filter: Set of active types (empty = all)
+  const [activeTypes, setActiveTypes] = useState(new Set());
+
+  const toggleType = (t) => {
+    setActiveTypes((prev) => {
+      const next = new Set(prev);
+      if (next.has(t)) next.delete(t);
+      else next.add(t);
+      return next;
+    });
+  };
 
   const toggleState = (s) => {
     setActiveStates((prev) => {
@@ -65,7 +84,7 @@ function IssuesPage() {
     });
   };
 
-  const hasFilters = activeStates.size > 0 || ctx.completionFilter !== "recent" || ctx.query.length > 0;
+  const hasFilters = activeStates.size > 0 || activeTypes.size > 0 || ctx.completionFilter !== "recent" || ctx.query.length > 0;
   const hiddenCount = (ctx.data._totalIssues ?? 0) - (ctx.issues.length ?? 0);
 
   const stateCounts = {};
@@ -79,13 +98,14 @@ function IssuesPage() {
     return ctx.issues.filter((i) => {
       if (i.state === "Archived") return false;
       if (activeStates.size > 0 && !activeStates.has(i.state)) return false;
+      if (activeTypes.size > 0 && !activeTypes.has(i.issueType || "")) return false;
       if (q) {
         const haystack = `${i.identifier} ${i.title} ${i.description || ""} ${i.issueType || ""}`.toLowerCase();
         if (!haystack.includes(q)) return false;
       }
       return true;
     });
-  }, [ctx.issues, activeStates, ctx.query]);
+  }, [ctx.issues, activeStates, activeTypes, ctx.query]);
 
   // Sort
   const sortedIssues = useMemo(() => {
@@ -107,6 +127,7 @@ function IssuesPage() {
   const clearAll = () => {
     ctx.setQuery("");
     setActiveStates(new Set());
+    setActiveTypes(new Set());
     ctx.setCompletionFilter("recent");
     setSortBy("updated");
   };
@@ -124,7 +145,7 @@ function IssuesPage() {
   useHotkeys("x", clearAll, { enabled: noDrawer, description: "Clear all filters", metadata: { group: "issues" } }, [clearAll, noDrawer]);
   useHotkeys("escape", () => setFocusedIndex(-1), { enabled: focusedIndex >= 0 && noDrawer, description: "Clear focus", metadata: { group: "issues" } }, [focusedIndex, noDrawer]);
 
-  const activeFilterCount = (activeStates.size > 0 ? 1 : 0) + (ctx.completionFilter !== "recent" ? 1 : 0);
+  const activeFilterCount = (activeStates.size > 0 ? 1 : 0) + (activeTypes.size > 0 ? 1 : 0) + (ctx.completionFilter !== "recent" ? 1 : 0);
 
   // Jira CSV state mapping
   const JIRA_STATE = {
@@ -268,6 +289,35 @@ function IssuesPage() {
                         );
                       })}
                     </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Type filter */}
+            <div>
+              <div className="text-xs font-semibold opacity-50 mb-1.5">Type</div>
+              <div className="flex flex-wrap gap-1.5">
+                {activeTypes.size > 0 && (
+                  <button
+                    className="badge badge-sm badge-ghost cursor-pointer opacity-60 hover:opacity-100"
+                    onClick={() => setActiveTypes(new Set())}
+                  >
+                    Clear
+                  </button>
+                )}
+                {ISSUE_TYPES.map((t) => {
+                  const isActive = activeTypes.has(t.value);
+                  const count = ctx.issues.filter((i) => (i.issueType || "") === t.value).length;
+                  return (
+                    <button
+                      key={t.value}
+                      className={`badge badge-sm gap-1 cursor-pointer transition-all ${isActive ? t.color : "badge-outline opacity-50 hover:opacity-100"}`}
+                      onClick={() => toggleType(t.value)}
+                    >
+                      {t.label}
+                      {count > 0 && <span className="font-mono text-[10px]">{count}</span>}
+                    </button>
                   );
                 })}
               </div>
