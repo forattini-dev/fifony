@@ -4,7 +4,6 @@ import ListView from "../components/ListView";
 import { Search, X, Filter, SlidersHorizontal, Download } from "lucide-react";
 import { useMemo, useState, useCallback, useRef } from "react";
 import { useHotkeys } from "react-hotkeys-hook";
-import { CAPABILITY_DOMAIN_OPTIONS, inferCapabilityDomains } from "../../../src/shared/capability-domains.ts";
 
 const STATE_GROUPS = [
   { label: "Active", states: ["Planning", "PendingApproval", "Queued", "Running"] },
@@ -56,22 +55,12 @@ function IssuesPage() {
   const [activeStates, setActiveStates] = useState(new Set());
   // Multi-select type filter: Set of active types (empty = all)
   const [activeTypes, setActiveTypes] = useState(new Set());
-  const [activeDomains, setActiveDomains] = useState(new Set());
 
   const toggleType = (t) => {
     setActiveTypes((prev) => {
       const next = new Set(prev);
       if (next.has(t)) next.delete(t);
       else next.add(t);
-      return next;
-    });
-  };
-
-  const toggleDomain = (domain) => {
-    setActiveDomains((prev) => {
-      const next = new Set(prev);
-      if (next.has(domain)) next.delete(domain);
-      else next.add(domain);
       return next;
     });
   };
@@ -95,19 +84,7 @@ function IssuesPage() {
     });
   };
 
-  const issueDomainsById = useMemo(() => {
-    const entries = ctx.issues.map((issue) => [
-      issue.id,
-      inferCapabilityDomains({
-        title: issue.title,
-        description: issue.description,
-        paths: Array.isArray(issue.paths) ? issue.paths : [],
-      }),
-    ]);
-    return new Map(entries);
-  }, [ctx.issues]);
-
-  const hasFilters = activeStates.size > 0 || activeTypes.size > 0 || activeDomains.size > 0 || ctx.completionFilter !== "recent" || ctx.query.length > 0;
+  const hasFilters = activeStates.size > 0 || activeTypes.size > 0 || ctx.completionFilter !== "recent" || ctx.query.length > 0;
   const hiddenCount = (ctx.data._totalIssues ?? 0) - (ctx.issues.length ?? 0);
 
   const stateCounts = {};
@@ -115,29 +92,20 @@ function IssuesPage() {
     stateCounts[issue.state] = (stateCounts[issue.state] || 0) + 1;
   }
 
-  const capabilityCounts = {};
-  for (const domains of issueDomainsById.values()) {
-    for (const domain of domains) {
-      capabilityCounts[domain] = (capabilityCounts[domain] || 0) + 1;
-    }
-  }
-
-  // Filter: multi-state + type + capability + text query
+  // Filter: multi-state + type + text query
   const filtered = useMemo(() => {
     const q = ctx.query.toLowerCase();
     return ctx.issues.filter((i) => {
       if (i.state === "Archived") return false;
       if (activeStates.size > 0 && !activeStates.has(i.state)) return false;
       if (activeTypes.size > 0 && !activeTypes.has(i.issueType || "")) return false;
-      const issueDomains = issueDomainsById.get(i.id) || [];
-      if (activeDomains.size > 0 && !issueDomains.some((domain) => activeDomains.has(domain))) return false;
       if (q) {
         const haystack = `${i.identifier} ${i.title} ${i.description || ""} ${i.issueType || ""}`.toLowerCase();
         if (!haystack.includes(q)) return false;
       }
       return true;
     });
-  }, [ctx.issues, activeStates, activeTypes, activeDomains, ctx.query, issueDomainsById]);
+  }, [ctx.issues, activeStates, activeTypes, ctx.query]);
 
   // Sort
   const sortedIssues = useMemo(() => {
@@ -160,7 +128,6 @@ function IssuesPage() {
     ctx.setQuery("");
     setActiveStates(new Set());
     setActiveTypes(new Set());
-    setActiveDomains(new Set());
     ctx.setCompletionFilter("recent");
     setSortBy("updated");
   };
@@ -178,7 +145,7 @@ function IssuesPage() {
   useHotkeys("x", clearAll, { enabled: noDrawer, description: "Clear all filters", metadata: { group: "issues" } }, [clearAll, noDrawer]);
   useHotkeys("escape", () => setFocusedIndex(-1), { enabled: focusedIndex >= 0 && noDrawer, description: "Clear focus", metadata: { group: "issues" } }, [focusedIndex, noDrawer]);
 
-  const activeFilterCount = (activeStates.size > 0 ? 1 : 0) + (activeTypes.size > 0 ? 1 : 0) + (activeDomains.size > 0 ? 1 : 0) + (ctx.completionFilter !== "recent" ? 1 : 0);
+  const activeFilterCount = (activeStates.size > 0 ? 1 : 0) + (activeTypes.size > 0 ? 1 : 0) + (ctx.completionFilter !== "recent" ? 1 : 0);
 
   // Jira CSV state mapping
   const JIRA_STATE = {
@@ -356,35 +323,6 @@ function IssuesPage() {
               </div>
             </div>
 
-            {/* Capability/domain filter */}
-            <div>
-              <div className="text-xs font-semibold opacity-50 mb-1.5">Capabilities</div>
-              <div className="flex flex-wrap gap-1.5">
-                {activeDomains.size > 0 && (
-                  <button
-                    className="badge badge-sm badge-ghost cursor-pointer opacity-60 hover:opacity-100"
-                    onClick={() => setActiveDomains(new Set())}
-                  >
-                    Clear
-                  </button>
-                )}
-                {CAPABILITY_DOMAIN_OPTIONS.map((domain) => {
-                  const isActive = activeDomains.has(domain.value);
-                  const count = capabilityCounts[domain.value] || 0;
-                  return (
-                    <button
-                      key={domain.value}
-                      className={`badge badge-sm gap-1 cursor-pointer transition-all ${isActive ? "badge-accent" : "badge-outline opacity-50 hover:opacity-100"}`}
-                      onClick={() => toggleDomain(domain.value)}
-                    >
-                      {domain.label}
-                      {count > 0 && <span className="font-mono text-[10px]">{count}</span>}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
             {/* Completion row */}
             <div className="flex flex-wrap gap-4">
               <div>
@@ -420,13 +358,6 @@ function IssuesPage() {
               <span className="badge badge-sm badge-primary gap-1">
                 {activeStates.size} state{activeStates.size > 1 ? "s" : ""}
                 <button className="ml-0.5" onClick={() => setActiveStates(new Set())}><X className="size-2.5" /></button>
-              </span>
-            )}
-            {activeDomains.size > 0 && (
-              <span className="badge badge-sm badge-accent gap-1">
-                {activeDomains.size} capability
-                {activeDomains.size > 1 ? "s" : ""}
-                <button className="ml-0.5" onClick={() => setActiveDomains(new Set())}><X className="size-2.5" /></button>
               </span>
             )}
             {ctx.completionFilter !== "recent" && (

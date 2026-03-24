@@ -210,18 +210,18 @@ describe("product contract: API endpoints have implementations", () => {
     }
   });
 
-  it("MCP exposes capability resource and resolver tool", async () => {
+  it("MCP does not expose removed capability resolver surfaces", async () => {
     const { listTools } = await import("../src/mcp/tools/tool-list.ts");
     const tools = listTools().map((tool) => tool.name);
-    assert.ok(tools.includes("fifony.resolve_capabilities"), "resolve_capabilities tool should exist");
+    assert.ok(!tools.includes("fifony.resolve_capabilities"), "resolve_capabilities tool should be removed");
 
     const resourceHandlersSource = readFileSync(
       join(process.cwd(), "src/mcp/resources/resource-handlers.ts"),
       "utf8",
     );
     assert.ok(
-      resourceHandlersSource.includes('fifony://capabilities'),
-      "capabilities resource should be backed by resource handlers",
+      !resourceHandlersSource.includes("fifony://capabilities"),
+      "capabilities resource should be removed from resource handlers",
     );
   });
 });

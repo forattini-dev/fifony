@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { discoverIntegrations, buildIntegrationSnippet } from "../../agents/integrations/catalog.js";
-import { resolveCapabilities } from "../../agents/capability-resolver.ts";
 import {
   initDatabase,
   getResources,
@@ -149,29 +148,6 @@ export async function callTool(name: string, args: Record<string, unknown> = {})
       estimatedCostUsd: Math.round(estimatedCost * 100) / 100,
       modelBreakdown: byModel ?? {},
       topIssues: (topIssues ?? []).slice(0, 10).map((issue) => ({ id: issue.id, totalTokens: issue.totalTokens, inputTokens: issue.inputTokens, outputTokens: issue.outputTokens })),
-    }, null, 2));
-  }
-
-  if (name === "fifony.resolve_capabilities") {
-    const issueId = typeof args.issueId === "string" ? args.issueId.trim() : "";
-    const paths = Array.isArray(args.paths) ? args.paths.filter((value): value is string => typeof value === "string" && value.trim().length > 0) : [];
-    let title = typeof args.title === "string" ? args.title.trim() : "";
-    let description = typeof args.description === "string" ? args.description.trim() : "";
-
-    if (issueId) {
-      const issue = await getIssue(issueId);
-      if (!issue) throw new Error(`Issue not found: ${issueId}`);
-      if (!title) title = typeof issue.title === "string" ? issue.title : "";
-      if (!description) description = typeof issue.description === "string" ? issue.description : "";
-      if (paths.length === 0 && Array.isArray(issue.paths)) {
-        paths.push(...issue.paths.filter((value): value is string => typeof value === "string" && value.trim().length > 0));
-      }
-    }
-
-    const result = resolveCapabilities(WORKSPACE_ROOT, { title, description, paths });
-    return toolText(JSON.stringify({
-      issueId: issueId || undefined,
-      ...result,
     }, null, 2));
   }
 

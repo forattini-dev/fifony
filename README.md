@@ -151,7 +151,7 @@ The Setup step blocks execution until the workspace is a git repository with at 
 | Route | What you see |
 |-------|-------------|
 | `/kanban` | Drag-and-drop board with 5 columns: Planning, In Progress, Reviewing, Blocked, Done. |
-| `/issues` | Searchable list with multi-state filters, issue type filters, capability/domain filters, and sort options. |
+| `/issues` | Searchable list with multi-state filters, issue type filters, and sort options. |
 | `/agents` | Live cockpit: worker slots, queue depth, real-time log tail, token totals with hourly sparkline. |
 | `/analytics` | Token usage trends, daily and weekly rollups, top issues by tokens and cost, per-model breakdown. |
 | `/settings` | General, Workflow pipeline config, Notifications, Providers, Hotkeys reference. |
@@ -217,7 +217,7 @@ fifony pulls agents and skills from four open-source reference repositories duri
 
 Repositories are cloned to `~/.fifony/repositories/` and synced on demand. During onboarding, fifony scans them and recommends agents/skills matching your project's domain. You pick what to install.
 
-Agents install to `.claude/agents/` and `.codex/agents/`. Skills load from `SKILL.md` files in `.claude/skills/` or `.codex/skills/`. fifony exposes workspace-local capability discovery and matching from issue text and target file paths so clients can suggest the right agent, skill, or command.
+Agents install to `.claude/agents/` and `.codex/agents/`. Skills load from `SKILL.md` files in `.claude/skills/` or `.codex/skills/`.
 
 ```bash
 # Manage reference repositories from the CLI
@@ -279,9 +279,9 @@ Add to `claude_desktop_config.json` or VS Code settings:
 }
 ```
 
-**Resources**: `fifony://state/summary`, `fifony://issues`, `fifony://issue/{id}`, `fifony://issue/{id}/plan`, `fifony://issue/{id}/diff`, `fifony://issue/{id}/events`, `fifony://workflow/config`, `fifony://analytics`, `fifony://guide/overview`, `fifony://guide/runtime`, `fifony://guide/integration`, `fifony://integrations`, `fifony://capabilities`, `fifony://agents/catalog`, `fifony://skills/catalog`, `fifony://events/recent`
+**Resources**: `fifony://state/summary`, `fifony://issues`, `fifony://issue/{id}`, `fifony://issue/{id}/plan`, `fifony://issue/{id}/diff`, `fifony://issue/{id}/events`, `fifony://workflow/config`, `fifony://analytics`, `fifony://guide/overview`, `fifony://guide/runtime`, `fifony://guide/integration`, `fifony://integrations`, `fifony://agents/catalog`, `fifony://skills/catalog`, `fifony://events/recent`
 
-**Tools**: `fifony.status`, `fifony.list_issues`, `fifony.create_issue`, `fifony.get_issue`, `fifony.update_issue_state`, `fifony.cancel_issue`, `fifony.retry_issue`, `fifony.plan`, `fifony.refine`, `fifony.approve`, `fifony.merge`, `fifony.get_diff`, `fifony.get_live`, `fifony.get_events`, `fifony.enhance`, `fifony.analytics`, `fifony.resolve_capabilities`, `fifony.get_workflow`, `fifony.scan_project`, `fifony.install_agents`, `fifony.install_skills`, `fifony.integration_config`, `fifony.list_integrations`, `fifony.integration_snippet`
+**Tools**: `fifony.status`, `fifony.list_issues`, `fifony.create_issue`, `fifony.get_issue`, `fifony.update_issue_state`, `fifony.cancel_issue`, `fifony.retry_issue`, `fifony.plan`, `fifony.refine`, `fifony.approve`, `fifony.merge`, `fifony.get_diff`, `fifony.get_live`, `fifony.get_events`, `fifony.enhance`, `fifony.analytics`, `fifony.get_workflow`, `fifony.scan_project`, `fifony.install_agents`, `fifony.install_skills`, `fifony.integration_config`, `fifony.list_integrations`, `fifony.integration_snippet`
 
 **Prompts**: `fifony-integrate-client`, `fifony-plan-issue`, `fifony-route-task`, `fifony-use-integration`, `fifony-diagnose-blocked`, `fifony-weekly-summary`, `fifony-refine-plan`, `fifony-code-review`
 
@@ -328,7 +328,7 @@ FIFONY_LOG_FILE=0                     # set to 1 to also write .fifony/fifony-lo
 | **Analytics** | `EventualConsistencyPlugin` tracks token usage, code churn (lines added/removed), and event counts with daily cohort rollups. |
 | **Agents** | Wraps local CLIs (Claude, Codex, Gemini). Per-stage provider, model, and reasoning effort. No proprietary model logic. |
 | **Isolation** | Each issue gets its own git worktree branch. Parallel work on the same repo without file conflicts. |
-| **Routing** | Capability matching derives suggested agents, skills, and commands from issue text and file paths. Provider/stage selection still comes from workflow configuration. |
+| **Routing** | Workflow configuration defines provider, model, and effort per stage. |
 
 ---
 
