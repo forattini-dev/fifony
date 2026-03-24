@@ -17,16 +17,8 @@ import { transitionIssueCommand } from "../../commands/transition-issue.command.
 import { findIssue } from "../../routes/helpers.ts";
 import { logger } from "../../concerns/logger.ts";
 
-function getIssueId(c: unknown): string | null {
-  if (!c || typeof c !== "object" || !("req" in c) || !c.req || typeof (c as { req: unknown }).req !== "object") {
-    return null;
-  }
-  const req = (c as { req: { param: (name: string) => unknown } }).req;
-  const value = req.param("id");
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed ? trimmed : null;
-}
+// Reuse shared parseIssue helper (single source of truth for issue ID parsing)
+import { parseIssue as getIssueId } from "../../routes/helpers.ts";
 
 async function getIssuePipeline(c: unknown) {
   const context = getApiRuntimeContextOrThrow();
