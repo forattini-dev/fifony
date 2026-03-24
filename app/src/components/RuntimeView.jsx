@@ -3,6 +3,24 @@ import { Cpu, Circle, Clock, Terminal, CheckCircle2, XCircle, AlertTriangle, Eye
 import { timeAgo, formatDuration } from "../utils.js";
 import { api } from "../api.js";
 import { useWorkflowConfig } from "../hooks/useWorkflowConfig.js";
+import { useHourlyAnalytics } from "../hooks.js";
+
+// ── Mini sparkline (pure SVG, no deps) ──────────────────────────────────────
+
+function MiniSparkline({ data, width = 80, height = 24, color = "var(--color-accent)" }) {
+  if (!data?.length || data.length < 2) return null;
+  const max = Math.max(...data, 1);
+  const points = data.map((v, i) => {
+    const x = (i / (data.length - 1)) * width;
+    const y = height - (v / max) * (height - 2) - 1;
+    return `${x},${y}`;
+  }).join(" ");
+  return (
+    <svg width={width} height={height} className="inline-block ml-2 opacity-60">
+      <polyline fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" points={points} />
+    </svg>
+  );
+}
 
 const STATE_BADGE = {
   Queued: "badge-info", Running: "badge-primary", Reviewing: "badge-secondary",
@@ -199,7 +217,7 @@ function CompletedItem({ issue }) {
 
 // ── Summary cockpit bar ─────────────────────────────────────────────────────
 
-function CockpitSummary({ running, queued, concurrency, totalTokensToday }) {
+function CockpitSummary({ running, queued, concurrency, totalTokensToday, hourlyTokens }) {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-3">
       <div className="bg-base-200 rounded-box p-3 flex items-center gap-3">
@@ -226,7 +244,10 @@ function CockpitSummary({ running, queued, concurrency, totalTokensToday }) {
         </div>
         <div>
           <div className="text-2xl font-bold font-mono">{formatTokens(totalTokensToday)}</div>
-          <div className="text-xs opacity-50">Tokens today</div>
+          <div className="text-xs opacity-50 flex items-center gap-1">
+            Tokens today
+            <MiniSparkline data={hourlyTokens} />
+          </div>
         </div>
       </div>
       <div className="bg-base-200 rounded-box p-3 flex items-center gap-3">
@@ -277,6 +298,13 @@ export function RuntimeView({ state, providers, parallelism, onRefresh, issues: 
     return sum;
   }, [allIssues]);
 
+  // Hourly token sparkline data
+  const { data: hourlyData } = useHourlyAnalytics(24);
+  const hourlyTokens = useMemo(() => {
+    if (!hourlyData?.buckets) return [];
+    return hourlyData.buckets.map((b) => b.tokens || 0);
+  }, [hourlyData]);
+
   // Build slot array
   const slots = [];
   for (let i = 0; i < concurrency; i++) {
@@ -286,7 +314,7 @@ export function RuntimeView({ state, providers, parallelism, onRefresh, issues: 
   return (
     <div className="space-y-5 min-w-0 overflow-hidden flex-1">
       {/* Cockpit summary */}
-      <CockpitSummary running={running} queued={queued} concurrency={concurrency} totalTokensToday={totalTokensToday} />
+      <CockpitSummary running={running} queued={queued} concurrency={concurrency} totalTokensToday={totalTokensToday} hourlyTokens={hourlyTokens} />
 
       {/* Active agents */}
       <div className="space-y-3 min-w-0">
