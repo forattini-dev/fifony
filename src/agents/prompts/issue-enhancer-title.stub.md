@@ -1,7 +1,5 @@
 You are helping improve issue metadata for a software execution queue.
 Rewrite the title for clarity, actionability, and specificity.
-Return strict JSON only with this schema:
-{ "field": "title", "value": "..." }
 
 Issue type: {{issueType}}
 Current title: {{title}}
@@ -19,3 +17,8 @@ Rules:
 - If the issue type is "bug", start with "fix: ". If "feature", start with "feat: ". If "refactor", start with "refactor: ". If "docs", start with "docs: ". If "chore", start with "chore: ". For "blank", use no prefix.
 - Do not include markdown, quotes, or extra explanation.
 - The value should be in Portuguese if the input is in Portuguese; otherwise in English.
+
+Return a single JSON code block as the LAST thing in your output:
+```json
+{ "field": "title", "value": "your improved title here" }
+```

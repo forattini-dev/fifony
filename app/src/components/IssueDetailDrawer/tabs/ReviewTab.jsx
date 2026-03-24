@@ -87,7 +87,7 @@ export function ReviewTab({ issue, issueId, onStateChange, onRetry }) {
   }, [issueId, issue.testApplied]);
 
   useEffect(() => { fetchDiff(); }, [fetchDiff]);
-  const MERGE_ELIGIBLE_STATES = ["Reviewing", "PendingDecision", "Approved", "Merged"];
+  const MERGE_ELIGIBLE_STATES = ["Reviewing", "PendingDecision", "Approved"];
   useEffect(() => { if (MERGE_ELIGIBLE_STATES.includes(issue.state)) fetchMergePreview(); }, [fetchMergePreview, issue.state]);
   useEffect(() => {
     api.get("/git/status")
