@@ -112,7 +112,7 @@ async function compile(
   const env: Record<string, string> = {
     FIFONY_PLAN_COMPLEXITY: plan.estimatedComplexity,
     FIFONY_PLAN_STEPS: String(plan.steps.length),
-    FIFONY_EXECUTION_PAYLOAD_FILE: "fifony-execution-payload.json",
+    FIFONY_EXECUTION_PAYLOAD_FILE: "execution-payload.json",
   };
   if (plan.suggestedPaths?.length) env.FIFONY_PLAN_PATHS = plan.suggestedPaths.join(",");
   if (plan.suggestedSkills?.length) {

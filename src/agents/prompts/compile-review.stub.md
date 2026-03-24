@@ -32,7 +32,7 @@ Workspace: {{workspacePath}}
 {{/if}}
 
 # Structured Context
-If `fifony-execution-payload.json` exists in the workspace, read it for the canonical structured task data.
+If `execution-payload.json` exists in the workspace, read it for the canonical structured task data.
 Use the `successCriteria`, `constraints`, and `deliverables` fields as your evaluation checklist.
 
 # Review Instructions
