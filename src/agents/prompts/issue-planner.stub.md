@@ -64,8 +64,16 @@ Effort suggestion:
 - Set per-role if different: planner, executor, reviewer
 {{/unless}}
 
-Return strict JSON matching this schema. No text outside JSON. Use these exact field names.
+## Instructions
+
+You are encouraged to explore the codebase — read files, search for patterns, inspect structure — to produce an informed plan. Use any tools available to you.
+
+After your analysis, you MUST output the final plan as a single JSON code block (```json ... ```).
+The JSON block must be the LAST thing in your output. Any analysis or reasoning should come BEFORE it.
+
 IMPORTANT: Replace ALL placeholder values with real content specific to the issue above. Do NOT copy the example values literally — every field must contain actual plan content derived from the issue.
+
+Use these exact field names:
 
 ```json
 {
