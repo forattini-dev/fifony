@@ -4,11 +4,12 @@ import type { IssueEntry, RuntimeState } from "../types.ts";
 import type { IIssueRepository, IEventStore, IPersistencePort } from "../ports/index.ts";
 import { transitionIssueCommand } from "./transition-issue.command.ts";
 import { mergeWorkspace } from "../agents/agent.ts";
-import { cleanWorkspace } from "../domains/workspace.ts";
+import { cleanWorkspace, rebaseWorktree } from "../domains/workspace.ts";
 import { TARGET_ROOT } from "../concerns/constants.ts";
 import { logger } from "../concerns/logger.ts";
 import { ensureGitRepoReadyForWorktrees, parseDiffStats } from "../domains/workspace.ts";
 import { runValidationGate } from "../domains/validation.ts";
+import { now } from "../concerns/helpers.ts";
 
 export type MergeWorkspaceInput = {
   issue: IssueEntry;
@@ -73,6 +74,27 @@ export async function mergeWorkspaceCommand(
     issue.validationResult = validation;
     if (!validation.passed) {
       throw new Error(`Validation gate failed (${validation.command}): ${validation.output.slice(0, 500)}`);
+    }
+  }
+
+  // ── Auto-rebase: bring issue branch up to date with base before merge ──
+  // This resolves trivial conflicts caused by parallel issues that merged first.
+  if (!squashAlreadyApplied && issue.worktreePath && issue.baseBranch) {
+    try {
+      const rebase = rebaseWorktree(issue);
+      issue.rebaseResult = { success: rebase.success, conflictFiles: rebase.conflictFiles, rebasedAt: now() };
+      deps.issueRepository.markDirty(issue.id);
+
+      if (rebase.success) {
+        deps.eventStore.addEvent(issue.id, "info", `Auto-rebase onto ${issue.baseBranch} succeeded — branch is up to date.`);
+        logger.info({ issueId: issue.id, baseBranch: issue.baseBranch }, "[Merge] Auto-rebase succeeded");
+      } else {
+        const files = rebase.conflictFiles.join(", ");
+        deps.eventStore.addEvent(issue.id, "error", `Auto-rebase onto ${issue.baseBranch} failed — ${rebase.conflictFiles.length} conflict(s): ${files}. Proceeding with direct merge attempt.`);
+        logger.warn({ issueId: issue.id, conflictFiles: rebase.conflictFiles }, "[Merge] Auto-rebase failed, will attempt direct merge");
+      }
+    } catch (err) {
+      logger.warn({ issueId: issue.id, err: String(err) }, "[Merge] Auto-rebase threw unexpectedly, skipping");
     }
   }
 

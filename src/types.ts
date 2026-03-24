@@ -79,6 +79,8 @@ export type IssueEntry = {
   mergedAt?: string;
   /** Summary of the merge result */
   mergeResult?: { copied: number; deleted: number; skipped: number; conflicts: number; conflictFiles?: string[] };
+  /** Summary of pre-merge rebase attempt (auto-rebase before merge to resolve diverged branches) */
+  rebaseResult?: { success: boolean; conflictFiles: string[]; rebasedAt: string };
   /** Why the issue was merged — set for both auto and manual merges */
   mergedReason?: string;
   /** Why the issue was cancelled — set for both auto and manual cancels */

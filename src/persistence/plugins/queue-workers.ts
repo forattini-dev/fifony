@@ -245,7 +245,12 @@ export async function enqueue(issue: IssueEntry, job: JobType): Promise<void> {
     return;
   }
   queue.push({ issueId: issue.id, job, enqueuedAt: Date.now() });
-  drain().catch((err) => logger.error({ err }, "[Queue] Drain loop error"));
+  // Defer drain to next macrotask — FSM entry actions call enqueue() before
+  // executeTransition() updates issue.state in memory, so draining synchronously
+  // would see the old state in canDispatch() and discard the job.
+  setImmediate(() => {
+    drain().catch((err) => logger.error({ err }, "[Queue] Drain loop error"));
+  });
 }
 
 // ── State recovery (called once after init) ──────────────────────────────
@@ -277,8 +282,15 @@ export async function recoverState(): Promise<void> {
   // 2. Enqueue all in-progress issues
   for (const issue of runtimeState.issues) {
     try {
-      if (issue.state === "Planning" && issue.planningStatus !== "planning") {
-        await enqueue(issue, "plan");
+      if (issue.state === "Planning") {
+        // Reset stale planningStatus from a previous crashed session
+        if (issue.planningStatus === "planning") {
+          logger.info({ issueId: issue.id, identifier: issue.identifier }, "[Queue] Clearing stale planningStatus from previous session");
+          issue.planningStatus = "idle";
+        }
+        if (!issue.plan) {
+          await enqueue(issue, "plan");
+        }
       } else if (issue.state === "Queued" || issue.state === "Running") {
         await enqueue(issue, "execute");
       } else if (issue.state === "Reviewing") {
