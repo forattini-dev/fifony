@@ -242,6 +242,7 @@ function RootLayout() {
           onStateChange={ctx.updateState}
           onRetry={ctx.retryIssue}
           onCancel={ctx.cancelIssue}
+          onDelete={ctx.deleteIssue}
           events={ctx.eventsData}
           mergeMode={ctx.data?.config?.mergeMode ?? "local"}
           tabRef={drawerTabRef}

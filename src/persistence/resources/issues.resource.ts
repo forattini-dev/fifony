@@ -10,6 +10,7 @@ import { now, toStringValue, parseIssueState } from "../../concerns/helpers.ts";
 import { getContainer } from "../container.ts";
 import { createIssueCommand } from "../../commands/create-issue.command.ts";
 import { cancelIssueCommand } from "../../commands/cancel-issue.command.ts";
+import { deleteIssueCommand } from "../../commands/delete-issue.command.ts";
 import { mergeWorkspaceCommand } from "../../commands/merge-workspace.command.ts";
 import { pushWorkspaceCommand } from "../../commands/push-workspace.command.ts";
 import { transitionIssueCommand } from "../../commands/transition-issue.command.ts";
@@ -199,6 +200,32 @@ async function cancelIssue(c: unknown) {
   return { body: { ok: true, issue } };
 }
 
+async function deleteIssue(c: unknown) {
+  const context = getApiRuntimeContextOrThrow();
+  const issueId = getIssueId(c);
+  if (!issueId) {
+    return { status: 400, body: { ok: false, error: "Issue id is required." } };
+  }
+
+  const issue = findIssue(context.state, issueId);
+  if (!issue) {
+    return { status: 404, body: { ok: false, error: "Issue not found" } };
+  }
+
+  // Prevent deletion of actively running issues — cancel first
+  if (issue.state === "Running" || issue.state === "Reviewing") {
+    return { status: 409, body: { ok: false, error: `Cannot delete issue in state ${issue.state}. Cancel it first.` } };
+  }
+
+  try {
+    await deleteIssueCommand({ issue, state: context.state });
+    await persistState(context.state);
+    return { body: { ok: true, id: issueId } };
+  } catch (error) {
+    return { status: 500, body: { ok: false, error: error instanceof Error ? error.message : String(error) } };
+  }
+}
+
 async function approveAndMerge(c: unknown) {
   const context = getApiRuntimeContextOrThrow();
   const issueId = getIssueId(c);
@@ -365,6 +392,13 @@ export default {
     },
     "POST /:id/approve-and-merge": async (c: unknown) => {
       const result = await approveAndMerge(c);
+      if (result.status) {
+        return c.json(result.body, result.status);
+      }
+      return result.body;
+    },
+    "POST /:id/delete": async (c: unknown) => {
+      const result = await deleteIssue(c);
       if (result.status) {
         return c.json(result.body, result.status);
       }

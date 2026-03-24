@@ -178,6 +178,12 @@ export function DashboardProvider({ children }) {
     onError: (e) => showToast(e.message),
   });
 
+  const deleteMut = useMutation({
+    mutationFn: (id) => api.post(`/issues/${encodeURIComponent(id)}/delete`),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["runtime-state"] }); showToast("Issue deleted", "success"); },
+    onError: (e) => showToast(e.message, "error"),
+  });
+
   const refreshMut = useMutation({
     mutationFn: () => api.post("/refresh", {}),
     onSuccess: () => qc.invalidateQueries(),
@@ -253,6 +259,7 @@ export function DashboardProvider({ children }) {
     updateState: (id, state) => updateState.mutate({ id, state }),
     retryIssue: (id, feedback) => retryMut.mutate({ id, feedback }),
     cancelIssue: (id) => cancelMut.mutate(id),
+    deleteIssue: (id) => deleteMut.mutate(id),
     refresh: () => refreshMut.mutate(),
     // Settings
     concurrency, setConcurrency,

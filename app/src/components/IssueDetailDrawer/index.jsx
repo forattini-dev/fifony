@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   X, AlertTriangle, Loader, RotateCcw, PlayCircle, GitMerge,
-  GitPullRequest,
+  GitPullRequest, Trash2,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api.js";
@@ -13,6 +13,7 @@ import {
   getDefaultIssueDrawerTab,
 } from "./constants.js";
 import { PipelineStepper } from "./PipelineStepper.jsx";
+import { StateActionMenu } from "./StateActionMenu.jsx";
 import { OverviewTab } from "./tabs/OverviewTab.jsx";
 import { ExecutionTab } from "./tabs/ExecutionTab.jsx";
 import { DiffTab } from "./tabs/DiffTab.jsx";
@@ -145,7 +146,7 @@ function DrawerFooter({ issue, onStateChange, onRetry, onMerge, onPush, mergeBus
 
 // ── IssueDetailDrawer ─────────────────────────────────────────────────────────
 
-export function IssueDetailDrawer({ issue, onClose, onStateChange, onRetry, onCancel, events, mergeMode, tabRef }) {
+export function IssueDetailDrawer({ issue, onClose, onStateChange, onRetry, onCancel, onDelete, events, mergeMode, tabRef }) {
   const qc = useQueryClient();
   const [tab, setTab] = useState("overview");
   const [visible, setVisible] = useState(false);
@@ -172,6 +173,20 @@ export function IssueDetailDrawer({ issue, onClose, onStateChange, onRetry, onCa
       setReplanBusy(false);
     }
   }, [issue?.id, replanBusy]);
+
+  const handleExecuteFromDrawer = useCallback(async () => {
+    if (!issue?.id) return;
+    try {
+      const res = await api.post(`/issues/${encodeURIComponent(issue.id)}/execute`);
+      if (!res.ok) throw new Error(res.error || "Execute failed.");
+    } catch { /* footer handles errors for its own execute button */ }
+  }, [issue?.id]);
+
+  const handleDeleteFromDrawer = useCallback(() => {
+    if (!issue?.id) return;
+    onDelete?.(issue.id);
+    handleClose();
+  }, [issue?.id, onDelete]);
 
   const handleClose = useCallback(() => {
     setClosing(true);
@@ -273,30 +288,39 @@ export function IssueDetailDrawer({ issue, onClose, onStateChange, onRetry, onCa
           <div className="flex items-center justify-between mb-1">
             <div className="flex items-center gap-2 min-w-0">
               <span className="font-mono text-xs opacity-40 shrink-0">{issue.identifier}</span>
+              <StateActionMenu
+                issue={issue}
+                onStateChange={onStateChange}
+                onRetry={onRetry}
+                onCancel={onCancel}
+                onReplan={handleReplanFromDrawer}
+                onExecute={handleExecuteFromDrawer}
+              />
               {issue.baseBranch && (
                 <span className="flex items-center gap-0.5 text-[10px] font-mono opacity-40 shrink-0 border border-base-300 rounded px-1 py-0.5">
                   <GitMerge className="size-2.5" />
                   {issue.baseBranch}
                 </span>
               )}
-              {issue.state !== "Planning" && issue.plan && !["Running", "Reviewing", "Queued"].includes(issue.state) && (
-                <button
-                  className="btn btn-ghost btn-xs gap-1 opacity-50 hover:opacity-100"
-                  onClick={handleReplanFromDrawer}
-                  disabled={replanBusy || issue.planningStatus === "planning"}
-                  title="Archive current plan and request a new one"
-                >
-                  {replanBusy ? <Loader className="size-3 animate-spin" /> : <RotateCcw className="size-3" />}
-                  Replan
-                </button>
-              )}
               {replanError && (
                 <span className="text-xs text-error truncate">{replanError}</span>
               )}
             </div>
-            <button type="button" className="btn btn-sm btn-ghost btn-circle shrink-0" onClick={handleClose} aria-label="Close">
-              <X className="size-4" />
-            </button>
+            <div className="flex items-center gap-0.5 shrink-0">
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost btn-circle text-error/40 hover:text-error hover:bg-error/10"
+                onClick={handleDeleteFromDrawer}
+                disabled={issue.state === "Running" || issue.state === "Reviewing"}
+                aria-label="Delete issue"
+                title="Delete issue permanently"
+              >
+                <Trash2 className="size-3.5" />
+              </button>
+              <button type="button" className="btn btn-sm btn-ghost btn-circle shrink-0" onClick={handleClose} aria-label="Close">
+                <X className="size-4" />
+              </button>
+            </div>
           </div>
 
           <div className="flex items-start gap-2 mb-1">
@@ -369,7 +393,7 @@ export function IssueDetailDrawer({ issue, onClose, onStateChange, onRetry, onCa
         {/* Tab content */}
         <div className="flex-1 overflow-y-auto px-6 py-4 min-h-0 drawer-safe-bottom">
           <div key={tab} className="animate-fade-in">
-            {tab === "overview" && <OverviewTab issue={issue} onStateChange={onStateChange} onRetry={onRetry} onCancel={onCancel} />}
+            {tab === "overview" && <OverviewTab issue={issue} />}
             {tab === "planning" && <PlanningTab issue={issue} onStateChange={onStateChange} workflowConfig={workflowConfig} />}
             {tab === "review" && <ReviewTab issue={issue} issueId={issue.id} onStateChange={onStateChange} onRetry={onRetry} />}
             {tab === "execution" && <ExecutionTab issue={issue} workflowConfig={workflowConfig} />}
