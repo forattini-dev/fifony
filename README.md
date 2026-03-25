@@ -344,10 +344,11 @@ FIFONY_LOG_FILE=0                     # set to 1 to also write .fifony/fifony-lo
 
 fifony is built on the shoulders of:
 
-- **[OpenAI Codex CLI](https://github.com/openai/codex)** — Original foundation (Apache 2.0). See [NOTICE](NOTICE) and [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+- **[raffel](https://github.com/forattini-dev/raffel)** — Unified multi-protocol server runtime.
+- **[cli-args-parser](https://github.com/forattini-dev/cli-args-parser)** — CLI argument parsing.
+- **[s3db.js](https://github.com/forattini-dev/s3db.js)** — Filesystem persistence layer.
 - **[Agency Agents](https://github.com/msitarzewski/agency-agents)** — Inspiration for the agent catalog.
 - **[Impeccable](https://github.com/pbakaus/impeccable)** — Frontend design skill by Paul Bakaus.
-- **[s3db.js](https://github.com/forattini-dev/s3db.js)** — Filesystem persistence layer.
 - **[DaisyUI](https://daisyui.com)** — Dashboard component library.
 
 ---
