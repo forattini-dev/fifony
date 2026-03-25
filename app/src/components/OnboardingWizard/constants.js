@@ -33,10 +33,10 @@ export const EFFORT_OPTIONS = [
   { value: "extra-high", label: "Extra High", icon: Flame, description: "Maximum depth -- most thorough, slowest", color: "text-error" },
 ];
 
-// Effort availability depends on the CLI: codex supports extra-high, claude/gemini do not
+// Effort availability depends on the CLI: codex and claude support extra-high (claude maps it to "max"), gemini does not
 export const PROVIDER_EFFORT_SUPPORT = {
   codex: EFFORT_OPTIONS,
-  claude: EFFORT_OPTIONS.filter((option) => option.value !== "extra-high"),
+  claude: EFFORT_OPTIONS,
   gemini: EFFORT_OPTIONS.filter((option) => option.value !== "extra-high"),
 };
 

@@ -10,6 +10,8 @@ import type { IssueEntry, RuntimeConfig } from "../types.ts";
 import { appendFileTail } from "../concerns/helpers.ts";
 import { logger } from "../concerns/logger.ts";
 import { normalizeAgentProvider } from "./providers.ts";
+import { TARGET_ROOT } from "../concerns/constants.ts";
+import { translatePaths, buildDockerRunCommand } from "./docker-runner.ts";
 
 const HOOK_RUNTIME_CONFIG: RuntimeConfig = {
   pollIntervalMs: 0,
@@ -27,6 +29,8 @@ const HOOK_RUNTIME_CONFIG: RuntimeConfig = {
   defaultEffort: { default: "medium" },
   runMode: "filesystem",
   autoReviewApproval: true,
+  dockerExecution: false,
+  dockerImage: "fifony-agent:latest",
   afterCreateHook: "",
   beforeRunHook: "",
   afterRunHook: "",
@@ -70,22 +74,42 @@ export async function runCommandWithTimeout(
       }
     }
 
+    // Docker mode: translate host paths to container paths in all env vars
+    if (config.dockerExecution) {
+      for (const key of Object.keys(allVars)) {
+        allVars[key] = translatePaths(allVars[key], workspacePath);
+      }
+    }
+
     const envFilePath = join(workspacePath, ".env.sh");
     const envFileLines = Object.entries(allVars)
       .map(([k, v]) => `export ${k}='${String(v).replace(/'/g, "'\\''")}'`)
       .join("\n");
     writeFileSync(envFilePath, envFileLines, "utf8");
 
-    const wrappedCommand = `. "${envFilePath}" && ${command}`;
-    const child = spawn(wrappedCommand, {
+    let effectiveCommand: string;
+    if (config.dockerExecution && config.dockerImage) {
+      const translatedCmd = translatePaths(command, workspacePath);
+      effectiveCommand = buildDockerRunCommand(
+        translatedCmd,
+        workspacePath,
+        issue.worktreePath,
+        TARGET_ROOT,
+        config.dockerImage,
+      );
+    } else {
+      effectiveCommand = `. "${envFilePath}" && ${command}`;
+    }
+
+    const child = spawn(effectiveCommand, {
       shell: true,
-      cwd: issue.worktreePath ?? workspacePath,
-      detached: true,  // Survive parent death
+      cwd: workspacePath,
+      detached: !config.dockerExecution, // Docker containers don't need detached mode
       stdio: ["pipe", "pipe", "pipe"],
     });
 
-    // Detach from parent so child survives SIGINT/restart
-    child.unref();
+    // Detach from parent so child survives SIGINT/restart (not needed in Docker mode)
+    if (!config.dockerExecution) child.unref();
 
     if (child.stdin) {
       child.stdin.end();

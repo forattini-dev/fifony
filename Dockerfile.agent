@@ -1,0 +1,16 @@
+FROM node:23-slim
+
+# Install system tools needed by agent CLIs and git operations
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git curl bash ca-certificates \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install AI provider CLIs globally
+RUN npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli \
+    && npm cache clean --force
+
+# Suppress non-essential telemetry/traffic from CLIs
+ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+
+# Default working directory — overridden at runtime by docker run -w
+WORKDIR /workspace

@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api.js";
-import { SETTINGS_QUERY_KEY, upsertSettingPayload } from "../../hooks.js";
+import { useSettings, getSettingsList, getSettingValue, SETTINGS_QUERY_KEY, upsertSettingPayload } from "../../hooks.js";
 import {
   Lightbulb,
   Play,
@@ -11,6 +11,8 @@ import {
   Loader2,
   Check,
   ArrowDown,
+  Container,
+  AlertTriangle,
 } from "lucide-react";
 
 const STAGES = [
@@ -152,7 +154,7 @@ function StageBlock({ stage, config, providers, modelsByProvider, onChange, isLa
                 onChange={(e) => onChange({ ...config, effort: e.target.value })}
               >
                 {EFFORTS.filter(
-                  (e) => config.provider === "codex" || e.value !== "extra-high"
+                  (e) => config.provider !== "gemini" || e.value !== "extra-high"
                 ).map((e) => (
                   <option key={e.value} value={e.value}>{e.label}</option>
                 ))}
@@ -177,6 +179,7 @@ export const Route = createFileRoute("/settings/workflow")({
 
 function WorkflowSettings() {
   const qc = useQueryClient();
+  const settingsQuery = useSettings();
   const [workflow, setWorkflow] = useState(null);
   const [providers, setProviders] = useState([]);
   const [modelsByProvider, setModelsByProvider] = useState({});
@@ -184,6 +187,11 @@ function WorkflowSettings() {
   const [savingStage, setSavingStage] = useState(null);
   const [restoring, setRestoring] = useState(false);
   const saveTimer = useRef(null);
+
+  // Docker execution settings
+  const [dockerExecution, setDockerExecution] = useState(false);
+  const [dockerImage, setDockerImage] = useState("fifony-agent:latest");
+  const [savingDocker, setSavingDocker] = useState(false);
 
   const syncWorkflowSettingCache = useCallback((nextWorkflow) => {
     qc.setQueryData(SETTINGS_QUERY_KEY, (current) => upsertSettingPayload(current, {
@@ -273,6 +281,30 @@ function WorkflowSettings() {
   // Cleanup timer on unmount
   useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current); }, []);
 
+  // Load Docker settings from settings query
+  useEffect(() => {
+    const settings = getSettingsList(settingsQuery.data);
+    if (!settings?.length) return;
+    const nextDockerExecution = getSettingValue(settings, "runtime.dockerExecution", false);
+    if (typeof nextDockerExecution === "boolean") setDockerExecution(nextDockerExecution);
+    const nextDockerImage = getSettingValue(settings, "runtime.dockerImage", "fifony-agent:latest");
+    if (typeof nextDockerImage === "string" && nextDockerImage) setDockerImage(nextDockerImage);
+  }, [settingsQuery.data]);
+
+  const saveDockerSettings = useCallback(async () => {
+    setSavingDocker(true);
+    try {
+      await api.post(`/settings/${encodeURIComponent("runtime.dockerExecution")}`, { scope: "runtime", value: dockerExecution, source: "user" });
+      await api.post(`/settings/${encodeURIComponent("runtime.dockerImage")}`, { scope: "runtime", value: dockerImage || "fifony-agent:latest", source: "user" });
+      qc.setQueryData(SETTINGS_QUERY_KEY, (current) => {
+        let next = upsertSettingPayload(current, { id: "runtime.dockerExecution", scope: "runtime", value: dockerExecution, source: "user", updatedAt: new Date().toISOString() });
+        next = upsertSettingPayload(next, { id: "runtime.dockerImage", scope: "runtime", value: dockerImage || "fifony-agent:latest", source: "user", updatedAt: new Date().toISOString() });
+        return next;
+      });
+    } catch {}
+    setSavingDocker(false);
+  }, [dockerExecution, dockerImage, qc]);
+
   if (loading || !workflow) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -336,6 +368,95 @@ function WorkflowSettings() {
             saving={savingStage === stage.key || savingStage === "all" ? stage.key : null}
           />
         ))}
+      </div>
+
+      {/* Execution Sandbox */}
+      <div className="card bg-base-200 border-l-4 border-warning/30 animate-fade-in">
+        <div className="card-body p-4 gap-3">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center justify-center size-9 rounded-lg bg-warning/10">
+              <Container className="size-4.5 text-warning" />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold">Execution Sandbox</h3>
+              <p className="text-xs opacity-50">Isolate agent execution inside a Docker container.</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <label className={`flex items-start gap-2.5 p-3 rounded-lg border cursor-pointer transition-colors ${!dockerExecution ? "border-base-content/30 bg-base-300" : "border-base-content/10 bg-base-100/50 opacity-60"}`}>
+              <input
+                type="radio"
+                className="radio radio-sm mt-0.5"
+                checked={!dockerExecution}
+                onChange={() => setDockerExecution(false)}
+              />
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium">Script (host)</p>
+                <p className="text-xs opacity-50 leading-relaxed">
+                  The agent runs directly on your system with the same user and permissions as fifony.
+                  Full filesystem and network access. No setup required —
+                  but code generated by the agent can read or modify any file accessible to your user.
+                </p>
+              </div>
+            </label>
+
+            <label className={`flex items-start gap-2.5 p-3 rounded-lg border cursor-pointer transition-colors ${dockerExecution ? "border-warning/40 bg-warning/5" : "border-base-content/10 bg-base-100/50 opacity-60"}`}>
+              <input
+                type="radio"
+                className="radio radio-sm radio-warning mt-0.5"
+                checked={dockerExecution}
+                onChange={() => setDockerExecution(true)}
+              />
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium">Docker container</p>
+                <p className="text-xs opacity-50 leading-relaxed">
+                  Each execution runs in an isolated container. The agent only sees the issue workspace
+                  and the project <code className="font-mono">.git</code> — nothing else on the host filesystem.
+                  Linux capabilities dropped, privilege escalation blocked.
+                  Requires Docker installed and the <code className="font-mono">fifony-agent</code> image built.
+                </p>
+              </div>
+            </label>
+          </div>
+
+          {dockerExecution && (
+            <div className="space-y-3">
+              <label className="form-control w-full">
+                <div className="label py-0.5">
+                  <span className="label-text text-xs">Docker image</span>
+                </div>
+                <input
+                  type="text"
+                  className="input input-bordered input-sm w-full font-mono text-xs"
+                  placeholder="fifony-agent:latest"
+                  value={dockerImage}
+                  onChange={(e) => setDockerImage(e.target.value)}
+                />
+              </label>
+
+              <div className="flex items-start gap-2 text-xs opacity-60">
+                <AlertTriangle className="size-3 shrink-0 mt-0.5 text-warning" />
+                <span>
+                  Requires Docker installed and image built: <code className="font-mono">docker build -f Dockerfile.agent -t fifony-agent:latest .</code>
+                  <br />
+                  Agents will not survive API restarts in this mode.
+                </span>
+              </div>
+            </div>
+          )}
+
+          <div className="flex justify-end pt-1">
+            <button
+              className="btn btn-sm btn-warning btn-outline gap-1"
+              onClick={saveDockerSettings}
+              disabled={savingDocker}
+            >
+              {savingDocker ? <Loader2 className="size-3 animate-spin" /> : <Check className="size-3" />}
+              Save sandbox settings
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

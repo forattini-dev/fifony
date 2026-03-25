@@ -234,6 +234,10 @@ export type RuntimeConfig = {
   prBaseBranch?: string;
   /** Maximum dollar budget per agent execution (claude --max-budget-usd) */
   maxBudgetUsd?: number;
+  /** When true, agent executions run inside a Docker container for filesystem isolation. */
+  dockerExecution: boolean;
+  /** Docker image used when dockerExecution is true. */
+  dockerImage: string;
   afterCreateHook: string;
   beforeRunHook: string;
   afterRunHook: string;

@@ -34,7 +34,9 @@ export function buildClaudeCommand(options: ProviderCommandOptions): string {
   parts.push("--no-session-persistence", "--output-format json");
 
   if (options.effort) {
-    parts.push(`--effort ${options.effort}`);
+    // Claude CLI uses "max" for the highest effort level; our domain uses "extra-high"
+    const claudeEffort = options.effort === "extra-high" ? "max" : options.effort;
+    parts.push(`--effort ${claudeEffort}`);
   }
 
   if (options.maxBudgetUsd && options.maxBudgetUsd > 0) {

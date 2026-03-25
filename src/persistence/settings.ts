@@ -35,6 +35,8 @@ export const SETTING_ID_TEST_COMMAND = "runtime.testCommand";
 export const SETTING_ID_MERGE_MODE = "runtime.mergeMode";
 export const SETTING_ID_PR_BASE_BRANCH = "runtime.prBaseBranch";
 export const SETTING_ID_AUTO_REVIEW_APPROVAL = "runtime.autoReviewApproval";
+export const SETTING_ID_DOCKER_EXECUTION = "runtime.dockerExecution";
+export const SETTING_ID_DOCKER_IMAGE = "runtime.dockerImage";
 
 export async function loadRuntimeSettings(): Promise<RuntimeSettingRecord[]> {
   return loadPersistedSettings();
@@ -57,6 +59,8 @@ export const RUNTIME_CONFIG_SETTING_IDS = new Set<string>([
   SETTING_ID_MERGE_MODE,
   SETTING_ID_PR_BASE_BRANCH,
   SETTING_ID_AUTO_REVIEW_APPROVAL,
+  SETTING_ID_DOCKER_EXECUTION,
+  SETTING_ID_DOCKER_IMAGE,
 ]);
 
 const VALID_REASONING_EFFORTS = new Set<ReasoningEffort>(["low", "medium", "high", "extra-high"]);
@@ -138,6 +142,8 @@ function buildRuntimeConfigSettings(
     { id: SETTING_ID_MERGE_MODE, scope: "runtime", value: config.mergeMode ?? "local", source, updatedAt },
     { id: SETTING_ID_PR_BASE_BRANCH, scope: "runtime", value: config.prBaseBranch ?? "", source, updatedAt },
     { id: SETTING_ID_AUTO_REVIEW_APPROVAL, scope: "runtime", value: config.autoReviewApproval, source, updatedAt },
+    { id: SETTING_ID_DOCKER_EXECUTION, scope: "runtime", value: config.dockerExecution, source, updatedAt },
+    { id: SETTING_ID_DOCKER_IMAGE, scope: "runtime", value: config.dockerImage, source, updatedAt },
   ];
 }
 
@@ -250,6 +256,16 @@ export function applyPersistedSettings(config: RuntimeConfig, settings: RuntimeS
       }
       case SETTING_ID_AUTO_REVIEW_APPROVAL: {
         nextConfig.autoReviewApproval = toBooleanValue(setting.value, true);
+        break;
+      }
+      case SETTING_ID_DOCKER_EXECUTION: {
+        nextConfig.dockerExecution = toBooleanValue(setting.value, false);
+        break;
+      }
+      case SETTING_ID_DOCKER_IMAGE: {
+        if (typeof setting.value === "string" && setting.value.trim()) {
+          nextConfig.dockerImage = setting.value.trim();
+        }
         break;
       }
       default:

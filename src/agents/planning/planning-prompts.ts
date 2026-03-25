@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
+import { buildDockerPlanCommand, CONTAINER_PLANNING } from "../docker-runner.ts";
 import { appendFileTail } from "../../concerns/helpers.ts";
 import type { IssuePlan, RuntimeConfig, PipelineStageConfig } from "../../types.ts";
 import { PLAN_JSON_SCHEMA } from "./planning-schema.ts";
@@ -126,19 +127,44 @@ export async function runPlanningProcess(options: {
   extraEnv?: Record<string, string>;
   onPid?: (pid: number) => void;
   onChunk?: (bytes: number) => void;
+  dockerConfig?: { enabled: boolean; image: string };
 }): Promise<string> {
-  const { command, tempDir, promptFile, provider, extraEnv = {}, onPid, onChunk } = options;
+  const { command, tempDir, promptFile, provider, extraEnv = {}, onPid, onChunk, dockerConfig } = options;
+  const useDocker = dockerConfig?.enabled === true && !!dockerConfig.image;
+
+  let effectiveCommand: string;
+  let spawnEnv: NodeJS.ProcessEnv | undefined;
+
+  if (useDocker) {
+    // Write .env.sh to tempDir so the container can source it
+    const allVars: Record<string, string> = {
+      FIFONY_PROMPT_FILE: promptFile.replaceAll(tempDir, CONTAINER_PLANNING),
+      FIFONY_AGENT_PROVIDER: provider,
+      ...Object.fromEntries(
+        Object.entries(extraEnv).map(([k, v]) => [k, v.replaceAll(tempDir, CONTAINER_PLANNING)]),
+      ),
+    };
+    const envLines = Object.entries(allVars)
+      .map(([k, v]) => `export ${k}='${String(v).replace(/'/g, "'\\''")}'`)
+      .join("\n");
+    writeFileSync(join(tempDir, ".env.sh"), envLines, "utf8");
+    effectiveCommand = buildDockerPlanCommand(command, tempDir, dockerConfig.image);
+    spawnEnv = undefined; // vars are in .env.sh inside the container
+  } else {
+    effectiveCommand = command;
+    spawnEnv = { ...process.env, FIFONY_PROMPT_FILE: promptFile, FIFONY_AGENT_PROVIDER: provider, ...extraEnv };
+  }
 
   return new Promise<string>((resolve, reject) => {
     let stdout = "";
-    const child = spawn(command, {
+    const child = spawn(effectiveCommand, {
       shell: true,
       cwd: tempDir,
-      detached: true,
+      detached: !useDocker,
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, FIFONY_PROMPT_FILE: promptFile, FIFONY_AGENT_PROVIDER: provider, ...extraEnv },
+      ...(spawnEnv ? { env: spawnEnv } : {}),
     });
-    child.unref();
+    if (!useDocker) child.unref();
     child.stdin?.end();
 
     if (child.pid) onPid?.(child.pid);

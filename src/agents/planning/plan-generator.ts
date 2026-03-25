@@ -92,6 +92,7 @@ export async function generatePlan(
       promptFile,
       provider: preferred,
       extraEnv: images?.length ? { FIFONY_IMAGE_PATHS: images.join(",") } : {},
+      dockerConfig: { enabled: config.dockerExecution, image: config.dockerImage },
       onPid: (pid) => {
         session.pid = pid;
         if (shouldPersistSession) persistSession(session).catch(() => {});

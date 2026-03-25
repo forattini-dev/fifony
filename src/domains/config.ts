@@ -88,6 +88,8 @@ export function deriveConfig(args: string[]): RuntimeConfig {
     maxConcurrentByState: {},
     runMode: "filesystem",
     autoReviewApproval: true,
+    dockerExecution: false,
+    dockerImage: "fifony-agent:latest",
     afterCreateHook: env.FIFONY_AFTER_CREATE_HOOK ?? "",
     beforeRunHook: env.FIFONY_BEFORE_RUN_HOOK ?? "",
     afterRunHook: env.FIFONY_AFTER_RUN_HOOK ?? "",
