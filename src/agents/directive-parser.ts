@@ -214,8 +214,22 @@ export function readAgentDirective(workspacePath: string, output: string, succes
   let resultPayload: JsonRecord = {};
 
   // 1. Try structured JSON from stdout (claude --output-format json --json-schema)
+  // Claude without --bare may output the JSON result twice (stdout capture artifact).
+  // Try parsing as-is first, then fall back to extracting the first JSON object.
   const fullJson = (() => {
-    try { return JSON.parse(output.trim()) as JsonRecord; } catch { return null; }
+    const trimmed = output.trim();
+    try { return JSON.parse(trimmed) as JsonRecord; } catch {}
+    // Try extracting the first { ... } object if the full output isn't valid JSON
+    const firstBrace = trimmed.indexOf("{");
+    if (firstBrace >= 0) {
+      // Find matching closing brace by counting depth
+      let depth = 0;
+      for (let i = firstBrace; i < trimmed.length; i++) {
+        if (trimmed[i] === "{") depth++;
+        else if (trimmed[i] === "}") { depth--; if (depth === 0) { try { return JSON.parse(trimmed.slice(firstBrace, i + 1)) as JsonRecord; } catch { break; } } }
+      }
+    }
+    return null;
   })();
   const jsonOutput = tryParseJsonOutput(output);
   const tokenUsage = extractTokenUsage(output, fullJson);
