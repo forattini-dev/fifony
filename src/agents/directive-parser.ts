@@ -82,7 +82,7 @@ export function extractTokenUsage(output: string, jsonObj?: JsonRecord | null): 
           inputTokens: totalInput,
           outputTokens: totalOutput,
           totalTokens: totalInput + totalOutput,
-          costUsd: typeof jsonObj.cost_usd === "number" ? jsonObj.cost_usd : undefined,
+          costUsd: typeof jsonObj.cost_usd === "number" ? jsonObj.cost_usd : typeof jsonObj.total_cost_usd === "number" ? jsonObj.total_cost_usd : undefined,
           model: primaryModel || (typeof jsonObj.model === "string" ? jsonObj.model : undefined),
         };
       }
@@ -123,7 +123,7 @@ export function extractTokenUsage(output: string, jsonObj?: JsonRecord | null): 
           inputTokens: inp,
           outputTokens: out,
           totalTokens: inp + out,
-          costUsd: typeof jsonObj.cost_usd === "number" ? jsonObj.cost_usd : undefined,
+          costUsd: typeof jsonObj.cost_usd === "number" ? jsonObj.cost_usd : typeof jsonObj.total_cost_usd === "number" ? jsonObj.total_cost_usd : undefined,
           model: typeof jsonObj.model === "string" ? jsonObj.model : undefined,
         };
       }
@@ -231,8 +231,9 @@ export function readAgentDirective(workspacePath: string, output: string, succes
     }
     return null;
   })();
-  const jsonOutput = tryParseJsonOutput(output);
-  const tokenUsage = extractTokenUsage(output, fullJson);
+  // If we extracted fullJson from duplicated output, also try parsing from it
+  const jsonOutput = tryParseJsonOutput(output) ?? (fullJson ? tryParseJsonOutput(JSON.stringify(fullJson)) : null);
+  const tokenUsage = extractTokenUsage(fullJson ? JSON.stringify(fullJson) : output, fullJson);
 
   if (jsonOutput?.status) {
     return {

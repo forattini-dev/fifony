@@ -137,7 +137,7 @@ export async function startApiServer(
     host: "0.0.0.0",
     tls: false,
     versionPrefix: false,
-    metrics: { enabled: false },
+    metrics: { enabled: false, logLevel: false },
     // HTTP + WebSocket on the same port via listeners
     listeners: [{
       bind: { host: "0.0.0.0", port },

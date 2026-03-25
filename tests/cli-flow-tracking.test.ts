@@ -854,3 +854,164 @@ describe("image handling: images passed correctly to each provider", () => {
 
   after(() => { try { rmSync(imgDir, { recursive: true, force: true }); } catch {} });
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 13. CLAUDE DUPLICATED OUTPUT — tokens/cost extraction from duplicated JSON
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("claude output: duplicated JSON result parsing", () => {
+  const ws = mkdtempSync(join(tmpdir(), "fifony-dup-"));
+
+  // Real-world scenario: claude without --bare outputs the result JSON twice
+  const singleResult = JSON.stringify({
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    duration_ms: 196568,
+    num_turns: 29,
+    result: "",
+    total_cost_usd: 0.95,
+    structured_output: {
+      status: "done",
+      summary: "Replaced SVG placeholders with real photos",
+      tools_used: ["Read", "Write", "Edit", "Bash"],
+      skills_used: [],
+      agents_used: [],
+      commands_run: ["pnpm test"],
+    },
+    modelUsage: {
+      "claude-opus-4-6": {
+        inputTokens: 21,
+        outputTokens: 4793,
+        cacheReadInputTokens: 1019193,
+        cacheCreationInputTokens: 31863,
+        costUSD: 0.83,
+      },
+      "claude-haiku-4-5-20251001": {
+        inputTokens: 203,
+        outputTokens: 5041,
+        cacheReadInputTokens: 370008,
+        cacheCreationInputTokens: 47611,
+        costUSD: 0.12,
+      },
+    },
+    usage: {
+      input_tokens: 21,
+      cache_creation_input_tokens: 31863,
+      cache_read_input_tokens: 1019193,
+      output_tokens: 4793,
+    },
+  });
+
+  it("parses single JSON output correctly", () => {
+    const directive = readAgentDirective(ws, singleResult, true);
+    assert.equal(directive.status, "done");
+    assert.ok(directive.tokenUsage, "should extract token usage");
+    assert.ok(directive.tokenUsage!.totalTokens > 0, "total tokens > 0");
+    assert.equal(directive.tokenUsage!.model, "claude-opus-4-6");
+    assert.ok(directive.tokenUsage!.costUsd! > 0, "cost > 0");
+  });
+
+  it("parses duplicated JSON output (claude without --bare artifact)", () => {
+    // Claude sometimes outputs the JSON twice
+    const duplicated = singleResult + "\n\n" + singleResult;
+    const directive = readAgentDirective(ws, duplicated, true);
+    assert.equal(directive.status, "done", "should parse status from first JSON");
+    assert.ok(directive.tokenUsage, "should extract token usage from duplicated output");
+    assert.ok(directive.tokenUsage!.totalTokens > 0, "total tokens > 0");
+    assert.equal(directive.tokenUsage!.model, "claude-opus-4-6");
+  });
+
+  it("parses JSON with leading whitespace/newlines", () => {
+    const withWhitespace = "\n\n  " + singleResult + "\n";
+    const directive = readAgentDirective(ws, withWhitespace, true);
+    assert.equal(directive.status, "done");
+    assert.ok(directive.tokenUsage, "should handle leading whitespace");
+  });
+
+  it("extracts tools_used from structured_output in duplicated JSON", () => {
+    const duplicated = singleResult + "\n" + singleResult;
+    const directive = readAgentDirective(ws, duplicated, true);
+    assert.deepEqual(directive.toolsUsed, ["Read", "Write", "Edit", "Bash"]);
+    assert.deepEqual(directive.commandsRun, ["pnpm test"]);
+  });
+
+  it("extracts cost_usd from claude envelope", () => {
+    const directive = readAgentDirective(ws, singleResult, true);
+    assert.ok(directive.tokenUsage?.costUsd, "should extract costUsd");
+    assert.equal(directive.tokenUsage!.costUsd, 0.95);
+  });
+
+  it("extracts multi-model token breakdown (opus + haiku)", () => {
+    const json = JSON.parse(singleResult);
+    const usage = extractTokenUsage(singleResult, json);
+    assert.ok(usage, "should extract usage");
+    // Total = opus(21 + 1019193 + 31863) + haiku(203 + 370008 + 47611) input
+    //       + opus(4793) + haiku(5041) output
+    const expectedInput = (21 + 1019193 + 31863) + (203 + 370008 + 47611);
+    const expectedOutput = 4793 + 5041;
+    assert.equal(usage!.inputTokens, expectedInput, "input tokens include cache");
+    assert.equal(usage!.outputTokens, expectedOutput, "output tokens from both models");
+    assert.equal(usage!.totalTokens, expectedInput + expectedOutput);
+  });
+
+  after(() => { try { rmSync(ws, { recursive: true, force: true }); } catch {} });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 14. DIFF STATS — parseDiffStats extracts lines/files correctly
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("diff stats: lines added/removed/files changed extraction", () => {
+  it("parses standard git diff --stat output", async () => {
+    const { parseDiffStats } = await import("../src/domains/workspace.ts");
+    const issue = { id: "test-diff", identifier: "#D1" } as any;
+    const stat = `
+ src/components/Hero.tsx  | 15 +++++++--------
+ src/styles.css           |  8 +++++---
+ tests/hero.test.ts       | 22 ++++++++++++++++++++++
+ 3 files changed, 29 insertions(+), 11 deletions(-)
+`;
+    parseDiffStats(issue, stat);
+    assert.equal(issue.filesChanged, 3, "3 files changed");
+    assert.equal(issue.linesAdded, 29, "29 lines added");
+    assert.equal(issue.linesRemoved, 11, "11 lines removed");
+  });
+
+  it("handles single file changes", async () => {
+    const { parseDiffStats } = await import("../src/domains/workspace.ts");
+    const issue = { id: "test-diff-single", identifier: "#D2" } as any;
+    const stat = `
+ README.md | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+`;
+    parseDiffStats(issue, stat);
+    assert.equal(issue.filesChanged, 1);
+    assert.equal(issue.linesAdded, 1);
+    assert.equal(issue.linesRemoved, 1);
+  });
+
+  it("handles additions only", async () => {
+    const { parseDiffStats } = await import("../src/domains/workspace.ts");
+    const issue = { id: "test-diff-add", identifier: "#D3" } as any;
+    const stat = `
+ src/new-file.ts | 50 ++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 50 insertions(+)
+`;
+    parseDiffStats(issue, stat);
+    assert.equal(issue.linesAdded, 50);
+    assert.equal(issue.linesRemoved, 0);
+  });
+
+  it("handles deletions only", async () => {
+    const { parseDiffStats } = await import("../src/domains/workspace.ts");
+    const issue = { id: "test-diff-del", identifier: "#D4" } as any;
+    const stat = `
+ src/dead-code.ts | 100 ---...
+ 1 file changed, 100 deletions(-)
+`;
+    parseDiffStats(issue, stat);
+    assert.equal(issue.linesAdded, 0);
+    assert.equal(issue.linesRemoved, 100);
+  });
+});
