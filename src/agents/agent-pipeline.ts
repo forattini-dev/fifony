@@ -135,7 +135,8 @@ export async function runAgentSession(
     });
   }
 
-  logger.info({ issueId: issue.id, identifier: issue.identifier, turn: turnIndex, exitCode: turnResult.code, success: turnResult.success, outputBytes: turnResult.output.length }, "[Agent] Agent command finished");
+  const outputPreview = turnResult.output.length < 500 ? turnResult.output.trim() : undefined;
+  logger.info({ issueId: issue.id, identifier: issue.identifier, turn: turnIndex, exitCode: turnResult.code, success: turnResult.success, outputBytes: turnResult.output.length, ...(outputPreview ? { outputPreview } : {}) }, "[Agent] Agent command finished");
   const directive = readAgentDirective(workspacePath, turnResult.output, turnResult.success);
   lastCode = turnResult.code;
   lastOutput = turnResult.output;
