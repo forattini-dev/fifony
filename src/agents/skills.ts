@@ -23,15 +23,24 @@ export type DiscoveredCommand = {
   description: string;
 };
 
-export function discoverSkills(workspacePath: string): DiscoveredSkill[] {
+export type CapabilityDiscoveryOptions = {
+  includeHome?: boolean;
+};
+
+export function discoverSkills(
+  workspacePath: string,
+  options: CapabilityDiscoveryOptions = {},
+): DiscoveredSkill[] {
   const home = homedir();
   const codePath = existsSync(join(workspacePath, "worktree")) ? join(workspacePath, "worktree") : workspacePath;
+  const includeHome = options.includeHome !== false;
   const searchPaths = [
     resolve(codePath, ".codex", "skills"),
     resolve(codePath, ".claude", "skills"),
-    join(home, ".codex", "skills"),
-    join(home, ".claude", "skills"),
   ];
+  if (includeHome) {
+    searchPaths.push(join(home, ".codex", "skills"), join(home, ".claude", "skills"));
+  }
 
   const seen = new Set<string>();
   const skills: DiscoveredSkill[] = [];
@@ -88,15 +97,20 @@ function extractFirstLine(content: string): string {
 }
 
 /** Discover agent definitions from .claude/agents/ and .codex/agents/ directories. */
-export function discoverAgents(workspacePath: string): DiscoveredAgent[] {
+export function discoverAgents(
+  workspacePath: string,
+  options: CapabilityDiscoveryOptions = {},
+): DiscoveredAgent[] {
   const home = homedir();
   const codePath = existsSync(join(workspacePath, "worktree")) ? join(workspacePath, "worktree") : workspacePath;
+  const includeHome = options.includeHome !== false;
   const searchPaths = [
     resolve(codePath, ".claude", "agents"),
     resolve(codePath, ".codex", "agents"),
-    join(home, ".claude", "agents"),
-    join(home, ".codex", "agents"),
   ];
+  if (includeHome) {
+    searchPaths.push(join(home, ".claude", "agents"), join(home, ".codex", "agents"));
+  }
 
   const seen = new Set<string>();
   const agents: DiscoveredAgent[] = [];
@@ -131,15 +145,20 @@ export function discoverAgents(workspacePath: string): DiscoveredAgent[] {
 }
 
 /** Discover slash commands from .claude/commands/ and .codex/commands/ directories. */
-export function discoverCommands(workspacePath: string): DiscoveredCommand[] {
+export function discoverCommands(
+  workspacePath: string,
+  options: CapabilityDiscoveryOptions = {},
+): DiscoveredCommand[] {
   const home = homedir();
   const codePath = existsSync(join(workspacePath, "worktree")) ? join(workspacePath, "worktree") : workspacePath;
+  const includeHome = options.includeHome !== false;
   const searchPaths = [
     resolve(codePath, ".claude", "commands"),
     resolve(codePath, ".codex", "commands"),
-    join(home, ".claude", "commands"),
-    join(home, ".codex", "commands"),
   ];
+  if (includeHome) {
+    searchPaths.push(join(home, ".claude", "commands"), join(home, ".codex", "commands"));
+  }
 
   const seen = new Set<string>();
   const commands: DiscoveredCommand[] = [];

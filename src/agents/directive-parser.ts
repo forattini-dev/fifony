@@ -82,7 +82,7 @@ export function extractTokenUsage(output: string, jsonObj?: JsonRecord | null): 
           inputTokens: totalInput,
           outputTokens: totalOutput,
           totalTokens: totalInput + totalOutput,
-          costUsd: typeof jsonObj.cost_usd === "number" ? jsonObj.cost_usd : undefined,
+          costUsd: typeof jsonObj.cost_usd === "number" ? jsonObj.cost_usd : typeof jsonObj.total_cost_usd === "number" ? jsonObj.total_cost_usd : undefined,
           model: primaryModel || (typeof jsonObj.model === "string" ? jsonObj.model : undefined),
         };
       }
@@ -123,7 +123,7 @@ export function extractTokenUsage(output: string, jsonObj?: JsonRecord | null): 
           inputTokens: inp,
           outputTokens: out,
           totalTokens: inp + out,
-          costUsd: typeof jsonObj.cost_usd === "number" ? jsonObj.cost_usd : undefined,
+          costUsd: typeof jsonObj.cost_usd === "number" ? jsonObj.cost_usd : typeof jsonObj.total_cost_usd === "number" ? jsonObj.total_cost_usd : undefined,
           model: typeof jsonObj.model === "string" ? jsonObj.model : undefined,
         };
       }
@@ -214,11 +214,26 @@ export function readAgentDirective(workspacePath: string, output: string, succes
   let resultPayload: JsonRecord = {};
 
   // 1. Try structured JSON from stdout (claude --output-format json --json-schema)
+  // Claude without --bare may output the JSON result twice (stdout capture artifact).
+  // Try parsing as-is first, then fall back to extracting the first JSON object.
   const fullJson = (() => {
-    try { return JSON.parse(output.trim()) as JsonRecord; } catch { return null; }
+    const trimmed = output.trim();
+    try { return JSON.parse(trimmed) as JsonRecord; } catch {}
+    // Try extracting the first { ... } object if the full output isn't valid JSON
+    const firstBrace = trimmed.indexOf("{");
+    if (firstBrace >= 0) {
+      // Find matching closing brace by counting depth
+      let depth = 0;
+      for (let i = firstBrace; i < trimmed.length; i++) {
+        if (trimmed[i] === "{") depth++;
+        else if (trimmed[i] === "}") { depth--; if (depth === 0) { try { return JSON.parse(trimmed.slice(firstBrace, i + 1)) as JsonRecord; } catch { break; } } }
+      }
+    }
+    return null;
   })();
-  const jsonOutput = tryParseJsonOutput(output);
-  const tokenUsage = extractTokenUsage(output, fullJson);
+  // If we extracted fullJson from duplicated output, also try parsing from it
+  const jsonOutput = tryParseJsonOutput(output) ?? (fullJson ? tryParseJsonOutput(JSON.stringify(fullJson)) : null);
+  const tokenUsage = extractTokenUsage(fullJson ? JSON.stringify(fullJson) : output, fullJson);
 
   if (jsonOutput?.status) {
     return {

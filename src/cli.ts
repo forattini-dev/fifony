@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
-import { createCLI, type CommandParseResult } from "cli-args-parser";
+import { createCLI, type CommandParseResult, type OptionDefinition } from "cli-args-parser";
 import {
   getReferenceRepositoriesRoot,
   importReferenceArtifacts,
@@ -77,7 +77,7 @@ const commonOptions = {
     description: "Process one scheduler cycle and exit.",
     default: false,
   },
-} as const;
+} satisfies Record<string, OptionDefinition>;
 
 function getStringOption(result: CommandParseResult, key: string): string | undefined {
   const value = result.options[key];

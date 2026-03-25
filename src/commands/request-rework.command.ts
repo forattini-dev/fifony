@@ -1,12 +1,14 @@
-import type { IssueEntry } from "../types.ts";
+import type { IssueEntry, RuntimeEventType } from "../types.ts";
 import type { IIssueRepository, IEventStore } from "../ports/index.ts";
 import { transitionIssueCommand } from "./transition-issue.command.ts";
 
 export type RequestReworkInput = {
   issue: IssueEntry;
-  /** Raw reviewer output — archived as lastError so onEnterQueued can analyze it */
+  /** Raw reviewer output — archived so onEnterQueued can analyze it */
   reviewerFeedback: string;
+  /** Human-readable event message. If omitted, a default reviewer message is emitted. */
   note?: string;
+  eventKind?: RuntimeEventType;
 };
 
 /**
@@ -16,7 +18,7 @@ export type RequestReworkInput = {
  * wants the agent to try again, informed by the review feedback.
  * - Sets `lastFailedPhase = "review"` so AttemptSummary is tagged correctly
  * - Captures reviewer feedback as `lastError` for failure-analyzer to parse
- * - Increments `attempts` (global retry budget)
+ * - Lets the FSM increment `attempts` on the `REQUEUE` transition
  * - Transitions Reviewing/PendingDecision → Queued via PendingDecision intermediate
  *   (FSM onEnterQueued archives the failure into `previousAttemptSummaries`)
  *
@@ -30,7 +32,7 @@ export async function requestReworkCommand(
     eventStore: IEventStore;
   },
 ): Promise<void> {
-  const { issue, reviewerFeedback, note } = input;
+  const { issue, reviewerFeedback, note, eventKind } = input;
 
   if (issue.state !== "Reviewing" && issue.state !== "PendingDecision") {
     throw new Error(
@@ -38,10 +40,14 @@ export async function requestReworkCommand(
     );
   }
 
+  const archivalFeedback = reviewerFeedback.trim()
+    || note?.trim()
+    || issue.lastError
+    || "Manual rework request.";
+
   // Tag the failure for structured archival
-  issue.lastError = reviewerFeedback;
+  issue.lastError = archivalFeedback;
   issue.lastFailedPhase = "review";
-  issue.attempts += 1;
 
   // Reviewing → PendingDecision (intermediate) → Queued
   if (issue.state === "Reviewing") {
@@ -52,14 +58,14 @@ export async function requestReworkCommand(
   }
 
   await transitionIssueCommand(
-    { issue, target: "Queued", note: note ?? `Reviewer requested rework for ${issue.identifier}.` },
+    { issue, target: "Queued", note: archivalFeedback },
     deps,
   );
   // FSM onEnterQueued handles: archive previousAttemptSummaries with phase="review", clear lastError/nextRetryAt, enqueue
 
   deps.eventStore.addEvent(
     issue.id,
-    "runner",
-    `Issue ${issue.identifier} sent back for rework by reviewer.`,
+    eventKind ?? "runner",
+    note ?? `Issue ${issue.identifier} sent back for rework by reviewer.`,
   );
 }

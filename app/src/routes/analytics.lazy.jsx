@@ -308,8 +308,10 @@ function ModelBreakdown({ byModel }) {
 
 // ── Top issues table ─────────────────────────────────────────────────────
 
-function TopIssuesTable({ topIssues }) {
+function TopIssuesTable({ topIssues, metric = "tokens" }) {
   if (!topIssues || topIssues.length === 0) return null;
+  const primaryLabel = metric === "cost" ? "Cost" : "Tokens";
+  const secondaryLabel = metric === "cost" ? "Tokens" : "Cost";
 
   return (
     <div className="overflow-x-auto">
@@ -318,7 +320,8 @@ function TopIssuesTable({ topIssues }) {
           <tr>
             <th className="w-20">Issue</th>
             <th>Title</th>
-            <th className="text-right">Tokens</th>
+            <th className="text-right">{primaryLabel}</th>
+            <th className="text-right hidden sm:table-cell">{secondaryLabel}</th>
             <th className="hidden sm:table-cell">Phase Split</th>
           </tr>
         </thead>
@@ -331,7 +334,16 @@ function TopIssuesTable({ topIssues }) {
               <tr key={issue.id || issue.identifier}>
                 <td className="font-mono text-xs font-semibold text-primary">{issue.identifier}</td>
                 <td className="max-w-[200px] truncate text-sm" title={issue.title}>{issue.title || "-"}</td>
-                <td className="text-right font-mono text-xs font-semibold">{formatTokens(total)}</td>
+                <td className="text-right font-mono text-xs font-semibold">
+                  {metric === "cost"
+                    ? (issue.costUsd ? `$${issue.costUsd.toFixed(3)}` : <span className="opacity-30">—</span>)
+                    : formatTokens(total)}
+                </td>
+                <td className="text-right font-mono text-xs hidden sm:table-cell">
+                  {metric === "cost"
+                    ? formatTokens(total)
+                    : (issue.costUsd ? `$${issue.costUsd.toFixed(3)}` : <span className="opacity-30">—</span>)}
+                </td>
                 <td className="hidden sm:table-cell">
                   {byPhase ? (
                     <div className="flex h-1.5 rounded-full overflow-hidden bg-base-300 w-24">
@@ -738,6 +750,9 @@ function KpiSection() {
 function TopIssuesSection() {
   const { data: analytics } = useTokenAnalytics();
   const topIssues = analytics?.topIssues || [];
+  const topIssuesByCost = [...topIssues]
+    .filter((issue) => typeof issue.costUsd === "number" && issue.costUsd > 0)
+    .sort((a, b) => (b.costUsd || 0) - (a.costUsd || 0));
 
   if (!analytics) return <SectionSkeleton h="h-40" />;
   if (topIssues.length === 0) return null;
@@ -746,9 +761,20 @@ function TopIssuesSection() {
     <section className="bg-base-200 rounded-box p-5">
       <h2 className="text-sm font-semibold flex items-center gap-2 mb-4">
         <Zap className="size-4 text-accent" />
-        Top Issues by Token Usage
+        Top Issues by Usage
       </h2>
-      <TopIssuesTable topIssues={topIssues} />
+      <div className={`grid gap-5 ${topIssuesByCost.length > 0 ? "xl:grid-cols-2" : ""}`}>
+        <div className="space-y-3">
+          <div className="text-xs uppercase tracking-[0.18em] opacity-45">By tokens</div>
+          <TopIssuesTable topIssues={topIssues} metric="tokens" />
+        </div>
+        {topIssuesByCost.length > 0 && (
+          <div className="space-y-3">
+            <div className="text-xs uppercase tracking-[0.18em] opacity-45">By cost</div>
+            <TopIssuesTable topIssues={topIssuesByCost} metric="cost" />
+          </div>
+        )}
+      </div>
     </section>
   );
 }

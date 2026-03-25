@@ -159,12 +159,11 @@ export function buildRuntimeState(
   config: RuntimeConfig,
   projectMetadata: ProjectMetadata = resolveProjectMetadata([], TARGET_ROOT),
 ): RuntimeState {
-  const mergedIssues = (previous?.issues ?? [])
-    .map((rawIssue) => {
-      if (!rawIssue || typeof rawIssue !== "object") return null;
+  const mergedIssues = (previous?.issues ?? []).reduce<IssueEntry[]>((issues, rawIssue) => {
+      if (!rawIssue || typeof rawIssue !== "object") return issues;
 
       const existing = rawIssue as IssueEntry;
-      return {
+      issues.push({
         ...existing,
         id: toStringValue(existing.id, ""),
         identifier: toStringValue(existing.identifier, existing.id),
@@ -184,9 +183,9 @@ export function buildRuntimeState(
         executeAttempt: toNumberValue(existing.executeAttempt, toNumberValue(existing.attempts, 0)),
         reviewAttempt: toNumberValue(existing.reviewAttempt, toNumberValue(existing.attempts, 0)),
         planHistory: Array.isArray(existing.planHistory) ? existing.planHistory : [],
-      };
-    })
-    .filter((issue): issue is IssueEntry => issue !== null)
+      });
+      return issues;
+    }, [])
     .filter((issue) => issue.id);
 
   // Backfill terminalWeek for existing terminal issues that don't have it
@@ -286,4 +285,3 @@ export function getNextRetryAt(issue: IssueEntry, baseMs: number): string {
   const nextDelay = withRetryBackoff(nextAttempt, baseMs);
   return new Date(Date.now() + nextDelay).toISOString();
 }
-

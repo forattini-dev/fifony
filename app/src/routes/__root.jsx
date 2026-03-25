@@ -117,8 +117,8 @@ function RootLayout() {
     if (s === "PendingApproval") {
       // Execute
       import("../api.js").then(({ api }) => api.post(`/issues/${encodeURIComponent(issue.id)}/execute`));
-    } else if (s === "Reviewing" || s === "PendingDecision") {
-      // Approve & Merge
+    } else if (s === "PendingDecision") {
+      // Approve & Merge (only after review is complete)
       import("../api.js").then(({ api }) => api.post(`/issues/${encodeURIComponent(issue.id)}/approve-and-merge`));
     } else if (s === "Approved" && !issue.mergedAt) {
       // Merge

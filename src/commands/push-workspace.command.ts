@@ -75,28 +75,15 @@ export async function pushWorkspaceCommand(
 ): Promise<PushWorkspaceResult> {
   const { issue, state } = input;
 
-  if (!["Approved", "Reviewing", "PendingDecision"].includes(issue.state)) {
-    throw new Error(`Issue ${issue.identifier} is in state ${issue.state}. Push is only allowed in Reviewing, PendingDecision, or Approved state.`);
+  if (!["Approved", "PendingDecision"].includes(issue.state)) {
+    throw new Error(`Issue ${issue.identifier} is in state ${issue.state}. Push is only allowed in PendingDecision or Approved state. Reviewing must complete first.`);
   }
 
   ensureGitRepoReadyForWorktrees(TARGET_ROOT, "push issue branches");
   assertIssueHasGitWorktree(issue, "push");
 
-  if (issue.testApplied) {
-    try {
-      execSync("git reset --hard HEAD", { cwd: TARGET_ROOT, stdio: "pipe", timeout: 15_000 });
-      execSync("git clean -fd", { cwd: TARGET_ROOT, stdio: "pipe", timeout: 15_000 });
-      issue.testApplied = false;
-      deps.eventStore.addEvent(issue.id, "info", "Auto-reverted test squash before push.");
-      logger.info({ issueId: issue.id }, "[Push] Auto-reverted test squash before push");
-    } catch (err: any) {
-      const msg = err.stderr || err.stdout || String(err);
-      throw new Error(`Failed to revert test squash before push: ${msg}`);
-    }
-  }
-
-  // Auto-transition to Approved if still in review
-  if (issue.state === "Reviewing" || issue.state === "PendingDecision") {
+  // Auto-transition once review is complete and waiting for the user's decision
+  if (issue.state === "PendingDecision") {
     await transitionIssueCommand(
       { issue, target: "Approved", note: "Approved and pushed by user." },
       deps,

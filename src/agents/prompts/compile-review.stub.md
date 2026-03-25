@@ -3,6 +3,14 @@ Review the work done for {{issueIdentifier}}.
 Title: {{title}}
 Description: {{description}}
 Workspace: {{workspacePath}}
+{{#if images.length}}
+
+## Visual Evidence (screenshots attached to this issue)
+{{#each images}}
+- {{this}}
+{{/each}}
+Compare the implementation against these screenshots if they show expected behavior or bugs.
+{{/if}}
 
 {{#if planPrompt}}
 # Original Execution Plan
@@ -32,7 +40,7 @@ Workspace: {{workspacePath}}
 {{/if}}
 
 # Structured Context
-If `fifony-execution-payload.json` exists in the workspace, read it for the canonical structured task data.
+If `execution-payload.json` exists in the workspace, read it for the canonical structured task data.
 Use the `successCriteria`, `constraints`, and `deliverables` fields as your evaluation checklist.
 
 # Review Instructions

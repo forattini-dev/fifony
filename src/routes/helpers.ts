@@ -1,5 +1,6 @@
 import type { IssueEntry, RuntimeEvent, RuntimeState } from "../types.ts";
 import type { PlanningSessionUsage } from "../agents/planning/issue-planner.ts";
+import type { ApiRouteContext } from "./http.ts";
 import { logger } from "../concerns/logger.ts";
 import { now } from "../concerns/helpers.ts";
 import { getEventStateResource } from "../persistence/store.ts";
@@ -41,8 +42,19 @@ export function findIssue(state: RuntimeState, issueId: string): IssueEntry | un
   return state.issues.find((issue) => issue.id === issueId || issue.identifier === issueId);
 }
 
-export function parseIssue(c: any): string | null {
-  const value = c.req?.param ? c.req.param("id") : undefined;
+/** Minimal type for route helpers that only need params + JSON responses. */
+export type RouteContext = Pick<ApiRouteContext, "req" | "json">;
+
+function hasRouteRequest(value: unknown): value is Pick<ApiRouteContext, "req"> {
+  if (!value || typeof value !== "object") return false;
+  const request = (value as { req?: unknown }).req;
+  if (!request || typeof request !== "object") return false;
+  return typeof (request as { param?: unknown }).param === "function";
+}
+
+export function parseIssue(c: unknown): string | null {
+  if (!hasRouteRequest(c)) return null;
+  const value = c.req.param("id");
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
@@ -58,7 +70,7 @@ export function applyPlanUsage(issue: IssueEntry, usage: PlanningSessionUsage): 
     totalTokens: prev.totalTokens + usage.totalTokens,
     model: usage.model || prev.model,
   };
-  if (!issue.tokensByPhase) issue.tokensByPhase = {} as any;
+  if (!issue.tokensByPhase) issue.tokensByPhase = {} as NonNullable<IssueEntry["tokensByPhase"]>;
   const prevPlanner = issue.tokensByPhase.planner ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
   issue.tokensByPhase.planner = {
     inputTokens: prevPlanner.inputTokens + usage.inputTokens,
@@ -87,9 +99,9 @@ export function applyPlanSuggestions(issue: IssueEntry, plan: import("../types.t
 
 export async function mutateIssueState(
   state: RuntimeState,
-  c: any,
+  c: RouteContext,
   updater: (issue: IssueEntry) => Promise<void> | void,
-): Promise<any> {
+): Promise<Response> {
   const issueId = parseIssue(c);
   if (!issueId) {
     return c.json({ ok: false, error: "Issue id is required." }, 400);

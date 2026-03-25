@@ -62,7 +62,7 @@ Before reporting done, run:
 {{/if}}
 
 ## Structured Input
-The file `fifony-execution-payload.json` in the workspace contains the canonical structured data for this task.
+The file `execution-payload.json` in the workspace contains the canonical structured data for this task.
 Use it as the source of truth for constraints, success criteria, execution intent, and plan details.
 If there is any conflict between this prompt and the structured fields in the payload, prioritize the payload.
 

@@ -22,6 +22,8 @@ import { parseEnhancerOutput } from "../src/agents/planning/issue-enhancer.ts";
 import { extractFailureInsights } from "../src/agents/failure-analyzer.ts";
 import { compileExecution, compileReview } from "../src/agents/adapters/index.ts";
 import { getPlanCommand, buildPlanPrompt, buildRefinePrompt } from "../src/agents/planning/planning-prompts.ts";
+import { buildImagePromptSection } from "../src/agents/adapters/shared.ts";
+import { buildCodexCommand } from "../src/agents/adapters/codex.ts";
 import type {
   IssueEntry,
   IssuePlan,
@@ -692,5 +694,324 @@ describe("full flow simulation: plan → execute → review with usage tracking"
     );
     assert.ok(suggestedAndUsedSkills.includes("audit"), "audit was suggested and used");
     assert.ok(!suggestedAndUsedSkills.includes("polish"), "polish was suggested but not used");
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 12. IMAGE HANDLING — images flow correctly to each provider
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("image handling: images passed correctly to each provider", () => {
+  const imgDir = mkdtempSync(join(tmpdir(), "fifony-img-test-"));
+  // Create real image files for testing
+  const pngData = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==", "base64");
+  const screenshot1 = join(imgDir, "screenshot1.png");
+  const screenshot2 = join(imgDir, "bug-evidence.jpg");
+  writeFileSync(screenshot1, pngData);
+  writeFileSync(screenshot2, Buffer.from("fake-jpeg"));
+
+  // ── Image embedding (claude/gemini) ─────────────────────────────────────
+
+  it("buildImagePromptSection embeds real images as base64 in markdown", () => {
+    const section = buildImagePromptSection([screenshot1, screenshot2]);
+    assert.ok(section.includes("## Attached Images"), "has header");
+    assert.ok(section.includes("screenshot1.png"), "has first filename");
+    assert.ok(section.includes("bug-evidence.jpg"), "has second filename");
+    assert.ok(section.includes("data:image/png;base64,"), "PNG as base64");
+    assert.ok(section.includes("data:image/jpeg;base64,"), "JPEG as base64");
+  });
+
+  it("buildImagePromptSection filters out non-existent files", () => {
+    const section = buildImagePromptSection(["/nonexistent/ghost.png", screenshot1]);
+    assert.ok(section.includes("screenshot1.png"), "includes existing file");
+    assert.ok(!section.includes("ghost.png"), "skips missing file");
+  });
+
+  it("buildImagePromptSection returns empty for all missing files", () => {
+    const section = buildImagePromptSection(["/nope/a.png", "/nope/b.jpg"]);
+    assert.equal(section, "", "returns empty for all missing");
+  });
+
+  // ── Codex: uses --image CLI flags ───────────────────────────────────────
+
+  it("codex: --image flag added for each image path", () => {
+    const cmd = buildCodexCommand({ imagePaths: [screenshot1, screenshot2] });
+    assert.ok(cmd.includes(`--image "${screenshot1}"`), "has first image flag");
+    assert.ok(cmd.includes(`--image "${screenshot2}"`), "has second image flag");
+  });
+
+  it("codex: --image flags placed before stdin redirect", () => {
+    const cmd = buildCodexCommand({ imagePaths: [screenshot1] });
+    const imagePos = cmd.indexOf("--image");
+    const redirectPos = cmd.indexOf('< "$FIFONY_PROMPT_FILE"');
+    assert.ok(imagePos < redirectPos, "--image comes before stdin redirect");
+  });
+
+  it("codex: no --image when no images", () => {
+    const cmd = buildCodexCommand({});
+    assert.ok(!cmd.includes("--image"), "no image flag");
+  });
+
+  // ── Planning: images in plan prompt ─────────────────────────────────────
+
+  it("plan prompt includes image paths as visual evidence", async () => {
+    const prompt = await buildPlanPrompt("Fix layout bug", "The header overflows", false, [screenshot1]);
+    assert.ok(prompt.includes("Visual evidence"), "has visual evidence section");
+    assert.ok(prompt.includes(screenshot1), "includes image path");
+  });
+
+  it("plan prompt omits image section when no images", async () => {
+    const prompt = await buildPlanPrompt("Fix layout bug", "The header overflows", false);
+    assert.ok(!prompt.includes("Visual evidence"), "no image section");
+  });
+
+  it("plan command: codex passes --image, claude/gemini do not", () => {
+    const images = [screenshot1];
+    const claudeCmd = getPlanCommand("claude", undefined, images);
+    const codexCmd = getPlanCommand("codex", undefined, images);
+    const geminiCmd = getPlanCommand("gemini", undefined, images);
+
+    assert.ok(!claudeCmd.includes("--image"), "claude: no --image (prompt embedding)");
+    assert.ok(codexCmd.includes("--image"), "codex: has --image flag");
+    assert.ok(!geminiCmd.includes("--image"), "gemini: no --image (prompt embedding)");
+  });
+
+  // ── Execution: images reach the compiled prompt ─────────────────────────
+
+  it("claude execution: images embedded as base64 in prompt", async () => {
+    const ws = mkdtempSync(join(tmpdir(), "fifony-img-exec-"));
+    mkdirSync(join(ws, "worktree"), { recursive: true });
+    const plan = makePlan();
+    const issue = makeIssue({
+      state: "Running",
+      plan,
+      images: [screenshot1],
+      workspacePath: ws,
+      worktreePath: join(ws, "worktree"),
+    } as any);
+    const providerDef = makeProvider("claude", "executor");
+    const compiled = await compileExecution(issue, providerDef, BASE_CONFIG, ws, "", "");
+    assert.ok(compiled, "compilation should succeed");
+    assert.ok(compiled!.prompt.includes("data:image/png;base64,"), "prompt has base64 image");
+    assert.ok(compiled!.prompt.includes("screenshot1.png"), "prompt has filename");
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it("codex execution: images passed as --image flags in command", async () => {
+    const ws = mkdtempSync(join(tmpdir(), "fifony-img-exec-"));
+    mkdirSync(join(ws, "worktree"), { recursive: true });
+    const plan = makePlan();
+    const issue = makeIssue({
+      state: "Running",
+      plan,
+      images: [screenshot1, screenshot2],
+      workspacePath: ws,
+      worktreePath: join(ws, "worktree"),
+    } as any);
+    const providerDef = makeProvider("codex", "executor");
+    const compiled = await compileExecution(issue, providerDef, BASE_CONFIG, ws, "", "");
+    assert.ok(compiled, "compilation should succeed");
+    assert.ok(compiled!.command.includes(`--image "${screenshot1}"`), "command has first image");
+    assert.ok(compiled!.command.includes(`--image "${screenshot2}"`), "command has second image");
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it("gemini execution: images embedded as base64 in prompt", async () => {
+    const ws = mkdtempSync(join(tmpdir(), "fifony-img-exec-"));
+    mkdirSync(join(ws, "worktree"), { recursive: true });
+    const plan = makePlan();
+    const issue = makeIssue({
+      state: "Running",
+      plan,
+      images: [screenshot1],
+      workspacePath: ws,
+      worktreePath: join(ws, "worktree"),
+    } as any);
+    const providerDef = makeProvider("gemini", "executor");
+    const compiled = await compileExecution(issue, providerDef, BASE_CONFIG, ws, "", "");
+    assert.ok(compiled, "compilation should succeed");
+    assert.ok(compiled!.prompt.includes("data:image/png;base64,"), "prompt has base64 image");
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  it("execution with non-existent images: silently skipped", async () => {
+    const ws = mkdtempSync(join(tmpdir(), "fifony-img-exec-"));
+    mkdirSync(join(ws, "worktree"), { recursive: true });
+    const plan = makePlan();
+    const issue = makeIssue({
+      state: "Running",
+      plan,
+      images: ["/nonexistent/ghost.png"],
+      workspacePath: ws,
+      worktreePath: join(ws, "worktree"),
+    } as any);
+    const providerDef = makeProvider("claude", "executor");
+    const compiled = await compileExecution(issue, providerDef, BASE_CONFIG, ws, "", "");
+    assert.ok(compiled, "compilation should succeed even with bad images");
+    assert.ok(!compiled!.prompt.includes("ghost.png"), "missing image not in prompt");
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  after(() => { try { rmSync(imgDir, { recursive: true, force: true }); } catch {} });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 13. CLAUDE DUPLICATED OUTPUT — tokens/cost extraction from duplicated JSON
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("claude output: duplicated JSON result parsing", () => {
+  const ws = mkdtempSync(join(tmpdir(), "fifony-dup-"));
+
+  // Real-world scenario: claude without --bare outputs the result JSON twice
+  const singleResult = JSON.stringify({
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    duration_ms: 196568,
+    num_turns: 29,
+    result: "",
+    total_cost_usd: 0.95,
+    structured_output: {
+      status: "done",
+      summary: "Replaced SVG placeholders with real photos",
+      tools_used: ["Read", "Write", "Edit", "Bash"],
+      skills_used: [],
+      agents_used: [],
+      commands_run: ["pnpm test"],
+    },
+    modelUsage: {
+      "claude-opus-4-6": {
+        inputTokens: 21,
+        outputTokens: 4793,
+        cacheReadInputTokens: 1019193,
+        cacheCreationInputTokens: 31863,
+        costUSD: 0.83,
+      },
+      "claude-haiku-4-5-20251001": {
+        inputTokens: 203,
+        outputTokens: 5041,
+        cacheReadInputTokens: 370008,
+        cacheCreationInputTokens: 47611,
+        costUSD: 0.12,
+      },
+    },
+    usage: {
+      input_tokens: 21,
+      cache_creation_input_tokens: 31863,
+      cache_read_input_tokens: 1019193,
+      output_tokens: 4793,
+    },
+  });
+
+  it("parses single JSON output correctly", () => {
+    const directive = readAgentDirective(ws, singleResult, true);
+    assert.equal(directive.status, "done");
+    assert.ok(directive.tokenUsage, "should extract token usage");
+    assert.ok(directive.tokenUsage!.totalTokens > 0, "total tokens > 0");
+    assert.equal(directive.tokenUsage!.model, "claude-opus-4-6");
+    assert.ok(directive.tokenUsage!.costUsd! > 0, "cost > 0");
+  });
+
+  it("parses duplicated JSON output (claude without --bare artifact)", () => {
+    // Claude sometimes outputs the JSON twice
+    const duplicated = singleResult + "\n\n" + singleResult;
+    const directive = readAgentDirective(ws, duplicated, true);
+    assert.equal(directive.status, "done", "should parse status from first JSON");
+    assert.ok(directive.tokenUsage, "should extract token usage from duplicated output");
+    assert.ok(directive.tokenUsage!.totalTokens > 0, "total tokens > 0");
+    assert.equal(directive.tokenUsage!.model, "claude-opus-4-6");
+  });
+
+  it("parses JSON with leading whitespace/newlines", () => {
+    const withWhitespace = "\n\n  " + singleResult + "\n";
+    const directive = readAgentDirective(ws, withWhitespace, true);
+    assert.equal(directive.status, "done");
+    assert.ok(directive.tokenUsage, "should handle leading whitespace");
+  });
+
+  it("extracts tools_used from structured_output in duplicated JSON", () => {
+    const duplicated = singleResult + "\n" + singleResult;
+    const directive = readAgentDirective(ws, duplicated, true);
+    assert.deepEqual(directive.toolsUsed, ["Read", "Write", "Edit", "Bash"]);
+    assert.deepEqual(directive.commandsRun, ["pnpm test"]);
+  });
+
+  it("extracts cost_usd from claude envelope", () => {
+    const directive = readAgentDirective(ws, singleResult, true);
+    assert.ok(directive.tokenUsage?.costUsd, "should extract costUsd");
+    assert.equal(directive.tokenUsage!.costUsd, 0.95);
+  });
+
+  it("extracts multi-model token breakdown (opus + haiku)", () => {
+    const json = JSON.parse(singleResult);
+    const usage = extractTokenUsage(singleResult, json);
+    assert.ok(usage, "should extract usage");
+    // Total = opus(21 + 1019193 + 31863) + haiku(203 + 370008 + 47611) input
+    //       + opus(4793) + haiku(5041) output
+    const expectedInput = (21 + 1019193 + 31863) + (203 + 370008 + 47611);
+    const expectedOutput = 4793 + 5041;
+    assert.equal(usage!.inputTokens, expectedInput, "input tokens include cache");
+    assert.equal(usage!.outputTokens, expectedOutput, "output tokens from both models");
+    assert.equal(usage!.totalTokens, expectedInput + expectedOutput);
+  });
+
+  after(() => { try { rmSync(ws, { recursive: true, force: true }); } catch {} });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 14. DIFF STATS — parseDiffStats extracts lines/files correctly
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("diff stats: lines added/removed/files changed extraction", () => {
+  it("parses standard git diff --stat output", async () => {
+    const { parseDiffStats } = await import("../src/domains/workspace.ts");
+    const issue = { id: "test-diff", identifier: "#D1" } as any;
+    const stat = `
+ src/components/Hero.tsx  | 15 +++++++--------
+ src/styles.css           |  8 +++++---
+ tests/hero.test.ts       | 22 ++++++++++++++++++++++
+ 3 files changed, 29 insertions(+), 11 deletions(-)
+`;
+    parseDiffStats(issue, stat);
+    assert.equal(issue.filesChanged, 3, "3 files changed");
+    assert.equal(issue.linesAdded, 29, "29 lines added");
+    assert.equal(issue.linesRemoved, 11, "11 lines removed");
+  });
+
+  it("handles single file changes", async () => {
+    const { parseDiffStats } = await import("../src/domains/workspace.ts");
+    const issue = { id: "test-diff-single", identifier: "#D2" } as any;
+    const stat = `
+ README.md | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+`;
+    parseDiffStats(issue, stat);
+    assert.equal(issue.filesChanged, 1);
+    assert.equal(issue.linesAdded, 1);
+    assert.equal(issue.linesRemoved, 1);
+  });
+
+  it("handles additions only", async () => {
+    const { parseDiffStats } = await import("../src/domains/workspace.ts");
+    const issue = { id: "test-diff-add", identifier: "#D3" } as any;
+    const stat = `
+ src/new-file.ts | 50 ++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 50 insertions(+)
+`;
+    parseDiffStats(issue, stat);
+    assert.equal(issue.linesAdded, 50);
+    assert.equal(issue.linesRemoved, 0);
+  });
+
+  it("handles deletions only", async () => {
+    const { parseDiffStats } = await import("../src/domains/workspace.ts");
+    const issue = { id: "test-diff-del", identifier: "#D4" } as any;
+    const stat = `
+ src/dead-code.ts | 100 ---...
+ 1 file changed, 100 deletions(-)
+`;
+    parseDiffStats(issue, stat);
+    assert.equal(issue.linesAdded, 0);
+    assert.equal(issue.linesRemoved, 100);
   });
 });

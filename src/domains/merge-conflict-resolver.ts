@@ -69,12 +69,31 @@ export async function resolveConflictsWithAgent(options: {
     rmSync(tempDir, { recursive: true, force: true });
   }
 
-  // Verify: are there still unmerged files?
+  // Verify: are there still unmerged files in the git index?
   let remainingConflicts: string[] = [];
   try {
     const unmerged = execSync("git diff --name-only --diff-filter=U", { cwd: targetRoot, encoding: "utf8" }).trim();
     remainingConflicts = unmerged ? unmerged.split("\n").filter(Boolean) : [];
   } catch { /* no unmerged files = success */ }
+
+  // Second check: even if git index says "resolved", verify no conflict markers remain in file content.
+  // Agents sometimes do `git add` on files that still contain <<<<<<< markers.
+  if (remainingConflicts.length === 0) {
+    for (const file of conflictFiles) {
+      try {
+        const content = execSync(
+          `grep -l "^<<<<<<<" "${file}" 2>/dev/null || true`,
+          { cwd: targetRoot, encoding: "utf8", timeout: 5_000 },
+        ).trim();
+        if (content) {
+          remainingConflicts.push(file);
+          logger.warn({ file, issueId: issue.id }, "[ConflictResolver] File was staged but still contains conflict markers");
+          // Unstage it so git knows it's not actually resolved
+          try { execSync(`git reset HEAD "${file}"`, { cwd: targetRoot, stdio: "pipe" }); } catch {}
+        }
+      } catch { /* non-critical */ }
+    }
+  }
 
   const resolved = remainingConflicts.length === 0;
   const resolvedFiles = resolved ? conflictFiles : conflictFiles.filter((f) => !remainingConflicts.includes(f));

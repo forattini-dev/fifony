@@ -466,9 +466,9 @@ function ProjectSettings() {
               checked={autoReviewApproval}
               onChange={(e) => setAutoReviewApproval(e.target.checked)}
             />
-            <span className="label-text text-sm">Automatic review approval</span>
+            <span className="label-text text-sm">Auto-approve after review</span>
           </label>
-          <p className="text-xs opacity-50">{autoReviewApproval ? "Reviewer success marks issue done." : "Reviewer success requires manual decision."}</p>
+          <p className="text-xs opacity-50">{autoReviewApproval ? "Issues auto-approve after reviewer success (or if no reviewer is configured)." : "Issues always wait in Pending Decision for manual human approval."}</p>
 
           <button className="btn btn-sm btn-primary" onClick={saveDeliveryConfig} disabled={savingDelivery}>
             {savingDelivery ? <Loader2 className="size-3 animate-spin" /> : "Save delivery settings"}
@@ -503,7 +503,7 @@ function ProjectSettings() {
       )}
 
       <div className="text-xs text-base-content/40">
-        <p>These settings mirror the onboarding setup. Use Workflow for pipeline, Agents for catalog installs and worker concurrency, and Preferences for theme.</p>
+        <p>These settings mirror the onboarding setup. Use Workflow for pipeline, Agents for catalog installs and worker concurrency.</p>
       </div>
     </div>
   );

@@ -36,7 +36,7 @@ export async function refinePlan(
   const { provider: preferred, model: planStageModel } = await resolvePlanStageConfig(config);
 
   const refineStartMs = Date.now();
-  const prompt = await buildRefinePrompt(issue.title, issue.description, issue.plan, feedback);
+  const prompt = await buildRefinePrompt(issue.title, issue.description, issue.plan, feedback, issue.images);
 
   let plan: IssuePlan | null = null;
   let refineUsage: PlanningSessionUsage;

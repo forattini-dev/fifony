@@ -51,6 +51,7 @@ export async function compileReview(
     successCriteria: (plan?.successCriteria ?? []).map((value) => ({ value })),
     deliverables: (plan?.deliverables ?? []).map((value) => ({ value })),
     diffSummary,
+    images: issue.images?.length ? issue.images : undefined,
   });
 
   const adapter = ADAPTERS[reviewer.provider];

@@ -9,7 +9,7 @@ describe("issue drawer tabs", () => {
   it("keeps a stable ordered tab list", () => {
     assert.deepEqual(
       ISSUE_DRAWER_TABS.map((tab) => tab.id),
-      ["overview", "planning", "execution", "review", "diff", "routing", "events"],
+      ["overview", "planning", "execution", "review", "diff", "sessions", "routing", "events"],
     );
   });
 

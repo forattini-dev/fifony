@@ -2,9 +2,11 @@ import { getAnalytics as getTokenAnalytics, getHourlySnapshot } from "../domains
 import { getEcDailyEvents, getEcDailyLines } from "../persistence/store.ts";
 import { logger } from "../concerns/logger.ts";
 import { getApiRuntimeContextOrThrow } from "../persistence/plugins/api-runtime-context.ts";
+import type { DailyBucket } from "../domains/tokens.ts";
+import type { RouteRegistrar } from "./http.ts";
 
-export function registerAnalyticsRoutes(app: any): void {
-  app.get("/api/analytics/tokens", async (c: any) => {
+export function registerAnalyticsRoutes(app: RouteRegistrar): void {
+  app.get("/api/analytics/tokens", async (c) => {
     const [tokenData, ecEvents] = await Promise.all([
       Promise.resolve(getTokenAnalytics()),
       getEcDailyEvents(),
@@ -13,7 +15,7 @@ export function registerAnalyticsRoutes(app: any): void {
     if (ecEvents.length > 0) {
       const eventsByDate = new Map(ecEvents.map((e) => [e.date, e.events]));
       const dateSet = new Set(tokenData.daily.map((d: { date: string }) => d.date));
-      const merged = tokenData.daily.map((d: { date: string; events?: number }) => ({
+      const merged: DailyBucket[] = tokenData.daily.map((d: DailyBucket) => ({
         ...d,
         events: (eventsByDate.get(d.date) || 0) + (d.events || 0),
       }));
@@ -22,23 +24,23 @@ export function registerAnalyticsRoutes(app: any): void {
           merged.push({ date: e.date, inputTokens: 0, outputTokens: 0, totalTokens: 0, events: e.events });
         }
       }
-      merged.sort((a: { date: string }, b: { date: string }) => a.date.localeCompare(b.date));
+      merged.sort((a, b) => a.date.localeCompare(b.date));
       return c.json({ ok: true, ...tokenData, daily: merged });
     }
     return c.json({ ok: true, ...tokenData });
   });
 
-  app.get("/api/analytics/tokens/weekly", async (c: any) => {
+  app.get("/api/analytics/tokens/weekly", async (c) => {
     // Weekly is part of the daily data in the ledger — filter client-side
     return c.json({ ok: true, ...getTokenAnalytics() });
   });
 
-  app.get("/api/analytics/hourly", async (c: any) => {
+  app.get("/api/analytics/hourly", async (c) => {
     const hours = Math.min(parseInt(c.req.query("hours") || "24", 10) || 24, 48);
     return c.json({ ok: true, ...getHourlySnapshot(hours) });
   });
 
-  app.get("/api/analytics/lines", async (c: any) => {
+  app.get("/api/analytics/lines", async (c) => {
     try {
       const days = Math.min(parseInt(c.req.query("days") || "90", 10) || 90, 180);
       const lines = await getEcDailyLines(days);
@@ -49,7 +51,7 @@ export function registerAnalyticsRoutes(app: any): void {
     }
   });
 
-  app.get("/api/analytics/kpis", (c: any) => {
+  app.get("/api/analytics/kpis", (c) => {
     try {
       const context = getApiRuntimeContextOrThrow();
       const doneIssues = context.state.issues.filter(

@@ -111,6 +111,7 @@ function parseCandidate(raw: string, expectedField: EnhancementField): string {
       value?: unknown;
       text?: unknown;
       result?: unknown;
+      response?: unknown;
     };
     const value =
       typeof parsed.value === "string" ? parsed.value.trim() :

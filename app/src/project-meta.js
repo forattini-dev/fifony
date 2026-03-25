@@ -1,42 +1,20 @@
-export const PROJECT_SETTING_ID = "system.projectName";
+import {
+  PROJECT_NAME_SETTING_ID,
+  buildProjectDraft,
+  buildQueueTitle,
+  detectProjectNameFromPath,
+  normalizeProjectName,
+  readSavedProjectName,
+} from "../../src/shared/project-meta.ts";
 
-export function normalizeProjectName(value) {
-  return typeof value === "string"
-    ? value.trim().replace(/\s+/g, " ")
-    : "";
-}
-
-export function detectProjectNameFromPath(path) {
-  const normalizedPath = typeof path === "string"
-    ? path.trim().replace(/[\\/]+$/, "")
-    : "";
-  if (!normalizedPath) return "";
-  const segments = normalizedPath.split(/[\\/]+/).filter(Boolean);
-  return normalizeProjectName(segments.at(-1) || "");
-}
-
-export function readSavedProjectName(settings) {
-  const list = Array.isArray(settings) ? settings : [];
-  return normalizeProjectName(list.find((s) => s?.id === PROJECT_SETTING_ID)?.value);
-}
-
-export function buildQueueTitle(projectName) {
-  const normalizedProjectName = normalizeProjectName(projectName);
-  return normalizedProjectName ? `fifony: ${normalizedProjectName}` : "fifony";
-}
-
-export function buildProjectDraft({ savedProjectName = "", detectedProjectName = "" } = {}) {
-  const saved = normalizeProjectName(savedProjectName);
-  const detected = normalizeProjectName(detectedProjectName);
-  const projectName = saved || detected;
-
-  return {
-    projectName,
-    detectedProjectName: detected,
-    source: saved ? "saved" : detected ? "detected" : "missing",
-    requiresManualEntry: !projectName,
-  };
-}
+export const PROJECT_SETTING_ID = PROJECT_NAME_SETTING_ID;
+export {
+  buildProjectDraft,
+  buildQueueTitle,
+  detectProjectNameFromPath,
+  normalizeProjectName,
+  readSavedProjectName,
+};
 
 export function resolveProjectMeta(settings, runtimeState = {}) {
   const savedProjectName = readSavedProjectName(settings);

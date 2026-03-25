@@ -377,8 +377,15 @@ export function buildExecutionPayload(
     })),
 
     tooling: {
-      skills: plan.suggestedSkills || [],
-      agents: plan.suggestedAgents || [],
+      skills: (plan.suggestedSkills || []).map((name) => ({
+        name,
+        why: "Suggested by the planner for this issue.",
+      })),
+      subagents: (plan.suggestedAgents || []).map((name) => ({
+        name,
+        role: "specialist",
+        why: "Suggested by the planner for parallel or specialized work.",
+      })),
     },
 
     targetPaths: plan.suggestedPaths || [],

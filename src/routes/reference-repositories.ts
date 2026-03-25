@@ -6,6 +6,7 @@ import {
 } from "../domains/project.ts";
 import { TARGET_ROOT } from "../concerns/constants.ts";
 import type { ReferenceImportKind } from "../domains/project.ts";
+import type { RouteRegistrar } from "./http.ts";
 import { discoverSkills, discoverAgents, discoverCommands } from "../agents/skills.ts";
 import { updateClaudeMdManagedBlock } from "../agents/claude-md-manager.ts";
 
@@ -23,8 +24,8 @@ function normalizeReferenceKind(value: unknown): ReferenceImportKind {
   throw new Error(`Invalid import kind: ${normalized}`);
 }
 
-export function registerReferenceRepositoryRoutes(app: any): void {
-  app.get("/api/reference-repositories", async (c: any) => {
+export function registerReferenceRepositoryRoutes(app: RouteRegistrar): void {
+  app.get("/api/reference-repositories", async (c) => {
     const repositories = listReferenceRepositories();
     return c.json({
       ok: true,
@@ -32,7 +33,7 @@ export function registerReferenceRepositoryRoutes(app: any): void {
     });
   });
 
-  app.post("/api/reference-repositories/sync", async (c: any) => {
+  app.post("/api/reference-repositories/sync", async (c) => {
     try {
       const payload = await c.req.json().catch(() => ({})) as { repository?: string };
       const repository = typeof payload?.repository === "string"
@@ -54,7 +55,7 @@ export function registerReferenceRepositoryRoutes(app: any): void {
     }
   });
 
-  app.post("/api/reference-repositories/import", async (c: any) => {
+  app.post("/api/reference-repositories/import", async (c) => {
     try {
       const payload = await c.req.json() as {
         repository?: string;

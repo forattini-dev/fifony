@@ -2,6 +2,20 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "../concerns/logger.ts";
 import { listReferenceRepositories, collectArtifacts } from "../domains/project.js";
+import { detectAvailableProviders } from "./providers.ts";
+
+/** Get CLI config directory names for all available providers. */
+function getActiveProviderDirs(): string[] {
+  const providers = detectAvailableProviders();
+  const dirMap: Record<string, string> = { claude: ".claude", codex: ".codex", gemini: ".gemini" };
+  const dirs = providers
+    .filter((p) => p.available)
+    .map((p) => dirMap[p.name])
+    .filter(Boolean);
+  // Always include .claude as minimum (most universal format)
+  if (!dirs.includes(".claude")) dirs.push(".claude");
+  return [...new Set(dirs)];
+}
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -140,16 +154,7 @@ export function installAgents(
 ): InstallResult {
   const result: InstallResult = { installed: [], skipped: [], errors: [] };
   const catalogMap = new Map(catalog.map((entry) => [entry.name, entry]));
-  const agentsDir = join(targetRoot, ".claude", "agents");
-
-  // Ensure directory exists
-  try {
-    mkdirSync(agentsDir, { recursive: true });
-  } catch (error) {
-    logger.error({ err: error, path: agentsDir }, "Failed to create agents directory");
-    result.errors.push({ name: "_directory", error: `Failed to create ${agentsDir}` });
-    return result;
-  }
+  const providerDirs = getActiveProviderDirs();
 
   for (const name of agentNames) {
     const entry = catalogMap.get(name);
@@ -158,22 +163,29 @@ export function installAgents(
       continue;
     }
 
-    const filePath = join(agentsDir, `${name}.md`);
-    if (existsSync(filePath)) {
-      result.skipped.push(name);
-      continue;
+    let installedAny = false;
+    let skippedAll = true;
+
+    // Install into each active provider's agents directory
+    for (const providerDir of providerDirs) {
+      const agentsDir = join(targetRoot, providerDir, "agents");
+      try { mkdirSync(agentsDir, { recursive: true }); } catch {}
+
+      const filePath = join(agentsDir, `${name}.md`);
+      if (existsSync(filePath)) continue;
+
+      skippedAll = false;
+      try {
+        writeFileSync(filePath, entry.content, "utf8");
+        installedAny = true;
+        logger.info({ agent: name, path: filePath, provider: providerDir }, "Agent installed");
+      } catch (error) {
+        result.errors.push({ name, error: `${providerDir}: ${error instanceof Error ? error.message : String(error)}` });
+      }
     }
 
-    try {
-      writeFileSync(filePath, entry.content, "utf8");
-      result.installed.push(name);
-      logger.info({ agent: name, path: filePath }, "Agent installed");
-    } catch (error) {
-      result.errors.push({
-        name,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+    if (installedAny) result.installed.push(name);
+    else if (skippedAll) result.skipped.push(name);
   }
 
   return result;
@@ -188,16 +200,7 @@ export function installSkills(
 ): InstallResult {
   const result: InstallResult = { installed: [], skipped: [], errors: [] };
   const catalogMap = new Map(catalog.map((entry) => [entry.name, entry]));
-  const skillsDir = join(targetRoot, ".claude", "skills");
-
-  // Ensure directory exists
-  try {
-    mkdirSync(skillsDir, { recursive: true });
-  } catch (error) {
-    logger.error({ err: error, path: skillsDir }, "Failed to create skills directory");
-    result.errors.push({ name: "_directory", error: `Failed to create ${skillsDir}` });
-    return result;
-  }
+  const providerDirs = getActiveProviderDirs();
 
   for (const name of skillNames) {
     const entry = catalogMap.get(name);
@@ -206,43 +209,47 @@ export function installSkills(
       continue;
     }
 
-    const skillDir = join(skillsDir, name);
-    const filePath = join(skillDir, "SKILL.md");
-    if (existsSync(filePath)) {
-      result.skipped.push(name);
-      continue;
-    }
+    let installedAny = false;
+    let skippedAll = true;
 
-    try {
-      mkdirSync(skillDir, { recursive: true });
+    for (const providerDir of providerDirs) {
+      const skillsDir = join(targetRoot, providerDir, "skills");
+      const skillDir = join(skillsDir, name);
+      const filePath = join(skillDir, "SKILL.md");
 
-      if (entry.installType === "bundled" && entry.content) {
-        writeFileSync(filePath, entry.content, "utf8");
-      } else {
-        // For reference skills, create a SKILL.md pointing to the external source
-        const referenceContent = [
-          `# ${entry.displayName}`,
-          "",
-          entry.description,
-          "",
-          `**Source**: ${entry.source}`,
-          entry.url ? `**URL**: ${entry.url}` : "",
-          "",
-          `> This skill references an external resource. Install it from the source above.`,
-        ]
-          .filter(Boolean)
-          .join("\n");
-        writeFileSync(filePath, referenceContent, "utf8");
+      if (existsSync(filePath)) continue;
+      skippedAll = false;
+
+      try {
+        mkdirSync(skillDir, { recursive: true });
+
+        if (entry.installType === "bundled" && entry.content) {
+          writeFileSync(filePath, entry.content, "utf8");
+        } else {
+          const referenceContent = [
+            `# ${entry.displayName}`,
+            "",
+            entry.description,
+            "",
+            `**Source**: ${entry.source}`,
+            entry.url ? `**URL**: ${entry.url}` : "",
+            "",
+            `> This skill references an external resource. Install it from the source above.`,
+          ]
+            .filter(Boolean)
+            .join("\n");
+          writeFileSync(filePath, referenceContent, "utf8");
+        }
+
+        installedAny = true;
+        logger.info({ skill: name, path: filePath, type: entry.installType, provider: providerDir }, "Skill installed");
+      } catch (error) {
+        result.errors.push({ name, error: `${providerDir}: ${error instanceof Error ? error.message : String(error)}` });
       }
-
-      result.installed.push(name);
-      logger.info({ skill: name, path: filePath, type: entry.installType }, "Skill installed");
-    } catch (error) {
-      result.errors.push({
-        name,
-        error: error instanceof Error ? error.message : String(error),
-      });
     }
+
+    if (installedAny) result.installed.push(name);
+    else if (skippedAll) result.skipped.push(name);
   }
 
   return result;

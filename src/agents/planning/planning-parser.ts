@@ -41,6 +41,13 @@ export function tryBuildPlan(parsed: any): IssuePlan | null {
     summary: String(summary),
     estimatedComplexity: complexities.includes(parsed.estimatedComplexity) ? parsed.estimatedComplexity
       : complexities.includes(parsed.complexity) ? parsed.complexity : "medium",
+    executionStrategy: parsed.executionStrategy && typeof parsed.executionStrategy === "object"
+      ? {
+        approach: String(parsed.executionStrategy.approach || ""),
+        whyThisApproach: String(parsed.executionStrategy.whyThisApproach || parsed.executionStrategy.rationale || ""),
+        alternativesConsidered: toStringArray(parsed.executionStrategy.alternativesConsidered),
+      }
+      : undefined,
 
     steps: parsed.steps.map((s: any, i: number) => ({
       step: typeof s.step === "number" ? s.step : typeof s.id === "number" ? s.id : i + 1,

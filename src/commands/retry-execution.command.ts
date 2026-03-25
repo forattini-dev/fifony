@@ -11,7 +11,7 @@ export type RetryExecutionInput = {
  * Retry execution from Blocked state.
  *
  * Semantics: the *same plan* is re-executed with a fresh attempt.
- * - Increments `attempts` (global retry budget)
+ * - Lets the FSM increment `attempts` on the `UNBLOCK` transition
  * - Does NOT touch `planVersion`, `executeAttempt`, or `reviewAttempt`
  *   (those are incremented at execution/review time by the runner)
  * - Clears transient error state
@@ -37,10 +37,8 @@ export async function retryExecutionCommand(
     );
   }
 
-  issue.attempts += 1;
-
   await transitionIssueCommand(
-    { issue, target: "Queued", note: note ?? `Retry execution for ${issue.identifier} (attempt ${issue.attempts}).` },
+    { issue, target: "Queued", note: note ?? `Retry execution for ${issue.identifier} (attempt ${(issue.attempts ?? 0) + 1}).` },
     deps,
   );
   // FSM onEnterQueued handles: archive previousAttemptSummaries, clear lastError/nextRetryAt, enqueue

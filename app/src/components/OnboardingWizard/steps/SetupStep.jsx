@@ -377,7 +377,7 @@ function ReviewApprovalCard({ autoReviewApproval, setAutoReviewApproval }) {
       </label>
       <p className="text-xs text-base-content/50">
         {autoReviewApproval
-          ? "Checked: issues go directly to Done when reviewer succeeds."
+          ? "Checked: issues move to Approved when the reviewer succeeds, or when no reviewer is configured."
           : "Unchecked: issues stop in Pending Decision and require manual approval action."
         }
       </p>

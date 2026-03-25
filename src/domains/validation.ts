@@ -23,7 +23,7 @@ export async function runValidationGate(issue: IssueEntry, config: RuntimeConfig
     const child = execFile("sh", ["-c", command], {
       cwd,
       encoding: "utf8",
-      timeout: 300_000,
+      timeout: 1_800_000,
       maxBuffer: 2 * 1024 * 1024,
     }, (err, stdout, stderr) => {
       const combined = (stdout || "") + (stderr || "");

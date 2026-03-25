@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Code, FlaskConical, ThumbsUp, RotateCcw, XCircle, AlertTriangle,
   CheckCircle2, GitMerge, Rocket, Paperclip, Loader,
-  ExternalLink, ImageIcon,
+  ExternalLink, ImageIcon, History, Wrench, Zap, Bot,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../api.js";
@@ -25,6 +25,7 @@ export function ReviewTab({ issue, issueId, onStateChange, onRetry }) {
   const [tested, setTested] = useState(false);
   const [testBusy, setTestBusy] = useState(false);
   const [testError, setTestError] = useState(null);
+  const [testWorkspacePath, setTestWorkspacePath] = useState(issue.testWorkspacePath ?? null);
 
   // ── Evidence images ─────────────────────────────────────────────────────────
   const [reviewImages, setReviewImages] = useState(issue.images ?? []);
@@ -44,6 +45,7 @@ export function ReviewTab({ issue, issueId, onStateChange, onRetry }) {
 
   // ── Derived state ───────────────────────────────────────────────────────────
   const isInReview = issue.state === "Reviewing" || issue.state === "PendingDecision";
+  const canDecide = issue.state === "PendingDecision"; // Decision actions only after review completes
   const isApproved = issue.state === "Approved";
   const isMergedState = issue.state === "Merged";
   const isMerged = !!issue.mergedAt || isMergedState;
@@ -75,6 +77,7 @@ export function ReviewTab({ issue, issueId, onStateChange, onRetry }) {
   // ── Reset on issue change ───────────────────────────────────────────────────
   useEffect(() => {
     setTested(!!issue.testApplied);
+    setTestWorkspacePath(issue.testWorkspacePath ?? null);
     setDiffData(null);
     setExpandedFile(null);
     setMergePreview(null);
@@ -84,7 +87,7 @@ export function ReviewTab({ issue, issueId, onStateChange, onRetry }) {
     setReworkNote("");
     setMergeError(null);
     setReviewImages(issue.images ?? []);
-  }, [issueId, issue.testApplied]);
+  }, [issueId, issue.testApplied, issue.testWorkspacePath]);
 
   useEffect(() => { fetchDiff(); }, [fetchDiff]);
   const MERGE_ELIGIBLE_STATES = ["Reviewing", "PendingDecision", "Approved"];
@@ -143,14 +146,16 @@ export function ReviewTab({ issue, issueId, onStateChange, onRetry }) {
     setTestBusy(true);
     setTestError(null);
     try {
-      await api.post(`/issues/${encodeURIComponent(issue.id)}/try`);
+      const res = await api.post(`/issues/${encodeURIComponent(issue.id)}/try`);
       setTested(true);
+      setTestWorkspacePath(res?.issue?.testWorkspacePath ?? issue.testWorkspacePath ?? null);
+      qc.invalidateQueries({ queryKey: ["runtime-state"] });
     } catch (err) {
       setTestError(err.message);
     } finally {
       setTestBusy(false);
     }
-  }, [issue.id]);
+  }, [issue.id, issue.testWorkspacePath, qc]);
 
   const handleRevertTry = useCallback(async () => {
     setTestBusy(true);
@@ -158,12 +163,14 @@ export function ReviewTab({ issue, issueId, onStateChange, onRetry }) {
     try {
       await api.post(`/issues/${encodeURIComponent(issue.id)}/revert-try`);
       setTested(false);
+      setTestWorkspacePath(null);
+      qc.invalidateQueries({ queryKey: ["runtime-state"] });
     } catch (err) {
       setTestError(err.message);
     } finally {
       setTestBusy(false);
     }
-  }, [issue.id]);
+  }, [issue.id, qc]);
 
   const handleApproveAndMerge = useCallback(async () => {
     setMergeBusy(true);
@@ -351,7 +358,7 @@ export function ReviewTab({ issue, issueId, onStateChange, onRetry }) {
         {gitClean === false && (
           <div className="alert alert-warning text-xs py-2 gap-1.5 mt-3">
             <AlertTriangle className="size-3.5 shrink-0" />
-            <span>Project has uncommitted changes — merge and test will fail. Commit or stash them first.</span>
+            <span>Project has uncommitted changes — merge preview and merge will fail until you commit or stash them first.</span>
           </div>
         )}
 
@@ -376,7 +383,7 @@ export function ReviewTab({ issue, issueId, onStateChange, onRetry }) {
           <input type="checkbox" />
           <div className="collapse-title text-sm font-semibold flex items-center gap-1.5 py-3 min-h-0">
             <FlaskConical className="size-4 opacity-50" />
-            Optional: Test in your workspace
+            Optional: Create isolated test workspace
           </div>
           <div className="collapse-content space-y-4">
             {testError && (
@@ -388,23 +395,28 @@ export function ReviewTab({ issue, issueId, onStateChange, onRetry }) {
             {!tested ? (
               <div className="space-y-3">
                 <p className="text-xs opacity-60">
-                  Apply the branch changes to your workspace to test with hot reload before deciding.
+                  Create a separate workspace with the issue branch checked out so you can run and inspect it safely before deciding.
                 </p>
                 <button
                   className="btn btn-info btn-sm btn-soft gap-1.5 w-full"
                   onClick={handleTryLive}
-                  disabled={testBusy || gitClean === false}
-                  title={gitClean === false ? "Cannot test — working tree has uncommitted changes" : "Apply changes to workspace for testing"}
+                  disabled={testBusy}
+                  title="Create an isolated test workspace"
                 >
                   {testBusy ? <Loader className="size-3.5 animate-spin" /> : <FlaskConical className="size-3.5" />}
-                  Apply Changes
+                  Create Test Workspace
                 </button>
               </div>
             ) : (
               <div className="space-y-3">
                 <div className="alert alert-info text-xs py-2 gap-1.5">
                   <FlaskConical className="size-3.5 shrink-0" />
-                  <span>Changes applied to your dev server. Test them, then decide below.</span>
+                  <div className="space-y-1">
+                    <div>Isolated test workspace ready. Run your app from there if you want to verify behavior before deciding.</div>
+                    {testWorkspacePath && (
+                      <div className="font-mono break-all opacity-80">{testWorkspacePath}</div>
+                    )}
+                  </div>
                 </div>
                 <button
                   className="btn btn-warning btn-sm btn-soft gap-1.5 w-full"
@@ -412,7 +424,7 @@ export function ReviewTab({ issue, issueId, onStateChange, onRetry }) {
                   disabled={testBusy}
                 >
                   {testBusy ? <Loader className="size-3.5 animate-spin" /> : <RotateCcw className="size-3.5" />}
-                  Revert Changes
+                  Remove Test Workspace
                 </button>
               </div>
             )}
@@ -461,9 +473,9 @@ export function ReviewTab({ issue, issueId, onStateChange, onRetry }) {
       </Section>
 
 
-      {/* ── Phase 3: Decision ──────────────────────────────────────────────── */}
+      {/* ── Phase 3: Decision (only after review completes → PendingDecision) */}
 
-      {isInReview && (
+      {canDecide && (
         <Section title="Decision" icon={ThumbsUp}>
           <div className="space-y-4">
             {mergeError && (
@@ -548,6 +560,133 @@ export function ReviewTab({ issue, issueId, onStateChange, onRetry }) {
           </div>
         </Section>
       )}
+      {/* ── History: previous attempts, plans, merge results ──────────── */}
+      <AttemptHistory issue={issue} />
     </div>
+  );
+}
+
+// ── Attempt History Section ───────────────────────────────────────────────
+
+function AttemptHistory({ issue }) {
+  const attempts = issue.previousAttemptSummaries || [];
+  const planHistory = issue.planHistory || [];
+  const resolution = issue.mergeResult?.conflictResolution;
+  const rebase = issue.rebaseResult;
+  const hasHistory = attempts.length > 0 || planHistory.length > 0 || resolution || rebase;
+  const hasUsage = issue.toolsUsed?.length || issue.skillsUsed?.length || issue.agentsUsed?.length;
+
+  if (!hasHistory && !hasUsage) return null;
+
+  return (
+    <Section title="History & Insights" icon={History}>
+      <div className="space-y-3">
+        {/* Tools/Skills/Agents used across all turns */}
+        {hasUsage && (
+          <div className="space-y-1.5">
+            {issue.toolsUsed?.length > 0 && (
+              <div className="flex flex-wrap gap-1 items-center">
+                <Wrench className="size-3 opacity-40" />
+                <span className="text-[10px] uppercase tracking-wide opacity-40">Tools:</span>
+                {issue.toolsUsed.map((t) => (
+                  <span key={t} className="badge badge-xs badge-outline font-mono">{t}</span>
+                ))}
+              </div>
+            )}
+            {issue.skillsUsed?.length > 0 && (
+              <div className="flex flex-wrap gap-1 items-center">
+                <Zap className="size-3 opacity-40" />
+                <span className="text-[10px] uppercase tracking-wide opacity-40">Skills:</span>
+                {issue.skillsUsed.map((s) => (
+                  <span key={s} className="badge badge-xs badge-primary font-mono">{s}</span>
+                ))}
+              </div>
+            )}
+            {issue.agentsUsed?.length > 0 && (
+              <div className="flex flex-wrap gap-1 items-center">
+                <Bot className="size-3 opacity-40" />
+                <span className="text-[10px] uppercase tracking-wide opacity-40">Agents:</span>
+                {issue.agentsUsed.map((a) => (
+                  <span key={a} className="badge badge-xs badge-secondary font-mono">{a}</span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Merge conflict resolution result */}
+        {resolution && (
+          <div className={`alert text-xs py-2 gap-1.5 ${resolution.resolved ? "alert-success" : "alert-warning"}`}>
+            <GitMerge className="size-3.5 shrink-0" />
+            <div>
+              <div className="font-semibold">
+                {resolution.resolved
+                  ? `Conflicts auto-resolved by ${resolution.provider}`
+                  : `Conflict resolution attempted (${resolution.provider}) — ${resolution.resolvedFiles.length} of ${issue.mergeResult?.conflictFiles?.length || "?"} resolved`}
+              </div>
+              <div className="opacity-60">
+                {Math.round(resolution.durationMs / 1000)}s · {resolution.resolvedAt ? new Date(resolution.resolvedAt).toLocaleTimeString() : ""}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Rebase result */}
+        {rebase && (
+          <div className={`alert text-xs py-2 gap-1.5 ${rebase.success ? "alert-info" : "alert-warning"}`}>
+            <GitMerge className="size-3.5 shrink-0" />
+            {rebase.success
+              ? "Auto-rebase succeeded — branch was up to date before merge."
+              : `Auto-rebase failed — ${rebase.conflictFiles.length} conflict(s): ${rebase.conflictFiles.join(", ")}`}
+          </div>
+        )}
+
+        {/* Previous failed attempts */}
+        {attempts.length > 0 && (
+          <div>
+            <div className="text-xs font-semibold opacity-50 mb-1.5">Previous Attempts ({attempts.length})</div>
+            <div className="space-y-1.5">
+              {attempts.map((a, i) => (
+                <div key={i} className="bg-base-200 rounded-lg p-2 text-xs space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className={`badge badge-xs ${a.phase === "review" ? "badge-secondary" : a.phase === "execute" ? "badge-primary" : "badge-error"}`}>
+                      {a.phase || "unknown"}
+                    </span>
+                    <span className="font-mono opacity-50">v{a.planVersion}a{a.executeAttempt}</span>
+                    <span className="opacity-40 ml-auto">{new Date(a.timestamp).toLocaleString()}</span>
+                  </div>
+                  <p className="opacity-70 line-clamp-2">{a.error}</p>
+                  {a.insight && (
+                    <div className="text-[10px] opacity-50">
+                      {a.insight.errorType}: {a.insight.rootCause}
+                      {a.insight.suggestion && <span className="block">{a.insight.suggestion}</span>}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Plan history (previous plan versions) */}
+        {planHistory.length > 0 && (
+          <div>
+            <div className="text-xs font-semibold opacity-50 mb-1.5">Plan History ({planHistory.length} previous)</div>
+            <div className="space-y-1">
+              {planHistory.map((plan, i) => (
+                <div key={i} className="bg-base-200 rounded-lg p-2 text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="badge badge-xs badge-info">v{i + 1}</span>
+                    <span className="truncate flex-1 opacity-70">{plan.summary}</span>
+                    <span className="opacity-40">{plan.steps?.length || 0} steps</span>
+                    <span className="badge badge-xs badge-ghost">{plan.estimatedComplexity}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </Section>
   );
 }

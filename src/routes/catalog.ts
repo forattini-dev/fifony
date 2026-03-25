@@ -1,5 +1,6 @@
 import { logger } from "../concerns/logger.ts";
 import { TARGET_ROOT } from "../concerns/constants.ts";
+import type { RouteRegistrar } from "./http.ts";
 import {
   loadAgentCatalog,
   loadSkillCatalog,
@@ -10,8 +11,8 @@ import {
 import { discoverSkills, discoverAgents, discoverCommands } from "../agents/skills.ts";
 import { updateClaudeMdManagedBlock } from "../agents/claude-md-manager.ts";
 
-export function registerCatalogRoutes(app: any): void {
-  app.get("/api/catalog/agents", async (c: any) => {
+export function registerCatalogRoutes(app: RouteRegistrar): void {
+  app.get("/api/catalog/agents", async (c) => {
     const domainsParam = c.req.query("domains");
     const domains = typeof domainsParam === "string"
       ? domainsParam.split(",").map((d: string) => d.trim()).filter(Boolean)
@@ -20,12 +21,12 @@ export function registerCatalogRoutes(app: any): void {
     return c.json({ agents: domains.length ? filterByDomains(catalog, domains) : catalog });
   });
 
-  app.get("/api/catalog/skills", async (c: any) => {
+  app.get("/api/catalog/skills", async (c) => {
     const catalog = loadSkillCatalog();
     return c.json({ skills: catalog });
   });
 
-  app.post("/api/install/agents", async (c: any) => {
+  app.post("/api/install/agents", async (c) => {
     try {
       const payload = await c.req.json() as { agents?: string[] };
       const agentNames = Array.isArray(payload.agents) ? payload.agents.filter((a): a is string => typeof a === "string") : [];
@@ -44,7 +45,7 @@ export function registerCatalogRoutes(app: any): void {
     }
   });
 
-  app.post("/api/install/skills", async (c: any) => {
+  app.post("/api/install/skills", async (c) => {
     try {
       const payload = await c.req.json() as { skills?: string[] };
       const skillNames = Array.isArray(payload.skills) ? payload.skills.filter((s): s is string => typeof s === "string") : [];

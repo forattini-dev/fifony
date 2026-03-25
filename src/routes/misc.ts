@@ -1,6 +1,7 @@
 import type { RuntimeState } from "../types.ts";
 import { logger } from "../concerns/logger.ts";
 import { toStringValue } from "../concerns/helpers.ts";
+import type { RouteRegistrar } from "./http.ts";
 import { isAgentStillRunning } from "../agents/agent.ts";
 import { addEvent } from "../domains/issues.ts";
 import { persistState } from "../persistence/store.ts";
@@ -27,21 +28,21 @@ import { basename, extname, join } from "node:path";
 import { now } from "../concerns/helpers.ts";
 
 export function registerMiscRoutes(
-  app: any,
+  app: RouteRegistrar,
   state: RuntimeState,
 ): void {
-  app.get("/api/queue/stats", async (c: any) => {
+  app.get("/api/queue/stats", async (c) => {
     const { getQueueStats } = await import("../persistence/plugins/queue-workers.ts");
     return c.json(await getQueueStats());
   });
 
-  app.post("/api/issues/:id/push", async (c: any) => {
+  app.post("/api/issues/:id/push", async (c) => {
     const issueId = parseIssue(c);
     if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
     const issue = findIssue(state, issueId);
     if (!issue) return c.json({ ok: false, error: "Issue not found." }, 404);
-    if (!["Approved", "Reviewing", "PendingDecision"].includes(issue.state)) {
-      return c.json({ ok: false, error: `Issue ${issue.identifier} must be in Approved, Reviewing, or PendingDecision state to push. Current state: ${issue.state}.` }, 409);
+    if (!["Approved", "PendingDecision"].includes(issue.state)) {
+      return c.json({ ok: false, error: `Issue ${issue.identifier} must be in Approved or PendingDecision state to push. Reviewing must complete first. Current state: ${issue.state}.` }, 409);
     }
     try {
       const container = getContainer();
@@ -53,7 +54,7 @@ export function registerMiscRoutes(
     }
   });
 
-  app.get("/api/live/:id/stream", (c: any) => {
+  app.get("/api/live/:id/stream", (c) => {
     const issueId = parseIssue(c);
     if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
     const issue = findIssue(state, issueId);
@@ -134,7 +135,7 @@ export function registerMiscRoutes(
     });
   });
 
-  app.get("/api/live/:id", async (c: any) => {
+  app.get("/api/live/:id", async (c) => {
     try {
       const issueId = parseIssue(c);
       if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
@@ -191,7 +192,7 @@ export function registerMiscRoutes(
     }
   });
 
-  app.get("/api/diff/:id", async (c: any) => {
+  app.get("/api/diff/:id", async (c) => {
     try {
       const issueId = parseIssue(c);
       if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
@@ -209,8 +210,9 @@ export function registerMiscRoutes(
             `git diff --no-color "${issue.baseBranch}"..."${issue.branchName}"`,
             { encoding: "utf8", maxBuffer: 4 * 1024 * 1024, timeout: 15_000, cwd: TARGET_ROOT, stdio: "pipe" },
           );
-        } catch (err: any) {
-          raw = err.stdout || "";
+        } catch (error) {
+          const failedDiff = error as { stdout?: string };
+          raw = typeof failedDiff.stdout === "string" ? failedDiff.stdout : "";
         }
       } else {
         // Legacy: no-index diff between SOURCE_ROOT and workspace
@@ -222,8 +224,9 @@ export function registerMiscRoutes(
             `git diff --no-index --no-color -- "${SOURCE_ROOT}" "${wp}"`,
             { encoding: "utf8", maxBuffer: 4 * 1024 * 1024, timeout: 15_000 },
           );
-        } catch (err: any) {
-          raw = err.stdout || "";
+        } catch (error) {
+          const failedDiff = error as { stdout?: string };
+          raw = typeof failedDiff.stdout === "string" ? failedDiff.stdout : "";
         }
       }
 
@@ -277,7 +280,7 @@ export function registerMiscRoutes(
     }
   });
 
-  app.get("/api/git/status", async (c: any) => {
+  app.get("/api/git/status", async (c) => {
     try {
       return c.json(getGitRepoStatus(TARGET_ROOT));
     } catch (error) {
@@ -285,7 +288,7 @@ export function registerMiscRoutes(
     }
   });
 
-  app.post("/api/git/init", async (c: any) => {
+  app.post("/api/git/init", async (c) => {
     try {
       const status = initializeGitRepoForWorktrees(TARGET_ROOT);
       state.config.defaultBranch = status.branch || state.config.defaultBranch || "main";
@@ -296,7 +299,7 @@ export function registerMiscRoutes(
     }
   });
 
-  app.post("/api/git/branch", async (c: any) => {
+  app.post("/api/git/branch", async (c) => {
     try {
       const { branchName } = await c.req.json() as { branchName?: string };
       if (!branchName || !/^[a-zA-Z0-9/_.-]+$/.test(branchName)) {
@@ -311,7 +314,7 @@ export function registerMiscRoutes(
     }
   });
 
-  app.post("/api/git/switch", async (c: any) => {
+  app.post("/api/git/switch", async (c) => {
     try {
       const { branchName } = await c.req.json() as { branchName?: string };
       if (!branchName || !/^[a-zA-Z0-9/_.-]+$/.test(branchName)) {
@@ -334,7 +337,7 @@ export function registerMiscRoutes(
     }
   });
 
-  app.get("/api/events/feed", async (c: any) => {
+  app.get("/api/events/feed", async (c) => {
     const since = c.req.query("since");
     const issueId = c.req.query("issueId");
     const kind = c.req.query("kind");
@@ -346,7 +349,7 @@ export function registerMiscRoutes(
     return c.json({ events: events.slice(0, 200) });
   });
 
-  app.get("/api/gitignore/status", async (c: any) => {
+  app.get("/api/gitignore/status", async (c) => {
     try {
       const gitignorePath = join(TARGET_ROOT, ".gitignore");
       if (!existsSync(gitignorePath)) {
@@ -362,7 +365,7 @@ export function registerMiscRoutes(
     }
   });
 
-  app.post("/api/gitignore/add", async (c: any) => {
+  app.post("/api/gitignore/add", async (c) => {
     try {
       const gitignorePath = join(TARGET_ROOT, ".gitignore");
       if (!existsSync(gitignorePath)) {
@@ -384,7 +387,7 @@ export function registerMiscRoutes(
     }
   });
 
-  app.get("/api/issues/:id/outputs", async (c: any) => {
+  app.get("/api/issues/:id/outputs", async (c) => {
     try {
       const issueId = parseIssue(c);
       if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
@@ -410,13 +413,13 @@ export function registerMiscRoutes(
     }
   });
 
-  app.get("/api/issues/:id/outputs/:filename", async (c: any) => {
+  app.get("/api/issues/:id/outputs/:filename", async (c) => {
     try {
       const issueId = parseIssue(c);
       if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
       const issue = findIssue(state, issueId);
       if (!issue) return c.json({ ok: false, error: "Issue not found." }, 404);
-      const filename = c.req.param?.("filename") ?? c.req.params?.filename ?? "";
+      const filename = c.req.param("filename") ?? "";
       if (!filename) return c.json({ ok: false, error: "Filename is required." }, 400);
       const safeName = basename(filename);
       if (safeName !== filename || !safeName.endsWith(".stdout.log")) {
@@ -433,7 +436,7 @@ export function registerMiscRoutes(
     }
   });
 
-  app.post("/api/attachments/upload", async (c: any) => {
+  app.post("/api/attachments/upload", async (c) => {
     try {
       const payload = await c.req.json() as { files?: Array<{ name: string; data: string; type: string }> };
       if (!Array.isArray(payload.files) || payload.files.length === 0) {

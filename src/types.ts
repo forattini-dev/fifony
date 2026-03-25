@@ -93,8 +93,10 @@ export type IssueEntry = {
   mergedReason?: string;
   /** Why the issue was cancelled — set for both auto and manual cancels */
   cancelledReason?: string;
-  /** Whether a test squash (git merge --squash) is currently applied to TARGET_ROOT */
+  /** Whether an isolated test workspace is currently provisioned for this issue */
   testApplied?: boolean;
+  /** Absolute path to the isolated test workspace created for manual verification */
+  testWorkspacePath?: string;
   /** ISO timestamp when issue entered Reviewing state (last time, for code review turnaround KPI) */
   reviewingAt?: string;
   /** Planning process status — driven by scheduler-managed planning job */
@@ -168,10 +170,17 @@ export type IssuePlanRisk = {
   mitigation: string;
 };
 
+export type IssuePlanExecutionStrategy = {
+  approach: string;
+  whyThisApproach: string;
+  alternativesConsidered?: string[];
+};
+
 export type IssuePlan = {
   // Core
   summary: string;
   estimatedComplexity: "trivial" | "low" | "medium" | "high";
+  executionStrategy?: IssuePlanExecutionStrategy;
 
   // Structured plan (new format with phases)
   phases?: IssuePlanPhase[];
@@ -219,7 +228,7 @@ export type RuntimeConfig = {
   runMode: "filesystem";
   defaultBranch?: string;
   mergeMode?: "local" | "push-pr";
-  /** If true, review approval can still be automatic after reviewer success; if false, reviewer success waits for manual approval. */
+  /** When true AND no reviewer is configured, issues auto-approve after execution. When true AND a reviewer IS configured, issues auto-approve after reviewer success. When false, issues always wait in PendingDecision for manual human approval. */
   autoReviewApproval: boolean;
   testCommand?: string;
   prBaseBranch?: string;
@@ -493,7 +502,7 @@ export type S3dbModule = {
     getLastNDays?: (resource: string, field: string, days?: number, options?: Record<string, unknown>) => Promise<unknown[]>;
     getLastNWeeks?: (resource: string, field: string, weeks?: number, options?: Record<string, unknown>) => Promise<unknown[]>;
     getTopRecords?: (resource: string, field: string, options?: Record<string, unknown>) => Promise<unknown[]>;
-    getStatus?: () => Record<string, unknown>;
+    getStatus?: () => unknown;
   };
   S3QueuePlugin?: new (options: Record<string, unknown>) => {
     startProcessing: (handler?: any, options?: { concurrency?: number }) => Promise<void>;

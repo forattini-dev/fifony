@@ -15,6 +15,7 @@ import {
   FRONTEND_SERVICE_WORKER_JS,
   QUIET_MODE,
 } from "../../concerns/constants.ts";
+import { APP_SHELL_ROUTES } from "../../concerns/app-shell-routes.ts";
 import { NATIVE_RESOURCE_CONFIGS } from "../resources/index.ts";
 import { logger } from "../../concerns/logger.ts";
 import {
@@ -22,6 +23,7 @@ import {
   getStateDb,
   setActiveApiPlugin,
 } from "../store.ts";
+import type { RouteHandler, RouteRegistrar } from "../../routes/http.ts";
 import { setApiRuntimeContext } from "./api-runtime-context.ts";
 import { makeWebSocketConfig } from "../../routes/websocket.ts";
 export { broadcastToWebSocketClients } from "../../routes/websocket.ts";
@@ -39,14 +41,14 @@ import { registerMiscRoutes } from "../../routes/misc.js";
 // Accumulates routes before ApiPlugin construction (ApiPlugin only accepts routes
 // via constructor config, not via .get()/.post() methods after creation).
 
-class RouteCollector {
-  readonly routes: Record<string, (c: any) => any> = {};
+class RouteCollector implements RouteRegistrar {
+  readonly routes: Record<string, RouteHandler> = {};
 
-  get(path: string, handler: (c: any) => any) { this.routes[`GET ${path}`] = handler; }
-  post(path: string, handler: (c: any) => any) { this.routes[`POST ${path}`] = handler; }
-  put(path: string, handler: (c: any) => any) { this.routes[`PUT ${path}`] = handler; }
-  patch(path: string, handler: (c: any) => any) { this.routes[`PATCH ${path}`] = handler; }
-  delete(path: string, handler: (c: any) => any) { this.routes[`DELETE ${path}`] = handler; }
+  get(path: string, handler: RouteHandler) { this.routes[`GET ${path}`] = handler; }
+  post(path: string, handler: RouteHandler) { this.routes[`POST ${path}`] = handler; }
+  put(path: string, handler: RouteHandler) { this.routes[`PUT ${path}`] = handler; }
+  patch(path: string, handler: RouteHandler) { this.routes[`PATCH ${path}`] = handler; }
+  delete(path: string, handler: RouteHandler) { this.routes[`DELETE ${path}`] = handler; }
 }
 
 // ── API server ───────────────────────────────────────────────────────────────
@@ -68,7 +70,7 @@ export async function startApiServer(
     NATIVE_RESOURCE_CONFIGS.map((resourceConfig) => [
       resourceConfig.name,
       {
-        ...(resourceConfig.api ?? {}),
+        ...(("api" in resourceConfig ? resourceConfig.api : undefined) ?? {}),
         versionPrefix: "api",
       },
     ]),
@@ -115,6 +117,10 @@ export async function startApiServer(
     });
   };
 
+  const appShellRoutes = Object.fromEntries(
+    APP_SHELL_ROUTES.map((path) => [`GET ${path}`, () => serveAppShell()]),
+  );
+
   // Collect routes from route modules before plugin instantiation
   const collector = new RouteCollector();
   registerStateRoutes(collector, state);
@@ -131,9 +137,7 @@ export async function startApiServer(
     host: "0.0.0.0",
     tls: false,
     versionPrefix: false,
-    metrics: {
-      logLevel: 'info'
-    },
+    metrics: { enabled: false, logLevel: false },
     // HTTP + WebSocket on the same port via listeners
     listeners: [{
       bind: { host: "0.0.0.0", port },
@@ -174,20 +178,8 @@ export async function startApiServer(
         serveTextFile(FRONTEND_ICON_SVG, "image/svg+xml", "public, max-age=604800, immutable"),
       "GET /icon-maskable.svg": () =>
         serveTextFile(FRONTEND_MASKABLE_ICON_SVG, "image/svg+xml", "public, max-age=604800, immutable"),
-      "GET /onboarding": () => serveAppShell(),
-      "GET /kanban": () => serveAppShell(),
-      "GET /issues": () => serveAppShell(),
-      "GET /analytics": () => serveAppShell(),
-      "GET /agents": () => serveAppShell(),
-      "GET /settings": () => serveAppShell(),
-      "GET /settings/project": () => serveAppShell(),
-      "GET /settings/general": () => serveAppShell(),
-      "GET /settings/agents": () => serveAppShell(),
-      "GET /settings/notifications": () => serveAppShell(),
-      "GET /settings/preferences": () => serveAppShell(),
-      "GET /settings/workflow": () => serveAppShell(),
-      "GET /settings/providers": () => serveAppShell(),
-      "GET /api/health": (c: any) =>
+      ...appShellRoutes,
+      "GET /api/health": (c) =>
         c.json({ status: state.booting ? "booting" : "ready" }),
     },
   });
