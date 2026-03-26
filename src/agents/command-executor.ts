@@ -467,7 +467,6 @@ export function attachToDaemon(
   resultFile?: string,
 ): Promise<{ success: boolean; code: number | null; output: string }> {
   return new Promise((resolve) => {
-    const liveLogFile = join(workspacePath, "live-output.log");
     const daemonExitFile = join(workspacePath, "daemon.exit.json");
 
     let output = "";
@@ -581,6 +580,36 @@ export function attachToDaemon(
       }
       void timedOut; // suppress unused warning
     }, 30_000);
+  });
+}
+
+// ── Write to daemon ───────────────────────────────────────────────────────────
+
+/**
+ * Send text to a running PTY daemon's agent CLI via its Unix socket.
+ *
+ * Enables injecting slash commands into the active agent session:
+ *   - CLI built-ins:  "/usage\r", "/stats session\r", "/status\r"
+ *   - Installed skills:  "/insights\r", "/simplify\r", "/frontend-design\r"
+ *   - Any installed agent subagent: "/my-agent\r"
+ *
+ * Text is forwarded verbatim to the PTY stdin — append "\r" to submit, or
+ * pass raw characters/escape sequences for special input.
+ * Silently no-ops when the daemon socket is absent.
+ */
+export async function writeToDaemon(workspacePath: string, text: string): Promise<void> {
+  const socketPath = join(workspacePath, "agent.sock");
+  if (!existsSync(socketPath)) return;
+  return new Promise((resolve) => {
+    const sock = createConnection(socketPath);
+    const cleanup = () => { try { sock.destroy(); } catch {} resolve(); };
+    sock.on("connect", () => {
+      try { sock.write(JSON.stringify({ t: "write", v: text }) + "\n"); } catch {}
+      setImmediate(cleanup);
+    });
+    sock.on("error", cleanup);
+    sock.on("timeout", cleanup);
+    sock.setTimeout(3_000);
   });
 }
 

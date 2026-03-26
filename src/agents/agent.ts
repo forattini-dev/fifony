@@ -39,7 +39,7 @@ export {
 export { buildPrompt, buildTurnPrompt, buildProviderBasePrompt } from "./prompt-builder.ts";
 
 // ── Re-exports from command-executor ──────────────────────────────────────
-export { runCommandWithTimeout, runHook } from "./command-executor.ts";
+export { runCommandWithTimeout, runHook, writeToDaemon, attachToDaemon } from "./command-executor.ts";
 
 // ── Re-exports from workspace-setup ───────────────────────────────────────
 export { cleanWorkspace, prepareWorkspace, createGitWorktree } from "../domains/workspace.ts";

@@ -110,6 +110,10 @@ async function main(): Promise<void> {
           } else if (msg.t === "tail") {
             const reply = JSON.stringify({ t: "tail", v: outputTail }) + "\n";
             try { socket.write(reply); } catch {}
+          } else if (msg.t === "write" && typeof (msg as { t: string; v?: string }).v === "string") {
+            // Forward text directly to the agent CLI's PTY stdin
+            // Enables slash commands: /usage, /stats, /insights, /frontend-design, etc.
+            try { ptyProcess.write((msg as { t: string; v: string }).v); } catch {}
           }
         } catch {}
       }
