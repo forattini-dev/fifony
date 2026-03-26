@@ -5,6 +5,7 @@ import {
   AlertTriangle, ChevronRight, Folder, Hash,
 } from "lucide-react";
 import { api } from "../api.js";
+import { useDashboard } from "../context/DashboardContext";
 import { useServices, useServiceLog } from "../hooks/useServices.js";
 import { formatDuration } from "../utils.js";
 import {
@@ -377,7 +378,8 @@ function SkeletonRow() {
 // ── ServicesPage ───────────────────────────────────────────────────────────────
 
 function ServicesPage() {
-  const { services, loading, refresh } = useServices();
+  const { liveMode } = useDashboard();
+  const { services, loading, refresh } = useServices({ pollInterval: liveMode ? false : 3_000 });
   const [selectedId, setSelectedId] = useState(null);
 
   const selectedService = services.find((s) => s.id === selectedId) ?? null;

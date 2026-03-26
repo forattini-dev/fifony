@@ -2,9 +2,10 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "../api.js";
 
 /**
- * Fetches all service statuses and polls every 3s.
+ * Fetches all service statuses and polls at `pollInterval` ms.
+ * Pass `pollInterval: false` (or 0) to disable polling — use when WS is connected.
  */
-export function useServices() {
+export function useServices({ pollInterval = 3_000 } = {}) {
   const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -24,9 +25,10 @@ export function useServices() {
   }, [fetchAll]);
 
   useEffect(() => {
-    const id = setInterval(fetchAll, 3_000);
+    if (!pollInterval) return;
+    const id = setInterval(fetchAll, pollInterval);
     return () => clearInterval(id);
-  }, [fetchAll]);
+  }, [fetchAll, pollInterval]);
 
   return { services, loading, refresh: fetchAll };
 }

@@ -150,20 +150,20 @@ export function useRuntimeEvents(kind, issueId, pollInterval = 2500) {
 }
 
 /** Fetch available providers. */
-export function useProviders() {
+export function useProviders({ pollInterval = 15000 } = {}) {
   return useQuery({
     queryKey: ["providers"],
     queryFn: () => api.get("/providers"),
-    refetchInterval: 15000,
+    refetchInterval: pollInterval,
   });
 }
 
 /** Fetch parallelism analysis. */
-export function useParallelism() {
+export function useParallelism({ pollInterval = 15000 } = {}) {
   return useQuery({
     queryKey: ["parallelism"],
     queryFn: () => api.get("/parallelism"),
-    refetchInterval: 15000,
+    refetchInterval: pollInterval,
   });
 }
 

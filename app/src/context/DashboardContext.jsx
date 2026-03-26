@@ -75,10 +75,10 @@ export function DashboardProvider({ children }) {
   const wsStatus = useRuntimeWebSocket(handleRuntimeSocketMessage);
   const liveMode = wsStatus === "connected";
 
-  const runtime = useRuntimeState({ pollInterval: liveMode ? 3000 : 3000, showAll: completionFilter === "all" });
-  const events = useRuntimeEvents(eventKind, eventIssueId, liveMode ? 3000 : 2500);
-  const providers = useProviders();
-  const parallelism = useParallelism();
+  const runtime = useRuntimeState({ pollInterval: liveMode ? false : 3000, showAll: completionFilter === "all" });
+  const events = useRuntimeEvents(eventKind, eventIssueId, liveMode ? false : 2500);
+  const providers = useProviders({ pollInterval: liveMode ? false : 15000 });
+  const parallelism = useParallelism({ pollInterval: liveMode ? false : 15000 });
 
   const data = runtime.data || {};
   const issues = Array.isArray(data.issues) ? data.issues : [];
