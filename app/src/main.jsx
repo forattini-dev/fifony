@@ -39,6 +39,12 @@ createRoot(document.getElementById("root")).render(
 // Register service worker
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
+    if (import.meta.env.DEV) {
+      void navigator.serviceWorker.getRegistrations().then((registrations) =>
+        Promise.allSettled(registrations.map((registration) => registration.unregister())),
+      );
+      return;
+    }
     navigator.serviceWorker.register("/service-worker.js", { scope: "/" }).catch(() => {});
   });
 }

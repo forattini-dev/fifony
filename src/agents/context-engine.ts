@@ -6,6 +6,8 @@ import type {
   AgentContextHit,
   AgentContextHitKind,
   AgentContextPack,
+  ContextPipelineStageName,
+  ContextPipelineStageReport,
   AgentProviderRole,
   AgentTraceStep,
   IssueEntry,
@@ -15,6 +17,7 @@ import { TARGET_ROOT } from "../concerns/constants.ts";
 import { now } from "../concerns/helpers.ts";
 import { logger } from "../concerns/logger.ts";
 import { getContextFragmentResource, getIssueStateResource } from "../persistence/store.ts";
+import { formatContextAssemblyPolicy, resolveContextAssemblyPolicy, selectHitsByContextPolicy } from "./context-policy.ts";
 import { getEmbeddingProvider } from "./embedding-provider.ts";
 import { getMemoryEngine } from "./memory-engine.ts";
 
@@ -663,6 +666,12 @@ export function renderContextPackMarkdown(pack: AgentContextPack): string {
     for (const layer of pack.report.layers) {
       lines.push(`- ${layer.name}: ${layer.selectedHitCount}/${layer.hitCount} selected`);
     }
+    if (pack.report.stages?.length) {
+      lines.push("Pipeline:");
+      for (const stage of pack.report.stages) {
+        lines.push(`- ${stage.name}: ${stage.status}${stage.detail ? ` (${stage.detail})` : ""}`);
+      }
+    }
     if (pack.report.memoryFlush) {
       lines.push(`- memory-flush: ${pack.report.memoryFlush.promotedEntries} promoted, ${pack.report.memoryFlush.changedFiles.length} file(s) updated`);
     }
@@ -712,7 +721,27 @@ function buildTraceSteps(pack: AgentContextPack, directive: {
   return steps;
 }
 
+function createStageRecorder() {
+  const stages: ContextPipelineStageReport[] = [];
+
+  const pushStage = (
+    name: ContextPipelineStageName,
+    startedAtMs: number,
+    report: Omit<ContextPipelineStageReport, "name" | "durationMs">,
+  ): void => {
+    stages.push({
+      name,
+      durationMs: Math.max(0, Date.now() - startedAtMs),
+      ...report,
+    });
+  };
+
+  return { stages, pushStage };
+}
+
 export async function buildContextPack(input: QueryInputs): Promise<AgentContextPack> {
+  const { stages, pushStage } = createStageRecorder();
+  const ingestStartedAt = Date.now();
   const query = buildQueryText(input).trim();
   const tokens = extractTokens(query);
   const root = resolveSearchRoot(input);
@@ -722,7 +751,18 @@ export async function buildContextPack(input: QueryInputs): Promise<AgentContext
     ...(input.issue?.paths || []),
     ...(input.issue?.plan?.suggestedPaths || []),
   ].filter((value, index, array) => value && array.indexOf(value) === index);
+  pushStage("ingest", ingestStartedAt, {
+    status: "completed",
+    inputCount: tokens.length,
+    outputCount: issuePaths.length,
+    detail: `${tokens.length} query tokens · ${issuePaths.length} explicit path(s)`,
+    notes: [
+      `search-root:${root}`,
+      `workspace:${workspacePath ?? "n/a"}`,
+    ],
+  });
 
+  const flushStartedAt = Date.now();
   const memoryFlush = input.issue && workspacePath
     ? memoryEngine.flushIssueMemory(input.issue, workspacePath, "context-assembly")
     : null;
@@ -731,7 +771,22 @@ export async function buildContextPack(input: QueryInputs): Promise<AgentContext
     : [];
   const bootstrapDocs = workspaceDocs.filter((document) => document.layer === "bootstrap");
   const workspaceMemoryDocs = workspaceDocs.filter((document) => document.layer === "workspace-memory");
+  pushStage("flush-memory", flushStartedAt, {
+    status: workspacePath ? "completed" : "skipped",
+    inputCount: workspacePath ? 1 : 0,
+    outputCount: workspaceDocs.length,
+    detail: workspacePath
+      ? `${workspaceDocs.length} workspace doc(s)`
+      : "No workspace available for memory flush",
+    notes: memoryFlush
+      ? [
+        `changed:${memoryFlush.changedFiles.length}`,
+        `promoted:${memoryFlush.promotedEntries}`,
+      ]
+      : undefined,
+  });
 
+  const retrieveStartedAt = Date.now();
   const allFiles = listTextFiles(root);
   const lexicalCandidates = searchLexical(tokens, root, issuePaths, allFiles);
   const explicitHitCount = lexicalCandidates.filter((candidate) => candidate.source === "explicit").length;
@@ -828,19 +883,62 @@ export async function buildContextPack(input: QueryInputs): Promise<AgentContext
     + currentIssueMemoryHits.length
     + semanticHits.filter((hit) => hit.source === "memory").length
     + historicalMemoryHits.length;
-  const combined = dedupeHits([
-    ...bootstrapHits,
-    ...workspaceMemoryHits,
+  const retrievalHits = dedupeHits([
     ...lexicalHits,
     ...structuralHits,
     ...semanticHits,
-    ...currentIssueMemoryHits,
     ...historicalMemoryHits,
   ]);
+  const layerPools = {
+    bootstrap: dedupeHits(bootstrapHits),
+    "workspace-memory": dedupeHits(workspaceMemoryHits),
+    "issue-memory": dedupeHits(currentIssueMemoryHits),
+    retrieval: retrievalHits,
+  } as const;
+  const policy = resolveContextAssemblyPolicy({ role: input.role, issue: input.issue });
+  pushStage("retrieve", retrieveStartedAt, {
+    status: "completed",
+    inputCount: allFiles.length,
+    outputCount: lexicalCandidates.length + structuralCandidates.length + semanticHits.length + currentIssueMemoryHits.length + historicalMemoryHits.length + workspaceDocs.length,
+    detail: `${lexicalCandidates.length} lexical · ${structuralCandidates.length} structural · ${semanticHits.length} semantic`,
+    notes: [
+      `workspace-docs:${workspaceDocs.length}`,
+      `current-issue-memory:${currentIssueMemoryHits.length}`,
+      `historical-memory:${historicalMemoryHits.length}`,
+      `stored-fragments:${storedFragments.length}`,
+    ],
+  });
 
-  const limit = input.role === "planner" ? 6 : 8;
-  const selectedHits = combined.slice(0, limit);
+  const budgetStartedAt = Date.now();
+  const combined = dedupeHits([
+    ...layerPools.bootstrap,
+    ...layerPools["workspace-memory"],
+    ...layerPools["issue-memory"],
+    ...layerPools.retrieval,
+  ]);
+  const limit = policy.maxHits;
+  pushStage("budget", budgetStartedAt, {
+    status: "completed",
+    inputCount: combined.length,
+    outputCount: Math.min(combined.length, limit),
+    budgetLimit: limit,
+    detail: `Top ${limit} hit budget for ${input.role}`,
+    notes: formatContextAssemblyPolicy(policy),
+  });
+
+  const compactStartedAt = Date.now();
+  const selectedHits = selectHitsByContextPolicy(layerPools, policy);
   const selectedIds = new Set(selectedHits.map((hit) => hit.id));
+  pushStage("compact", compactStartedAt, {
+    status: combined.length > limit ? "completed" : "skipped",
+    inputCount: combined.length,
+    outputCount: selectedHits.length,
+    budgetLimit: limit,
+    detail: combined.length > limit
+      ? `${combined.length - selectedHits.length} hit(s) discarded by policy`
+      : "No compaction needed",
+    notes: combined.length > limit ? [`policy:${policy.name}`] : undefined,
+  });
   const buildLayerReport = (
     name: "bootstrap" | "workspace-memory" | "issue-memory" | "retrieval",
     hits: AgentContextHit[],
@@ -853,6 +951,33 @@ export async function buildContextPack(input: QueryInputs): Promise<AgentContext
     notes,
   });
 
+  const assembleStartedAt = Date.now();
+  const report = {
+    role: input.role,
+    query,
+    generatedAt: now(),
+    maxHits: limit,
+    totalHits: combined.length,
+    selectedHits: selectedHits.length,
+    discardedHits: Math.max(0, combined.length - selectedHits.length),
+    layers: [
+      buildLayerReport("bootstrap", bootstrapHits, bootstrapHits.length > 0 ? ["Canonical workspace docs"] : undefined),
+      buildLayerReport("workspace-memory", workspaceMemoryHits, workspaceMemoryHits.length > 0 ? ["Durable workspace notes and recent daily memory"] : undefined),
+      buildLayerReport("issue-memory", currentIssueMemoryHits, currentIssueMemoryHits.length > 0 ? ["Current issue failures and reviewer evidence"] : undefined),
+      buildLayerReport("retrieval", retrievalHits),
+    ],
+    stages,
+    memoryFlush,
+  };
+  pushStage("assemble", assembleStartedAt, {
+    status: "completed",
+    inputCount: combined.length,
+    outputCount: selectedHits.length,
+    budgetLimit: limit,
+    detail: `Assembled ${selectedHits.length} final context hit(s)`,
+  });
+  report.stages = [...stages];
+
   return {
     role: input.role,
     query,
@@ -862,22 +987,7 @@ export async function buildContextPack(input: QueryInputs): Promise<AgentContext
     semanticHitCount: semanticHits.length,
     memoryHitCount,
     explicitHitCount: explicitHitCount + bootstrapHits.length,
-    report: {
-      role: input.role,
-      query,
-      generatedAt: now(),
-      maxHits: limit,
-      totalHits: combined.length,
-      selectedHits: selectedHits.length,
-      discardedHits: Math.max(0, combined.length - selectedHits.length),
-      layers: [
-        buildLayerReport("bootstrap", bootstrapHits, bootstrapHits.length > 0 ? ["Canonical workspace docs"] : undefined),
-        buildLayerReport("workspace-memory", workspaceMemoryHits, workspaceMemoryHits.length > 0 ? ["Durable workspace notes and recent daily memory"] : undefined),
-        buildLayerReport("issue-memory", currentIssueMemoryHits, currentIssueMemoryHits.length > 0 ? ["Current issue failures and reviewer evidence"] : undefined),
-        buildLayerReport("retrieval", [...lexicalHits, ...structuralHits, ...semanticHits, ...historicalMemoryHits]),
-      ],
-      memoryFlush,
-    },
+    report,
   };
 }
 
@@ -898,7 +1008,7 @@ export const DEFAULT_CONTEXT_ENGINE: ContextEngine = {
 };
 
 export async function buildContextMarkdown(input: QueryInputs): Promise<{ pack: AgentContextPack; markdown: string }> {
-  const pack = await buildContextPack(input);
+  const pack = await DEFAULT_CONTEXT_ENGINE.assemble(input);
   return { pack, markdown: renderContextPackMarkdown(pack) };
 }
 

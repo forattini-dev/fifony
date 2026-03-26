@@ -99,6 +99,14 @@ describe("analytics contract", () => {
               { name: "issue-memory", hitCount: 0, selectedHitCount: 0, discardedHitCount: 0 },
               { name: "retrieval", hitCount: 2, selectedHitCount: 1, discardedHitCount: 1 },
             ],
+            stages: [
+              { name: "ingest", status: "completed", durationMs: 4, inputCount: 3, outputCount: 1 },
+              { name: "flush-memory", status: "completed", durationMs: 2, inputCount: 1, outputCount: 3 },
+              { name: "retrieve", status: "completed", durationMs: 9, inputCount: 24, outputCount: 7 },
+              { name: "budget", status: "completed", durationMs: 1, inputCount: 7, outputCount: 6, budgetLimit: 6 },
+              { name: "compact", status: "skipped", durationMs: 0, inputCount: 6, outputCount: 6, budgetLimit: 6 },
+              { name: "assemble", status: "completed", durationMs: 1, inputCount: 6, outputCount: 6, budgetLimit: 6 },
+            ],
           },
         },
         previousAttemptSummaries: [],
@@ -213,6 +221,14 @@ describe("analytics contract", () => {
               { name: "issue-memory", hitCount: 2, selectedHitCount: 2, discardedHitCount: 0 },
               { name: "retrieval", hitCount: 2, selectedHitCount: 1, discardedHitCount: 1 },
             ],
+            stages: [
+              { name: "ingest", status: "completed", durationMs: 5, inputCount: 5, outputCount: 2 },
+              { name: "flush-memory", status: "completed", durationMs: 3, inputCount: 1, outputCount: 4 },
+              { name: "retrieve", status: "completed", durationMs: 12, inputCount: 31, outputCount: 11 },
+              { name: "budget", status: "completed", durationMs: 1, inputCount: 11, outputCount: 8, budgetLimit: 8 },
+              { name: "compact", status: "completed", durationMs: 2, inputCount: 11, outputCount: 8, budgetLimit: 8 },
+              { name: "assemble", status: "completed", durationMs: 1, inputCount: 8, outputCount: 8, budgetLimit: 8 },
+            ],
           },
           reviewer: {
             role: "reviewer",
@@ -227,6 +243,14 @@ describe("analytics contract", () => {
               { name: "workspace-memory", hitCount: 1, selectedHitCount: 0, discardedHitCount: 1 },
               { name: "issue-memory", hitCount: 2, selectedHitCount: 2, discardedHitCount: 0 },
               { name: "retrieval", hitCount: 2, selectedHitCount: 1, discardedHitCount: 1 },
+            ],
+            stages: [
+              { name: "ingest", status: "completed", durationMs: 6, inputCount: 6, outputCount: 2 },
+              { name: "flush-memory", status: "completed", durationMs: 4, inputCount: 1, outputCount: 4 },
+              { name: "retrieve", status: "completed", durationMs: 15, inputCount: 28, outputCount: 10 },
+              { name: "budget", status: "completed", durationMs: 1, inputCount: 10, outputCount: 8, budgetLimit: 8 },
+              { name: "compact", status: "completed", durationMs: 2, inputCount: 10, outputCount: 8, budgetLimit: 8 },
+              { name: "assemble", status: "completed", durationMs: 1, inputCount: 8, outputCount: 8, budgetLimit: 8 },
             ],
           },
         },
@@ -592,10 +616,17 @@ describe("analytics contract", () => {
     assert.equal(metrics.memoryPipeline.issuesWithContextReports, 2);
     assert.equal(metrics.memoryPipeline.memoryFlushCoverageRate, 2 / 3);
     assert.equal(metrics.memoryPipeline.contextReportCoverageRate, 2 / 3);
+    assert.equal(metrics.memoryPipeline.stageReportCoverageRate, 2 / 3);
+    assert.equal(metrics.memoryPipeline.compactionCoverageRate, 1 / 3);
     assert.equal(metrics.memoryPipeline.byRole.planner.reports, 1);
     assert.equal(metrics.memoryPipeline.byRole.executor.reports, 1);
     assert.equal(metrics.memoryPipeline.byRole.reviewer.reports, 1);
     assert.equal(metrics.memoryPipeline.byLayer["issue-memory"].selectedHitCount, 4);
+    assert.equal(metrics.memoryPipeline.byStage.ingest.reports, 3);
+    assert.equal(metrics.memoryPipeline.byStage.compact.completed, 2);
+    assert.equal(metrics.memoryPipeline.byStage.compact.skipped, 1);
+    assert.equal(metrics.memoryPipeline.byStage.compact.completionRate, 2 / 3);
+    assert.equal(metrics.memoryPipeline.byStage.compact.avgBudgetLimit, (6 + 8 + 8) / 3);
     assert.equal(metrics.policyDecisions.total, 3);
     assert.equal(metrics.policyDecisions.harnessModeChanges, 1);
     assert.equal(metrics.policyDecisions.checkpointPolicyChanges, 1);

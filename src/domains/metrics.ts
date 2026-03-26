@@ -1,4 +1,11 @@
-import type { ContractNegotiationRun, IssueEntry, ReviewProfileName, ReviewRun, RuntimeMetrics } from "../types.ts";
+import type {
+  ContextPipelineStageName,
+  ContractNegotiationRun,
+  IssueEntry,
+  ReviewProfileName,
+  ReviewRun,
+  RuntimeMetrics,
+} from "../types.ts";
 import { serializeReviewRouteSnapshot } from "../agents/harness-policy.ts";
 
 function resolveAnalyticsReviewRun(issue: IssueEntry): ReviewRun | null {
@@ -183,6 +190,16 @@ export function computeQualityGateMetrics(issues: IssueEntry[]) {
     selectedHitCount: number;
     discardedHitCount: number;
   };
+  type ContextStageBucket = {
+    reports: number;
+    completed: number;
+    skipped: number;
+    totalDurationMs: number;
+    totalInputCount: number;
+    totalOutputCount: number;
+    budgetedRuns: number;
+    totalBudgetLimit: number;
+  };
 
   const reviewedIssues = issues.filter((issue) =>
     (issue.reviewAttempt ?? 0) > 0
@@ -286,6 +303,8 @@ export function computeQualityGateMetrics(issues: IssueEntry[]) {
     issuesWithMemoryFlushes: 0,
     totalMemoryFlushes: 0,
     issuesWithContextReports: 0,
+    issuesWithStageReports: 0,
+    issuesWithCompaction: 0,
     byRole: {
       planner: { reports: 0, selectedHits: 0, totalHits: 0, discardedHits: 0 } as ContextRoleBucket,
       executor: { reports: 0, selectedHits: 0, totalHits: 0, discardedHits: 0 } as ContextRoleBucket,
@@ -297,6 +316,14 @@ export function computeQualityGateMetrics(issues: IssueEntry[]) {
       "issue-memory": { hitCount: 0, selectedHitCount: 0, discardedHitCount: 0 } as ContextLayerBucket,
       retrieval: { hitCount: 0, selectedHitCount: 0, discardedHitCount: 0 } as ContextLayerBucket,
     },
+    byStage: {
+      ingest: { reports: 0, completed: 0, skipped: 0, totalDurationMs: 0, totalInputCount: 0, totalOutputCount: 0, budgetedRuns: 0, totalBudgetLimit: 0 } as ContextStageBucket,
+      "flush-memory": { reports: 0, completed: 0, skipped: 0, totalDurationMs: 0, totalInputCount: 0, totalOutputCount: 0, budgetedRuns: 0, totalBudgetLimit: 0 } as ContextStageBucket,
+      retrieve: { reports: 0, completed: 0, skipped: 0, totalDurationMs: 0, totalInputCount: 0, totalOutputCount: 0, budgetedRuns: 0, totalBudgetLimit: 0 } as ContextStageBucket,
+      budget: { reports: 0, completed: 0, skipped: 0, totalDurationMs: 0, totalInputCount: 0, totalOutputCount: 0, budgetedRuns: 0, totalBudgetLimit: 0 } as ContextStageBucket,
+      compact: { reports: 0, completed: 0, skipped: 0, totalDurationMs: 0, totalInputCount: 0, totalOutputCount: 0, budgetedRuns: 0, totalBudgetLimit: 0 } as ContextStageBucket,
+      assemble: { reports: 0, completed: 0, skipped: 0, totalDurationMs: 0, totalInputCount: 0, totalOutputCount: 0, budgetedRuns: 0, totalBudgetLimit: 0 } as ContextStageBucket,
+    } satisfies Record<ContextPipelineStageName, ContextStageBucket>,
   };
 
   for (const issue of reviewedIssues) {
@@ -377,6 +404,9 @@ export function computeQualityGateMetrics(issues: IssueEntry[]) {
       memoryPipeline.issuesWithContextReports += 1;
     }
 
+    let stageReportsRecorded = false;
+    let compactionObserved = false;
+
     for (const [role, report] of roles) {
       if (!(role in memoryPipeline.byRole) || !report) continue;
       const roleBucket = memoryPipeline.byRole[role as keyof typeof memoryPipeline.byRole];
@@ -392,6 +422,30 @@ export function computeQualityGateMetrics(issues: IssueEntry[]) {
         layerBucket.selectedHitCount += layer.selectedHitCount ?? 0;
         layerBucket.discardedHitCount += layer.discardedHitCount ?? 0;
       }
+
+      for (const stage of report.stages ?? []) {
+        if (!(stage.name in memoryPipeline.byStage)) continue;
+        const stageBucket = memoryPipeline.byStage[stage.name as keyof typeof memoryPipeline.byStage];
+        stageBucket.reports += 1;
+        if (stage.status === "completed") stageBucket.completed += 1;
+        if (stage.status === "skipped") stageBucket.skipped += 1;
+        stageBucket.totalDurationMs += stage.durationMs ?? 0;
+        stageBucket.totalInputCount += stage.inputCount ?? 0;
+        stageBucket.totalOutputCount += stage.outputCount ?? 0;
+        if (typeof stage.budgetLimit === "number") {
+          stageBucket.budgetedRuns += 1;
+          stageBucket.totalBudgetLimit += stage.budgetLimit;
+        }
+        stageReportsRecorded = true;
+        if (stage.name === "compact" && stage.status === "completed") compactionObserved = true;
+      }
+    }
+
+    if (stageReportsRecorded) {
+      memoryPipeline.issuesWithStageReports += 1;
+    }
+    if (compactionObserved) {
+      memoryPipeline.issuesWithCompaction += 1;
     }
 
     const negotiationRuns = resolveAnalyticsContractNegotiationRuns(issue);
@@ -459,6 +513,14 @@ export function computeQualityGateMetrics(issues: IssueEntry[]) {
     checkpointPassRate: bucket.reviewedIssues ? bucket.checkpointPassedIssues / bucket.reviewedIssues : null,
     avgCheckpointRunsPerIssue: bucket.reviewedIssues ? bucket.checkpointRuns / bucket.reviewedIssues : null,
   });
+  const finalizeStageBucket = (bucket: ContextStageBucket) => ({
+    ...bucket,
+    completionRate: bucket.reports ? bucket.completed / bucket.reports : null,
+    avgDurationMs: bucket.reports ? bucket.totalDurationMs / bucket.reports : null,
+    avgInputCount: bucket.reports ? bucket.totalInputCount / bucket.reports : null,
+    avgOutputCount: bucket.reports ? bucket.totalOutputCount / bucket.reports : null,
+    avgBudgetLimit: bucket.budgetedRuns ? bucket.totalBudgetLimit / bucket.budgetedRuns : null,
+  });
 
   return {
     reviewedIssues: reviewedIssues.length,
@@ -493,9 +555,19 @@ export function computeQualityGateMetrics(issues: IssueEntry[]) {
       ...memoryPipeline,
       memoryFlushCoverageRate: issues.length ? memoryPipeline.issuesWithMemoryFlushes / issues.length : null,
       contextReportCoverageRate: issues.length ? memoryPipeline.issuesWithContextReports / issues.length : null,
+      stageReportCoverageRate: issues.length ? memoryPipeline.issuesWithStageReports / issues.length : null,
+      compactionCoverageRate: issues.length ? memoryPipeline.issuesWithCompaction / issues.length : null,
       avgFlushesPerIssueWithMemory: memoryPipeline.issuesWithMemoryFlushes
         ? memoryPipeline.totalMemoryFlushes / memoryPipeline.issuesWithMemoryFlushes
         : null,
+      byStage: {
+        ingest: finalizeStageBucket(memoryPipeline.byStage.ingest),
+        "flush-memory": finalizeStageBucket(memoryPipeline.byStage["flush-memory"]),
+        retrieve: finalizeStageBucket(memoryPipeline.byStage.retrieve),
+        budget: finalizeStageBucket(memoryPipeline.byStage.budget),
+        compact: finalizeStageBucket(memoryPipeline.byStage.compact),
+        assemble: finalizeStageBucket(memoryPipeline.byStage.assemble),
+      },
     },
     policyDecisions: policyDecisionSummary,
     byReviewProfile,

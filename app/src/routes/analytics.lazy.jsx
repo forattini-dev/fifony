@@ -732,6 +732,44 @@ function ContextLayerTable({ memoryPipeline }) {
   );
 }
 
+function ContextStageTable({ memoryPipeline }) {
+  const entries = Object.entries(memoryPipeline?.byStage || {})
+    .map(([stage, bucket]) => ({ stage, ...(bucket || {}) }))
+    .filter((entry) => (entry.reports || 0) > 0)
+    .sort((left, right) => (right.reports || 0) - (left.reports || 0) || (right.avgDurationMs || 0) - (left.avgDurationMs || 0));
+
+  if (entries.length === 0) {
+    return <div className="text-sm opacity-45">No context pipeline stage telemetry yet.</div>;
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="table table-sm">
+        <thead>
+          <tr>
+            <th>Stage</th>
+            <th className="text-right">Runs</th>
+            <th className="text-right">Completed</th>
+            <th className="text-right">Avg ms</th>
+            <th className="text-right">Avg Out</th>
+          </tr>
+        </thead>
+        <tbody>
+          {entries.map((entry) => (
+            <tr key={entry.stage}>
+              <td className="font-medium">{entry.stage}</td>
+              <td className="text-right font-mono">{entry.reports || 0}</td>
+              <td className="text-right font-mono">{fmtPercent(entry.completionRate)}</td>
+              <td className="text-right font-mono">{fmtFloat(entry.avgDurationMs)}</td>
+              <td className="text-right font-mono">{fmtFloat(entry.avgOutputCount)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function AnalyticsSkeleton() {
   return (
     <div className="flex-1 flex flex-col min-h-0 px-4 pb-4 pt-3">
@@ -943,7 +981,7 @@ function QualityGateSection() {
         <ClipboardCheck className="size-4 text-success" />
         Harness Quality
       </h2>
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-7 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-8 gap-4">
         <QualityStatCard
           icon={ClipboardCheck}
           iconClass="text-success"
@@ -993,8 +1031,15 @@ function QualityGateSection() {
           value={fmtPercent(memoryPipeline?.contextReportCoverageRate)}
           desc={memoryPipeline?.issuesWithContextReports ? `${memoryPipeline.issuesWithContextReports} issue(s) emitted context reports` : "No context assembly reports yet"}
         />
+        <QualityStatCard
+          icon={Layers}
+          iconClass="text-accent"
+          title="Compaction Coverage"
+          value={fmtPercent(memoryPipeline?.compactionCoverageRate)}
+          desc={memoryPipeline?.issuesWithCompaction ? `${memoryPipeline.issuesWithCompaction} issue(s) compacted by budget` : "No budget compaction yet"}
+        />
       </div>
-      <div className="grid grid-cols-1 xl:grid-cols-4 gap-5 mt-5">
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5 mt-5">
         <div className="space-y-3">
           <div className="text-xs uppercase tracking-[0.18em] opacity-45">Review by harness mode</div>
           <ReviewHarnessModeTable byHarnessMode={quality.byHarnessMode} />
@@ -1007,9 +1052,15 @@ function QualityGateSection() {
           <div className="text-xs uppercase tracking-[0.18em] opacity-45">Checkpoint policy lift</div>
           <CheckpointPolicyTable checkpointPolicy={checkpoint} />
         </div>
+      </div>
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 mt-5">
         <div className="space-y-3">
           <div className="text-xs uppercase tracking-[0.18em] opacity-45">Context layer hit mix</div>
           <ContextLayerTable memoryPipeline={memoryPipeline} />
+        </div>
+        <div className="space-y-3">
+          <div className="text-xs uppercase tracking-[0.18em] opacity-45">Context pipeline stages</div>
+          <ContextStageTable memoryPipeline={memoryPipeline} />
         </div>
       </div>
     </section>

@@ -233,6 +233,25 @@ export type ContextLayerReport = {
   notes?: string[];
 };
 
+export type ContextPipelineStageName =
+  | "ingest"
+  | "flush-memory"
+  | "retrieve"
+  | "budget"
+  | "compact"
+  | "assemble";
+
+export type ContextPipelineStageReport = {
+  name: ContextPipelineStageName;
+  status: "completed" | "skipped";
+  durationMs: number;
+  inputCount?: number;
+  outputCount?: number;
+  budgetLimit?: number;
+  detail?: string;
+  notes?: string[];
+};
+
 export type AgentContextAssemblyReport = {
   role: AgentProviderRole;
   query: string;
@@ -242,6 +261,7 @@ export type AgentContextAssemblyReport = {
   selectedHits: number;
   discardedHits: number;
   layers: ContextLayerReport[];
+  stages: ContextPipelineStageReport[];
   memoryFlush?: MemoryFlushReport | null;
 };
 

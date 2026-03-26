@@ -83,6 +83,16 @@ export function OverviewTab({ issue }) {
                       </span>
                     ))}
                   </div>
+                  {(report.stages ?? []).length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {report.stages.map((stage) => (
+                        <span key={`${role}-stage-${stage.name}`} className="badge badge-xs badge-outline gap-1">
+                          {stage.name}
+                          {typeof stage.durationMs === "number" ? `${stage.durationMs}ms` : null}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

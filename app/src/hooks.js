@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api.js";
+import { getSettingsList, getSettingValue, upsertSettingPayload } from "./settings-payload.js";
 import { safeJson } from "./utils.js";
 
 // ── Delta-merge helpers ─────────────────────────────────────────────────────
@@ -267,20 +268,7 @@ function normalizeBoolean(value, fallback = false) {
   return typeof value === "boolean" ? value : fallback;
 }
 
-export function getSettingsList(payload) {
-  return Array.isArray(payload?.settings) ? payload.settings : [];
-}
-
-export function getSettingValue(settings, settingId, fallback) {
-  const entry = Array.isArray(settings) ? settings.find((setting) => setting?.id === settingId) : null;
-  return entry?.value ?? fallback;
-}
-
-export function upsertSettingPayload(current, setting) {
-  const payload = current && typeof current === "object" ? current : {};
-  const settings = getSettingsList(payload).filter((entry) => entry?.id !== setting.id);
-  return { ...payload, settings: [...settings, setting] };
-}
+export { getSettingsList, getSettingValue, upsertSettingPayload } from "./settings-payload.js";
 
 export async function persistUiSetting(settingId, value) {
   return api.post(`/settings/${encodeURIComponent(settingId)}`, {

@@ -1,7 +1,8 @@
 import { createRootRoute, Outlet, useRouterState, useNavigate } from "@tanstack/react-router";
 import mascotUrl from "/dinofffaur.webp?url";
 import { DashboardProvider, useDashboard } from "../context/DashboardContext";
-import { useSettings, getSettingsList, getSettingValue } from "../hooks";
+import { useSettings, getSettingsList } from "../hooks";
+import { hasCompletedOnboarding } from "../onboarding-state.js";
 import { lazy, Suspense, useState, useCallback, useEffect, useRef } from "react";
 import Header from "../components/Header";
 import Fab from "../components/Fab";
@@ -316,7 +317,7 @@ function OnboardingGate({ children }) {
   const settingsQuery = useSettings();
 
   const settingsList = getSettingsList(settingsQuery.data);
-  const completed = getSettingValue(settingsList, "ui.onboarding.completed", null);
+  const completed = hasCompletedOnboarding(settingsList);
 
   // Still loading settings (first fetch) — show hero briefly
   if (settingsQuery.isLoading && !settingsQuery.data) {
@@ -328,8 +329,15 @@ function OnboardingGate({ children }) {
     return children;
   }
 
+  // Wait for any in-flight settings fetch before deciding to redirect.
+  // Prevents false redirect when the optimistic update is in cache but a background
+  // refetch (triggered right after handleLaunch saves) hasn't returned yet.
+  if (!completed && settingsQuery.isFetching) {
+    return <LoadingHero />;
+  }
+
   // Onboarding not completed — redirect to /onboarding
-  if (completed !== true) {
+  if (!completed) {
     return (
       <Suspense fallback={<LoadingHero />}>
         <OnboardingRedirect />

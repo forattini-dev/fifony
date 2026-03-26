@@ -316,11 +316,12 @@ export default function OnboardingWizard({ onComplete }) {
         updatedAt: new Date().toISOString(),
       }));
 
-      // Show confetti, then navigate — await invalidation so cache is settled before gate checks
+      // Show confetti, then navigate based on optimistic cache (completed=true already set above).
+      // Invalidate in background AFTER navigation so a slow server flush can't race with OnboardingGate.
       setConfetti({ x: window.innerWidth / 2, y: window.innerHeight / 3 });
-      setTimeout(async () => {
-        await qc.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
+      setTimeout(() => {
         onComplete?.();
+        qc.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
       }, 1200);
     } catch {
       // Even on error, mark as done so user isn't stuck

@@ -80,8 +80,10 @@ describe("buildContextPack", () => {
       workspacePath,
     });
 
-    assert.equal(pack.hits[0]?.path, "src/feature.ts");
-    assert.equal(pack.hits[0]?.source, "explicit");
+    assert.ok(
+      pack.hits.some((hit) => hit.path === "src/feature.ts" && hit.source === "explicit"),
+      "expected explicit implementation path to survive compaction",
+    );
     assert.ok(
       pack.hits.some((hit) => hit.path === "src/feature.test.ts" && hit.kind === "test"),
       "expected sibling test coverage to appear in the context pack",
@@ -151,6 +153,105 @@ describe("buildContextPack", () => {
       "expected review memory from the current issue",
     );
     assert.ok(pack.memoryHitCount >= 2);
+  });
+
+  it("preserves reviewer issue memory under compaction pressure", async () => {
+    const { workspacePath, worktreePath } = createWorkspace();
+    writeFile(worktreePath, "README.md", "# Review context");
+
+    const explicitPaths: string[] = [];
+    for (let index = 0; index < 12; index += 1) {
+      const relativePath = `src/contract-${index}.ts`;
+      explicitPaths.push(relativePath);
+      writeFile(
+        worktreePath,
+        relativePath,
+        `export const contract${index} = "contractual reviewer context ${index}";`,
+      );
+    }
+
+    const gradingReport = {
+      scope: "final",
+      overallVerdict: "FAIL",
+      blockingVerdict: "FAIL",
+      criteria: [
+        {
+          id: "criterion-1",
+          category: "correctness",
+          description: "Keep reviewer memory visible",
+          verificationMethod: "review memory",
+          evidenceExpected: "context pack keeps failure evidence despite explicit path pressure",
+          blocking: true,
+          weight: 2,
+          result: "FAIL",
+          evidence: "Previous review evidence must stay visible in the next reviewer run.",
+        },
+      ],
+      reviewAttempt: 1,
+    } as unknown as GradingReport;
+
+    const issue = makeIssue({
+      state: "Reviewing",
+      worktreePath,
+      workspacePath,
+      paths: explicitPaths,
+      plan: {
+        summary: "Preserve reviewer memory while evaluating many explicit files.",
+        estimatedComplexity: "high",
+        steps: [],
+        acceptanceCriteria: [],
+        executionContract: {
+          summary: "Keep reviewer memory visible under explicit-path pressure.",
+          deliverables: [],
+          requiredChecks: [],
+          requiredEvidence: [],
+          focusAreas: ["review-memory", "context-compaction"],
+          checkpointPolicy: "checkpointed",
+        },
+        harnessMode: "contractual",
+        suggestedPaths: [],
+        suggestedSkills: [],
+        suggestedAgents: [],
+        suggestedEffort: {},
+        provider: "codex",
+        createdAt: "2026-03-26T00:00:00.000Z",
+      },
+      previousAttemptSummaries: [
+        {
+          planVersion: 1,
+          executeAttempt: 1,
+          phase: "review",
+          error: "Reviewer lost failure memory under heavy explicit path load.",
+          timestamp: "2026-03-26T00:00:00.000Z",
+          insight: {
+            errorType: "context",
+            rootCause: "Reviewer budget favored explicit paths only.",
+            filesInvolved: ["src/agents/context-engine.ts"],
+            suggestion: "Reserve room for reviewer issue memory during compaction.",
+          },
+        },
+      ],
+      gradingReport,
+    });
+
+    const pack = await buildContextPack({
+      role: "reviewer",
+      title: issue.title,
+      description: issue.description,
+      issue,
+      workspacePath,
+    });
+
+    assert.equal(pack.hits.length, 10);
+    assert.equal(pack.report?.maxHits, 10);
+    assert.ok(
+      pack.hits.some((hit) => hit.sourceId === "failure:issue-1:0" && hit.source === "memory"),
+      "expected failure memory to survive reviewer compaction",
+    );
+    assert.ok(
+      pack.hits.some((hit) => hit.sourceId === "review:issue-1:criterion-1" && hit.source === "memory"),
+      "expected review memory to survive reviewer compaction",
+    );
   });
 
   it("caps planner packs at six hits", async () => {
