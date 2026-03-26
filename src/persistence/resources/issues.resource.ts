@@ -1,12 +1,13 @@
 import { S3DB_ISSUE_RESOURCE } from "../../concerns/constants.ts";
-import type { JsonRecord, RuntimeState } from "../../types.ts";
+import type { JsonRecord } from "../../types.ts";
 import { loadAgentPipelineSnapshotForIssue, loadAgentSessionSnapshotsForIssue } from "../../agents/agent.ts";
 import { getApiRuntimeContextOrThrow } from "../plugins/api-runtime-context.ts";
 import { persistState } from "../store.ts";
-import { getEffectiveAgentProviders } from "../../agents/providers.ts";
+import { getSessionProvidersForIssue } from "../../agents/providers.ts";
 import { addEvent } from "../../domains/issues.ts";
 import { toStringValue, parseIssueState } from "../../concerns/helpers.ts";
 import { getContainer } from "../container.ts";
+import { buildContextPack, renderContextPackMarkdown } from "../../agents/context-engine.ts";
 import { createIssueCommand } from "../../commands/create-issue.command.ts";
 import { cancelIssueCommand } from "../../commands/cancel-issue.command.ts";
 import { deleteIssueCommand } from "../../commands/delete-issue.command.ts";
@@ -16,6 +17,7 @@ import { retryIssueCommand } from "../../commands/retry-issue.command.ts";
 import { transitionIssueCommand } from "../../commands/transition-issue.command.ts";
 import { findIssue } from "../../routes/helpers.ts";
 import { logger } from "../../concerns/logger.ts";
+import { getWorkflowConfig, loadRuntimeSettings } from "../settings.ts";
 
 // Reuse shared parseIssue helper (single source of truth for issue ID parsing)
 import { parseIssue as getIssueId } from "../../routes/helpers.ts";
@@ -47,10 +49,51 @@ async function getIssueSessions(c: unknown) {
     return { status: 404, body: { ok: false, error: "Issue not found" } };
   }
 
-  const providers = getEffectiveAgentProviders(context.state, issue, null);
+  let workflowConfig = null;
+  try {
+    workflowConfig = getWorkflowConfig(await loadRuntimeSettings());
+  } catch {
+    workflowConfig = null;
+  }
+
+  const providers = getSessionProvidersForIssue(context.state, issue, workflowConfig);
   const pipeline = await loadAgentPipelineSnapshotForIssue(issue, providers);
   const sessions = await loadAgentSessionSnapshotsForIssue(issue, providers, pipeline, null);
   return { body: { ok: true, issueId: issue.id, pipeline, sessions } };
+}
+
+async function getIssueContext(c: unknown) {
+  const context = getApiRuntimeContextOrThrow();
+  const issueId = getIssueId(c);
+  if (!issueId) {
+    return { status: 400, body: { ok: false, error: "Issue id is required." } };
+  }
+
+  const issue = findIssue(context.state, issueId);
+  if (!issue) {
+    return { status: 404, body: { ok: false, error: "Issue not found" } };
+  }
+
+  const roleParam = (c as { req?: { query?: (name: string) => string | undefined } })?.req?.query?.("role");
+  const role = roleParam === "planner" || roleParam === "reviewer" || roleParam === "executor"
+    ? roleParam
+    : issue.state === "Planning"
+      ? "planner"
+      : issue.state === "Reviewing"
+        ? "reviewer"
+        : "executor";
+
+  const pack = await buildContextPack({
+    role,
+    title: issue.title,
+    description: issue.description,
+    issue,
+    workspacePath: issue.workspacePath,
+    runtimeState: context.state,
+  });
+  const markdown = renderContextPackMarkdown(pack);
+
+  return { body: { ok: true, issueId: issue.id, role, pack, markdown } };
 }
 
 async function patchIssueState(c: unknown) {
@@ -229,6 +272,8 @@ export default {
     title: "string|required",
     description: "string|optional",
     state: "string|required",
+    projectId: "string|optional",
+    milestoneId: "string|optional",
     branchName: "string|optional",
     url: "string|optional",
     assigneeId: "string|optional",
@@ -271,6 +316,17 @@ export default {
     planningError: "string|optional",
     executeAttempt: "number|optional",
     reviewAttempt: "number|optional",
+    checkpointAttempt: "number|optional",
+    contractNegotiationAttempt: "number|optional",
+    checkpointStatus: "string|optional",
+    checkpointPassedAt: "datetime|optional",
+    checkpointReport: "json|optional",
+    contractNegotiationStatus: "string|optional",
+    contractNegotiationRuns: "json|optional",
+    reviewProfile: "json|optional",
+    reviewRuns: "json|optional",
+    reviewFailureHistory: "json|optional",
+    policyDecisions: "json|optional",
     issueType: "string|optional",
     eventsCount: "number|optional",
     images: "json|optional",
@@ -301,6 +357,10 @@ export default {
     },
     "GET /:id/sessions": async (c: unknown) => {
       const result = await getIssueSessions(c);
+      return respond(c, result);
+    },
+    "GET /:id/context": async (c: unknown) => {
+      const result = await getIssueContext(c);
       return respond(c, result);
     },
     "POST /:id/state": async (c: unknown) => {

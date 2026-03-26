@@ -84,12 +84,40 @@ function makePlan(overrides: Partial<IssuePlan> = {}): IssuePlan {
   return {
     summary: "Refactor DB pool to use pgBouncer",
     estimatedComplexity: "medium",
+    harnessMode: "standard",
     steps: [
       { step: 1, action: "Add pgbouncer dependency", files: ["package.json"] },
       { step: 2, action: "Refactor pool.ts", files: ["src/db/pool.ts"] },
       { step: 3, action: "Update tests", files: ["tests/db.test.ts"] },
     ],
-    successCriteria: ["All tests pass", "Connection pool uses pgBouncer"],
+    acceptanceCriteria: [
+      {
+        id: "AC-1",
+        description: "All tests pass",
+        category: "validation",
+        verificationMethod: "run_command",
+        evidenceExpected: "pnpm test exits 0",
+        blocking: true,
+        weight: 3,
+      },
+      {
+        id: "AC-2",
+        description: "Connection pool uses pgBouncer",
+        category: "performance",
+        verificationMethod: "code_inspection",
+        evidenceExpected: "pool configuration routes through pgBouncer",
+        blocking: true,
+        weight: 3,
+      },
+    ],
+    executionContract: {
+      summary: "Pool refactor is implemented, verified, and safe to ship",
+      deliverables: ["pgBouncer-backed pool implementation", "updated tests"],
+      requiredChecks: ["pnpm typecheck", "pnpm test"],
+      requiredEvidence: ["Tests pass", "pool.ts clearly routes through pgBouncer"],
+      focusAreas: ["src/db/pool.ts", "tests/db.test.ts"],
+      checkpointPolicy: "final_only",
+    },
     validation: ["pnpm typecheck", "pnpm test"],
     suggestedPaths: ["src/db/pool.ts", "tests/db.test.ts"],
     suggestedSkills: [], suggestedAgents: [],
@@ -325,6 +353,55 @@ describe("operation: re-execute — learning from previous failures", () => {
     assert.equal(buildRetryContext(issue), "");
   });
 
+  it("includes recurring review failure patterns even without previousAttemptSummaries", () => {
+    const issue = makeIssue({
+      planVersion: 2,
+      reviewFailureHistory: [
+        {
+          id: "review.final.v2a1:AC-1",
+          runId: "review.final.v2a1",
+          scope: "final",
+          planVersion: 2,
+          attempt: 1,
+          criterionId: "AC-1",
+          description: "API contract stays stable",
+          category: "integration",
+          verificationMethod: "api_probe",
+          blocking: true,
+          weight: 3,
+          evidence: "POST /api/items returned 500 for missing payload guard",
+          recordedAt: "2026-03-26T10:00:00.000Z",
+          reviewProfile: "api-contract",
+          routing: { provider: "codex", overlays: [] },
+        },
+        {
+          id: "review.final.v2a2:AC-1",
+          runId: "review.final.v2a2",
+          scope: "final",
+          planVersion: 2,
+          attempt: 2,
+          criterionId: "AC-1",
+          description: "API contract stays stable",
+          category: "integration",
+          verificationMethod: "api_probe",
+          blocking: true,
+          weight: 3,
+          evidence: "PATCH /api/items still returns 500 for invalid body",
+          recordedAt: "2026-03-26T10:05:00.000Z",
+          reviewProfile: "api-contract",
+          routing: { provider: "codex", overlays: [] },
+        },
+      ],
+    });
+
+    const context = buildRetryContext(issue);
+
+    assert.match(context, /Recurring Reviewer Failures/i);
+    assert.match(context, /AC-1/);
+    assert.match(context, /attempts 1, 2/i);
+    assert.match(context, /PATCH \/api\/items still returns 500/i);
+  });
+
   it("truncates very long retry context to ~8000 chars", () => {
     const longOutput = "x".repeat(5000);
     const issue = makeIssue({
@@ -401,7 +478,28 @@ describe("operation: review — compile per CLI", () => {
       });
 
       it("review prompt includes success criteria from plan", async () => {
-        const plan = makePlan({ successCriteria: ["Connection pool uses pgBouncer", "All tests pass"] });
+        const plan = makePlan({
+          acceptanceCriteria: [
+            {
+              id: "AC-1",
+              description: "Connection pool uses pgBouncer",
+              category: "performance",
+              verificationMethod: "code_inspection",
+              evidenceExpected: "pool.ts clearly routes through pgBouncer",
+              blocking: true,
+              weight: 3,
+            },
+            {
+              id: "AC-2",
+              description: "All tests pass",
+              category: "validation",
+              verificationMethod: "run_command",
+              evidenceExpected: "pnpm test exits 0",
+              blocking: true,
+              weight: 3,
+            },
+          ],
+        });
         const issue = makeIssue({ plan });
         const reviewer = makeProvider(providerName, "reviewer");
 

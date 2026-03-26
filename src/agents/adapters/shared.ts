@@ -1,10 +1,18 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, extname } from "node:path";
-import type { IssuePlan, IssuePlanStep, IssueEntry, AgentProviderDefinition, EffortConfig, AgentProviderRole } from "../../types.ts";
+import type {
+  AcceptanceCriterion,
+  ExecutionContract,
+  IssuePlan,
+  IssueEntry,
+  AgentProviderDefinition,
+  EffortConfig,
+  AgentProviderRole,
+} from "../../types.ts";
 
 /** Render plan context (summary, assumptions, constraints, unknowns) */
 export function buildPlanContextSection(plan: IssuePlan): string {
-  const parts: string[] = ["## Plan Context", "", `**Summary:** ${plan.summary}`];
+  const parts: string[] = ["## Plan Context", "", `**Summary:** ${plan.summary}`, `**Harness mode:** ${plan.harnessMode}`];
 
   if (plan.assumptions?.length) {
     parts.push("", "**Assumptions:**");
@@ -66,13 +74,44 @@ export function buildRiskSection(plan: IssuePlan): string {
   return parts.join("\n");
 }
 
+export function normalizeAcceptanceCriteria(plan: IssuePlan): AcceptanceCriterion[] {
+  return plan.acceptanceCriteria.map((criterion, index) => ({
+    id: criterion.id || `AC-${index + 1}`,
+    description: criterion.description,
+    category: criterion.category,
+    verificationMethod: criterion.verificationMethod,
+    evidenceExpected: criterion.evidenceExpected,
+    blocking: criterion.blocking,
+    weight: criterion.weight,
+  }));
+}
+
+export function deriveExecutionContract(plan: IssuePlan): ExecutionContract {
+  const ec = plan.executionContract;
+  return {
+    summary: ec.summary,
+    deliverables: Array.isArray(ec.deliverables) ? ec.deliverables.slice() : [],
+    requiredChecks: Array.isArray(ec.requiredChecks) ? ec.requiredChecks.slice() : [],
+    requiredEvidence: Array.isArray(ec.requiredEvidence) ? ec.requiredEvidence.slice() : [],
+    focusAreas: Array.isArray(ec.focusAreas) ? ec.focusAreas.slice() : [],
+    checkpointPolicy: ec.checkpointPolicy === "checkpointed" ? "checkpointed" : "final_only",
+  };
+}
+
 /** Render validation requirements */
 export function buildValidationSection(plan: IssuePlan): string {
   const parts: string[] = [];
+  const acceptanceCriteria = normalizeAcceptanceCriteria(plan);
+  const executionContract = deriveExecutionContract(plan);
 
-  if (plan.successCriteria?.length) {
-    parts.push("## Success Criteria");
-    plan.successCriteria.forEach((c) => parts.push(`- ${c}`));
+  if (acceptanceCriteria.length) {
+    parts.push("## Acceptance Criteria");
+    acceptanceCriteria.forEach((criterion) => {
+      parts.push(`- **${criterion.id}** [${criterion.category}]${criterion.blocking ? " blocking" : " advisory"} — ${criterion.description}`);
+      parts.push(`  Verify via: ${criterion.verificationMethod}`);
+      parts.push(`  Evidence expected: ${criterion.evidenceExpected}`);
+      parts.push(`  Weight: ${criterion.weight}`);
+    });
   }
   if (plan.validation?.length) {
     parts.push("", "## Validation Checks");
@@ -82,6 +121,18 @@ export function buildValidationSection(plan: IssuePlan): string {
   if (plan.deliverables?.length) {
     parts.push("", "## Deliverables");
     plan.deliverables.forEach((d) => parts.push(`- ${d}`));
+  }
+  parts.push("", "## Execution Contract");
+  parts.push(`Summary: ${executionContract.summary}`);
+  parts.push(`Checkpoint policy: ${executionContract.checkpointPolicy}`);
+  if (executionContract.focusAreas.length) parts.push(`Focus areas: ${executionContract.focusAreas.join(", ")}`);
+  if (executionContract.requiredChecks.length) {
+    parts.push("Required checks:");
+    executionContract.requiredChecks.forEach((check) => parts.push(`- ${check}`));
+  }
+  if (executionContract.requiredEvidence.length) {
+    parts.push("Required evidence:");
+    executionContract.requiredEvidence.forEach((evidence) => parts.push(`- ${evidence}`));
   }
 
   return parts.join("\n");
@@ -205,6 +256,7 @@ export type ExecutionPayload = {
   /** Execution intent — what to do and how */
   executionIntent: {
     complexity: string;
+    harnessMode: string;
     approach: string;
     rationale: string;
     workPattern: "sequential" | "phased" | "parallel_subtasks";
@@ -232,14 +284,25 @@ export type ExecutionPayload = {
   /** Constraints the agent must respect */
   constraints: string[];
 
-  /** Success criteria — each must be met for "done" */
-  successCriteria: string[];
+  /** Structured acceptance criteria — each must be graded with evidence */
+  acceptanceCriteria: Array<{
+    id: string;
+    description: string;
+    category: string;
+    verificationMethod: string;
+    evidenceExpected: string;
+    blocking: boolean;
+    weight: number;
+  }>;
 
   /** Validation commands to run before reporting done */
   validation: string[];
 
   /** Expected deliverables */
   deliverables: string[];
+
+  /** Canonical execution contract shared by executor and reviewer */
+  executionContract: ExecutionContract;
 
   /** Assumptions the plan is built on */
   assumptions: string[];
@@ -314,6 +377,8 @@ export function buildExecutionPayload(
 ): ExecutionPayload {
   const strategy = plan.executionStrategy;
   const hasPhases = Boolean(plan.phases?.length);
+  const acceptanceCriteria = normalizeAcceptanceCriteria(plan);
+  const executionContract = deriveExecutionContract(plan);
 
   return {
     version: 1,
@@ -337,6 +402,7 @@ export function buildExecutionPayload(
 
     executionIntent: {
       complexity: plan.estimatedComplexity,
+      harnessMode: plan.harnessMode,
       approach: strategy?.approach || "",
       rationale: strategy?.whyThisApproach || "",
       workPattern: hasPhases ? "phased" : "sequential",
@@ -361,9 +427,18 @@ export function buildExecutionPayload(
     },
 
     constraints: plan.constraints || [],
-    successCriteria: plan.successCriteria || [],
+    acceptanceCriteria: acceptanceCriteria.map((criterion) => ({
+      id: criterion.id,
+      description: criterion.description,
+      category: criterion.category,
+      verificationMethod: criterion.verificationMethod,
+      evidenceExpected: criterion.evidenceExpected,
+      blocking: criterion.blocking,
+      weight: criterion.weight,
+    })),
     validation: plan.validation || [],
     deliverables: plan.deliverables || [],
+    executionContract,
     assumptions: plan.assumptions || [],
     unknowns: (plan.unknowns || []).map((u) => ({
       question: u.question,

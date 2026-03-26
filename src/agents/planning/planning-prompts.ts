@@ -3,10 +3,9 @@ import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { buildDockerPlanCommand, CONTAINER_PLANNING } from "../docker-runner.ts";
 import { appendFileTail } from "../../concerns/helpers.ts";
-import type { IssuePlan, RuntimeConfig, PipelineStageConfig } from "../../types.ts";
+import type { IssuePlan, RuntimeConfig } from "../../types.ts";
 import { PLAN_JSON_SCHEMA } from "./planning-schema.ts";
 import { ADAPTERS } from "../adapters/registry.ts";
-import { CLAUDE_RESULT_SCHEMA } from "../adapters/commands.ts";
 import { renderPrompt } from "../prompting.ts";
 import { STATE_ROOT, TARGET_ROOT } from "../../concerns/constants.ts";
 import { detectAvailableProviders } from "../providers.ts";
@@ -15,7 +14,7 @@ import { discoverSkills, discoverAgents, discoverCommands } from "../skills.ts";
 
 // ── Prompt builders ───────────────────────────────────────────────────────────
 
-export async function buildPlanPrompt(title: string, description: string, fast = false, images?: string[]): Promise<string> {
+export async function buildPlanPrompt(title: string, description: string, fast = false, images?: string[], failureContext?: string): Promise<string> {
   const skills = discoverSkills(TARGET_ROOT);
   const agents = discoverAgents(TARGET_ROOT);
   const commands = discoverCommands(TARGET_ROOT);
@@ -26,6 +25,7 @@ export async function buildPlanPrompt(title: string, description: string, fast =
     description: description || "(none provided)",
     fast,
     images: images?.length ? images : undefined,
+    failureContext: failureContext || undefined,
     availableCapabilities: hasCapabilities,
     availableSkills: skills.map((s) => ({ name: s.name, description: s.description || "", whenToUse: s.whenToUse || "" })),
     availableAgents: agents.map((a) => ({ name: a.name, description: a.description || "", whenToUse: a.whenToUse || "", avoidIf: a.avoidIf || "" })),

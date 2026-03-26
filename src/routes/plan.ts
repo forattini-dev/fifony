@@ -4,11 +4,8 @@ import { toStringValue } from "../concerns/helpers.ts";
 import type { RouteRegistrar } from "./http.ts";
 import { addEvent } from "../domains/issues.ts";
 import { mutateIssueState } from "../routes/helpers.ts";
-import { applyPlanUsage, applyPlanSuggestions } from "../routes/helpers.ts";
-import { persistState } from "../persistence/store.ts";
 import {
   generatePlan,
-  refinePlan,
   generatePlanInBackground,
   refinePlanInBackground,
   loadPlanningSession,
@@ -85,12 +82,7 @@ export function registerPlanRoutes(
       const fast = body.fast === true;
 
       // Fire-and-forget — plan runs in background, updates via WS
-      generatePlanInBackground(issue, state.config, null, {
-        addEvent: (issueId, kind, message) => addEvent(state, issueId, kind, message),
-        persistState: () => persistState(state),
-        applyUsage: (iss, usage) => applyPlanUsage(iss, usage),
-        applySuggestions: (iss, plan) => applyPlanSuggestions(iss, plan),
-      }, { fast });
+      generatePlanInBackground(state, issue, { fast });
 
       addEvent(state, issue.id, "progress", `${fast ? "Fast plan" : "Plan"} generation started for ${issue.identifier}.`);
     });
@@ -114,15 +106,7 @@ export function registerPlanRoutes(
       }
 
       // Fire-and-forget — refinement runs in background, updates via WS
-      refinePlanInBackground(issue, feedback, state.config, null, {
-        addEvent: (issueId, kind, message) => addEvent(state, issueId, kind, message),
-        persistState: () => persistState(state),
-        applyUsage: (iss, usage) => applyPlanUsage(iss, usage),
-        applySuggestions: (iss, plan) => {
-          if (plan.suggestedPaths?.length) iss.paths = plan.suggestedPaths;
-          if (plan.suggestedEffort) iss.effort = plan.suggestedEffort;
-        },
-      });
+      refinePlanInBackground(state, issue, feedback);
 
       addEvent(state, issue.id, "progress", `Plan refinement started for ${issue.identifier}.`);
     });

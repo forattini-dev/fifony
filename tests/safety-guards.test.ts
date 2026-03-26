@@ -208,7 +208,7 @@ describe("safety: autoReviewApproval semantics are correctly documented", () => 
 
 describe("safety: FSM human decision points cannot be bypassed", () => {
   it("no direct path from Planning to Merged", async () => {
-    const { issueStateMachineConfig, ISSUE_STATE_MACHINE_ID } = await import("../src/persistence/plugins/issue-state-machine.ts");
+    const { issueStateMachineConfig, ISSUE_STATE_MACHINE_ID } = await import("../src/persistence/plugins/fsm-issue.ts");
     const states = issueStateMachineConfig.stateMachines[ISSUE_STATE_MACHINE_ID].states;
     // Planning can only go to PendingApproval or Cancelled
     const planningTargets = Object.values(states.Planning.on || {});
@@ -218,7 +218,7 @@ describe("safety: FSM human decision points cannot be bypassed", () => {
   });
 
   it("no direct path from Running to Approved", async () => {
-    const { issueStateMachineConfig, ISSUE_STATE_MACHINE_ID } = await import("../src/persistence/plugins/issue-state-machine.ts");
+    const { issueStateMachineConfig, ISSUE_STATE_MACHINE_ID } = await import("../src/persistence/plugins/fsm-issue.ts");
     const states = issueStateMachineConfig.stateMachines[ISSUE_STATE_MACHINE_ID].states;
     const runningTargets = Object.values(states.Running.on || {});
     assert.ok(!runningTargets.includes("Approved"), "Running cannot skip review to Approved");
@@ -226,7 +226,7 @@ describe("safety: FSM human decision points cannot be bypassed", () => {
   });
 
   it("Reviewing must pass through PendingDecision before Approved", async () => {
-    const { issueStateMachineConfig, ISSUE_STATE_MACHINE_ID } = await import("../src/persistence/plugins/issue-state-machine.ts");
+    const { issueStateMachineConfig, ISSUE_STATE_MACHINE_ID } = await import("../src/persistence/plugins/fsm-issue.ts");
     const states = issueStateMachineConfig.stateMachines[ISSUE_STATE_MACHINE_ID].states;
     const reviewingTargets = Object.values(states.Reviewing.on || {});
     assert.ok(!reviewingTargets.includes("Approved"), "Reviewing cannot skip PendingDecision");
@@ -235,7 +235,7 @@ describe("safety: FSM human decision points cannot be bypassed", () => {
   });
 
   it("only PendingDecision and Approved can reach Merged", async () => {
-    const { issueStateMachineConfig, ISSUE_STATE_MACHINE_ID } = await import("../src/persistence/plugins/issue-state-machine.ts");
+    const { issueStateMachineConfig, ISSUE_STATE_MACHINE_ID } = await import("../src/persistence/plugins/fsm-issue.ts");
     const states = issueStateMachineConfig.stateMachines[ISSUE_STATE_MACHINE_ID].states;
     // Check every state — only Approved should have MERGE -> Merged
     const statesReachingMerged: string[] = [];

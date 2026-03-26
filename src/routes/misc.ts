@@ -3,7 +3,6 @@ import { logger } from "../concerns/logger.ts";
 import { toStringValue } from "../concerns/helpers.ts";
 import type { RouteRegistrar } from "./http.ts";
 import { isAgentStillRunning } from "../agents/agent.ts";
-import { addEvent } from "../domains/issues.ts";
 import { persistState } from "../persistence/store.ts";
 import { getContainer } from "../persistence/container.ts";
 import { pushWorkspaceCommand } from "../commands/push-workspace.command.ts";

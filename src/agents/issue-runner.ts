@@ -239,7 +239,6 @@ async function handleExecutionStage(
   promptText: string,
   promptFile: string,
   workflowConfig: WorkflowConfig | null,
-  workspaceDerivedPaths: string[],
   startTs: number,
   routedProviders: ReturnType<typeof getEffectiveAgentProviders>,
 ): Promise<void> {
@@ -362,7 +361,7 @@ export async function runIssueOnce(
   }
 
   try {
-    const workspaceDerivedPaths = hydrateIssuePathsFromWorkspace(issue);
+    hydrateIssuePathsFromWorkspace(issue);
 
     const { workspacePath, promptText, promptFile } = await prepareWorkspace(issue, state, state.config.defaultBranch);
     container.issueRepository.markDirty(issue.id);
@@ -388,7 +387,7 @@ export async function runIssueOnce(
       return;
     }
 
-    await handleExecutionStage(state, issue, workspacePath, promptText, promptFile, workflowConfig, workspaceDerivedPaths, startTs, routedProviders);
+    await handleExecutionStage(state, issue, workspacePath, promptText, promptFile, workflowConfig, startTs, routedProviders);
   } catch (error) {
     issue.attempts += 1;
     issue.lastError = String(error);

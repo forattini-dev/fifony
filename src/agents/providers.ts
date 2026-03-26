@@ -9,20 +9,19 @@ import type {
   EffortConfig,
   IssueEntry,
   JsonRecord,
-  PipelineStageConfig,
   ReasoningEffort,
+  ReviewProfileName,
   RuntimeState,
   WorkflowConfig,
 } from "../types.ts";
 import { TARGET_ROOT } from "../concerns/constants.ts";
 import {
   toStringValue,
-  toStringArray,
-  toNumberValue,
   getNestedRecord,
   getNestedString,
 } from "../concerns/helpers.ts";
-import { logger } from "../concerns/logger.ts";
+import { deriveReviewProfile } from "./review-profile.ts";
+import { buildReviewRouteKey, recommendReviewRouteForIssue } from "./harness-policy.ts";
 
 export function resolveAgentProfile(name: string): { profilePath: string; instructions: string } {
   const normalized = name.trim();
@@ -172,6 +171,20 @@ export function readGeminiConfig(): { model?: string; previewFeatures?: boolean 
   }
 }
 
+export function readClaudeConfig(): { model?: string } {
+  try {
+    const settingsPath = join(homedir(), ".claude", "settings.json");
+    if (!existsSync(settingsPath)) return {};
+    const raw = readFileSync(settingsPath, "utf8");
+    const settings = JSON.parse(raw) as { model?: string };
+    return {
+      model: typeof settings.model === "string" ? settings.model : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
 export function resolveDefaultProvider(detected: DetectedProvider[]): string {
   const available = detected.filter((p) => p.available);
   if (available.length === 0) return "";
@@ -254,6 +267,159 @@ export function getBaseAgentProviders(
   ];
 }
 
+type AgentStage = "plan" | "execute" | "review";
+
+const EFFORT_ORDER: ReasoningEffort[] = ["low", "medium", "high", "extra-high"];
+
+const REVIEW_PROFILE_MIN_EFFORT: Record<ReviewProfileName, ReasoningEffort> = {
+  "general-quality": "medium",
+  "ui-polish": "high",
+  "workflow-fsm": "high",
+  "integration-safety": "high",
+  "api-contract": "high",
+  "security-hardening": "extra-high",
+};
+
+const REVIEW_PROFILE_OVERLAYS: Record<ReviewProfileName, string[]> = {
+  "general-quality": [],
+  "ui-polish": ["impeccable", "frontend-design"],
+  "workflow-fsm": ["workflow-audit"],
+  "integration-safety": ["integration-safety"],
+  "api-contract": ["api-contract"],
+  "security-hardening": ["security-hardening"],
+};
+
+function maxEffort(left?: ReasoningEffort, right?: ReasoningEffort): ReasoningEffort | undefined {
+  if (!left) return right;
+  if (!right) return left;
+  return EFFORT_ORDER[Math.max(EFFORT_ORDER.indexOf(left), EFFORT_ORDER.indexOf(right))] ?? left;
+}
+
+function stageToRole(stage: AgentStage): AgentProviderRole {
+  if (stage === "plan") return "planner";
+  if (stage === "review") return "reviewer";
+  return "executor";
+}
+
+function stageToWorkflowKey(stage: AgentStage): keyof WorkflowConfig {
+  if (stage === "plan") return "plan";
+  if (stage === "review") return "review";
+  return "execute";
+}
+
+function buildStageProvider(
+  state: RuntimeState,
+  issue: IssueEntry,
+  stage: AgentStage,
+  workflowConfig?: WorkflowConfig | null,
+): AgentProviderDefinition {
+  const role = stageToRole(stage);
+  const stageConfig = workflowConfig?.[stageToWorkflowKey(stage)];
+  const effort = stageConfig?.effort || resolveEffort(role, issue.effort, state.config.defaultEffort);
+  const providerName = stageConfig?.provider || state.config.agentProvider;
+  const model = stageConfig?.model || undefined;
+  const command = stageConfig
+    ? getProviderDefaultCommand(providerName, effort, model)
+    : stage === "execute"
+      ? resolveAgentCommand(providerName, state.config.agentCommand, "", "", effort)
+      : getProviderDefaultCommand(providerName, effort, model);
+
+  return {
+    provider: providerName,
+    role,
+    command,
+    model,
+    profile: "",
+    profilePath: "",
+    profileInstructions: "",
+    reasoningEffort: effort,
+    selectionReason: stageConfig
+      ? `Using workflow ${stage} stage configuration.`
+      : `Using default ${stage} stage provider configuration.`,
+    overlays: [],
+  };
+}
+
+function specializeReviewerProvider(baseProvider: AgentProviderDefinition, issue: IssueEntry): AgentProviderDefinition {
+  const reviewProfile = issue.reviewProfile ?? deriveReviewProfile(issue);
+  const minEffort = REVIEW_PROFILE_MIN_EFFORT[reviewProfile.primary];
+  const reasoningEffort = maxEffort(baseProvider.reasoningEffort, minEffort);
+  const overlays = [...new Set([...(baseProvider.overlays ?? []), ...REVIEW_PROFILE_OVERLAYS[reviewProfile.primary]])];
+  const command = getProviderDefaultCommand(baseProvider.provider, reasoningEffort, baseProvider.model) || baseProvider.command;
+
+  return {
+    ...baseProvider,
+    command,
+    reasoningEffort,
+    overlays,
+    selectionReason: `Reviewer specialized for ${reviewProfile.primary}; raised scrutiny with ${reasoningEffort ?? "default"} effort.`,
+  };
+}
+
+function resolveSynchronousProviderModel(provider: string, workflowConfig?: WorkflowConfig | null): string | undefined {
+  const stages = workflowConfig ? [workflowConfig.review, workflowConfig.execute, workflowConfig.plan] : [];
+  const fromWorkflow = stages.find((stage) => stage?.provider === provider)?.model;
+  if (fromWorkflow) return fromWorkflow;
+  if (provider === "codex") return readCodexConfig().model;
+  if (provider === "gemini") return readGeminiConfig().model;
+  if (provider === "claude") return readClaudeConfig().model;
+  return undefined;
+}
+
+function buildAdaptiveReviewCandidates(
+  baseProvider: AgentProviderDefinition,
+  workflowConfig?: WorkflowConfig | null,
+): AgentProviderDefinition[] {
+  const availableProviders = detectAvailableProviders()
+    .filter((provider) => provider.available)
+    .map((provider) => provider.name);
+  const candidates = new Map<string, AgentProviderDefinition>();
+  const addCandidate = (providerName: string, reason: string) => {
+    const model = resolveSynchronousProviderModel(providerName, workflowConfig ?? null);
+    const command = getProviderDefaultCommand(providerName, baseProvider.reasoningEffort, model) || baseProvider.command;
+    const candidate: AgentProviderDefinition = {
+      ...baseProvider,
+      provider: providerName,
+      model,
+      command,
+      selectionReason: reason,
+    };
+    candidates.set(buildReviewRouteKey(candidate), candidate);
+  };
+
+  addCandidate(baseProvider.provider, baseProvider.selectionReason || "Configured review route.");
+
+  for (const providerName of availableProviders) {
+    if (providerName === baseProvider.provider) continue;
+    addCandidate(providerName, `Adaptive routing candidate using available ${providerName} reviewer.`);
+  }
+
+  return [...candidates.values()];
+}
+
+function adaptReviewerProvider(
+  state: RuntimeState,
+  issue: IssueEntry,
+  baseProvider: AgentProviderDefinition,
+  workflowConfig?: WorkflowConfig | null,
+): AgentProviderDefinition {
+  if (state.config.adaptiveReviewRouting === false) return baseProvider;
+
+  const candidates = buildAdaptiveReviewCandidates(baseProvider, workflowConfig ?? null);
+  const recommendation = recommendReviewRouteForIssue(
+    state.issues,
+    issue,
+    candidates,
+    state.config.adaptivePolicyMinSamples ?? 3,
+  );
+  if (!recommendation) return baseProvider;
+
+  return {
+    ...recommendation.candidate,
+    selectionReason: `${recommendation.rationale} ${baseProvider.selectionReason ?? ""}`.trim(),
+  };
+}
+
 /** Map AgentProviderRole to WorkflowConfig stage key */
 function roleToStageKey(role: AgentProviderRole): keyof WorkflowConfig {
   switch (role) {
@@ -275,7 +441,9 @@ export function applyWorkflowConfigToProviders(
 
   return providers.map((provider) => {
     const stageKey = roleToStageKey(provider.role);
-    const stageConfig: PipelineStageConfig | undefined = workflowConfig[stageKey];
+    const stageConfig = workflowConfig[stageKey] as
+      | { provider?: string; model?: string; effort?: ReasoningEffort }
+      | undefined;
     if (!stageConfig) return provider;
 
     const newProvider = stageConfig.provider || provider.provider;
@@ -295,22 +463,40 @@ export function applyWorkflowConfigToProviders(
   });
 }
 
+export function getExecutionProviders(
+  state: RuntimeState,
+  issue: IssueEntry,
+  workflowConfig?: WorkflowConfig | null,
+): AgentProviderDefinition[] {
+  return [buildStageProvider(state, issue, "execute", workflowConfig ?? null)];
+}
+
+export function getReviewProvider(
+  state: RuntimeState,
+  issue: IssueEntry,
+  workflowConfig?: WorkflowConfig | null,
+): AgentProviderDefinition {
+  const specialized = specializeReviewerProvider(buildStageProvider(state, issue, "review", workflowConfig ?? null), issue);
+  return adaptReviewerProvider(state, issue, specialized, workflowConfig ?? null);
+}
+
+export function getSessionProvidersForIssue(
+  state: RuntimeState,
+  issue: IssueEntry,
+  workflowConfig?: WorkflowConfig | null,
+): AgentProviderDefinition[] {
+  return [
+    ...getExecutionProviders(state, issue, workflowConfig ?? null),
+    getReviewProvider(state, issue, workflowConfig ?? null),
+  ];
+}
+
 export function getEffectiveAgentProviders(
   state: RuntimeState,
   issue: IssueEntry,
-  _workflowDefinition: null,
+  workflowDefinitionOrConfig?: WorkflowConfig | null,
   workflowConfig?: WorkflowConfig | null,
 ): AgentProviderDefinition[] {
-  const baseProviders = getBaseAgentProviders(state);
-
-  const providers = baseProviders.map((provider) => {
-    const effort = resolveEffort(provider.role, issue.effort, state.config.defaultEffort);
-    return {
-      ...provider,
-      reasoningEffort: effort,
-    };
-  });
-
-  // Apply user's WorkflowConfig overrides (Settings → Workflow)
-  return applyWorkflowConfigToProviders(providers, workflowConfig ?? null);
+  const effectiveWorkflowConfig = workflowConfig ?? workflowDefinitionOrConfig ?? null;
+  return getSessionProvidersForIssue(state, issue, effectiveWorkflowConfig);
 }

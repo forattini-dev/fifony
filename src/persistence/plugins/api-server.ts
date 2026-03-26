@@ -36,6 +36,8 @@ import { registerScanningRoutes } from "../../routes/scanning.js";
 import { registerCatalogRoutes } from "../../routes/catalog.js";
 import { registerReferenceRepositoryRoutes } from "../../routes/reference-repositories.js";
 import { registerMiscRoutes } from "../../routes/misc.js";
+import { registerDevServerRoutes } from "../../routes/dev-server.js";
+import { registerMilestoneRoutes } from "../../routes/projects.js";
 
 // ── Route collector ──────────────────────────────────────────────────────────
 // Accumulates routes before ApiPlugin construction (ApiPlugin only accepts routes
@@ -56,7 +58,7 @@ class RouteCollector implements RouteRegistrar {
 export async function startApiServer(
   state: RuntimeState,
   port: number,
-  options?: { tls?: boolean },
+  _options?: { tls?: boolean },
 ): Promise<void> {
   logger.info({ port }, "[API] Starting API server");
   const stateDb = getStateDb();
@@ -130,7 +132,9 @@ export async function startApiServer(
   registerScanningRoutes(collector, state);
   registerCatalogRoutes(collector);
   registerReferenceRepositoryRoutes(collector);
+  registerMilestoneRoutes(collector, state);
   registerMiscRoutes(collector, state);
+  registerDevServerRoutes(collector, state);
 
   const apiPlugin = new ApiPlugin({
     port,

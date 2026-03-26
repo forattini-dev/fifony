@@ -84,12 +84,40 @@ function makePlan(overrides: Partial<IssuePlan> = {}): IssuePlan {
   return {
     summary: "Add dark mode toggle to settings",
     estimatedComplexity: "medium",
+    harnessMode: "standard",
     steps: [
       { step: 1, action: "Create ThemeToggle component", files: ["src/components/ThemeToggle.tsx"] },
       { step: 2, action: "Add theme context provider", files: ["src/context/ThemeContext.tsx"] },
       { step: 3, action: "Update settings page", files: ["src/pages/Settings.tsx"] },
     ],
-    successCriteria: ["Dark mode toggle works", "Theme persists across sessions"],
+    acceptanceCriteria: [
+      {
+        id: "AC-1",
+        description: "Dark mode toggle works",
+        category: "functionality",
+        verificationMethod: "ui_walkthrough",
+        evidenceExpected: "Toggle visibly changes theme",
+        blocking: true,
+        weight: 3,
+      },
+      {
+        id: "AC-2",
+        description: "Theme persists across sessions",
+        category: "correctness",
+        verificationMethod: "integration_check",
+        evidenceExpected: "Reload preserves previously selected theme",
+        blocking: true,
+        weight: 3,
+      },
+    ],
+    executionContract: {
+      summary: "Dark mode is implemented, persisted, and verified in settings",
+      deliverables: ["ThemeToggle component", "theme persistence"],
+      requiredChecks: ["pnpm typecheck", "pnpm test"],
+      requiredEvidence: ["Theme visibly changes", "Reload preserves theme"],
+      focusAreas: ["src/components/ThemeToggle.tsx", "src/context/ThemeContext.tsx"],
+      checkpointPolicy: "final_only",
+    },
     validation: ["pnpm typecheck", "pnpm test"],
     suggestedPaths: ["src/components/ThemeToggle.tsx", "src/context/ThemeContext.tsx"],
     suggestedSkills: ["audit", "normalize"],
@@ -233,6 +261,7 @@ function claudePlanOutput(): string {
     structured_output: {
       summary: "Implement dark mode toggle",
       estimatedComplexity: "medium",
+      harnessMode: "standard",
       steps: [
         { step: 1, action: "Create ThemeToggle component", files: ["src/ThemeToggle.tsx"], doneWhen: "Component renders" },
         { step: 2, action: "Add theme context", files: ["src/ThemeContext.tsx"], doneWhen: "Context provides theme" },
@@ -244,7 +273,25 @@ function claudePlanOutput(): string {
       suggestedEffort: { default: "medium", executor: "medium", reviewer: "low" },
       assumptions: ["Tailwind CSS is available"],
       constraints: ["No breaking changes to existing themes"],
-      successCriteria: ["Toggle switches between light and dark mode"],
+      acceptanceCriteria: [
+        {
+          id: "AC-1",
+          description: "Toggle switches between light and dark mode",
+          category: "functionality",
+          verificationMethod: "ui_walkthrough",
+          evidenceExpected: "Theme visibly toggles between light and dark",
+          blocking: true,
+          weight: 3,
+        },
+      ],
+      executionContract: {
+        summary: "Dark mode plan includes concrete acceptance and verification contract",
+        deliverables: ["ThemeToggle component", "theme context wiring"],
+        requiredChecks: ["pnpm typecheck", "pnpm test"],
+        requiredEvidence: ["Theme visibly toggles between light and dark"],
+        focusAreas: ["src/ThemeToggle.tsx", "src/ThemeContext.tsx", "src/Settings.tsx"],
+        checkpointPolicy: "final_only",
+      },
     },
     modelUsage: {
       "claude-sonnet-4-6": { inputTokens: 5000, outputTokens: 1200 },
@@ -379,7 +426,27 @@ codex
 {
   "summary": "Add dark mode",
   "estimatedComplexity": "low",
+  "harnessMode": "standard",
   "steps": [{"step": 1, "action": "Create toggle", "files": ["src/Toggle.tsx"]}],
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "description": "Dark mode toggle renders and changes theme",
+      "category": "functionality",
+      "verificationMethod": "ui_walkthrough",
+      "evidenceExpected": "Toggle visibly changes the theme",
+      "blocking": true,
+      "weight": 3
+    }
+  ],
+  "executionContract": {
+    "summary": "Dark mode toggle is implemented and verified",
+    "deliverables": ["toggle component"],
+    "requiredChecks": ["pnpm test"],
+    "requiredEvidence": ["Toggle visibly changes the theme"],
+    "focusAreas": ["src/Toggle.tsx"],
+    "checkpointPolicy": "final_only"
+  },
   "suggestedSkills": ["harden", "audit"],
   "suggestedAgents": ["frontend-developer"],
   "suggestedPaths": ["src/Toggle.tsx"]
@@ -398,7 +465,27 @@ codex
       structured_output: {
         summary: "Simple fix",
         estimatedComplexity: "trivial",
+        harnessMode: "solo",
         steps: [{ step: 1, action: "Fix typo", files: ["README.md"] }],
+        acceptanceCriteria: [
+          {
+            id: "AC-1",
+            description: "Typo is fixed in README",
+            category: "correctness",
+            verificationMethod: "code_inspection",
+            evidenceExpected: "README text reflects corrected spelling",
+            blocking: true,
+            weight: 1,
+          },
+        ],
+        executionContract: {
+          summary: "README typo is corrected and verified",
+          deliverables: ["updated README"],
+          requiredChecks: [],
+          requiredEvidence: ["README text reflects corrected spelling"],
+          focusAreas: ["README.md"],
+          checkpointPolicy: "final_only",
+        },
       },
     });
     const plan = parsePlanOutput(output);

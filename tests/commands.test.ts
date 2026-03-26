@@ -178,6 +178,23 @@ describe("extractPlanDirs", () => {
   const basePlan = {
     steps: [],
     estimatedComplexity: "medium",
+    harnessMode: "standard",
+    summary: "Base plan",
+    acceptanceCriteria: [],
+    executionContract: {
+      summary: "Base execution contract",
+      deliverables: [],
+      requiredChecks: [],
+      requiredEvidence: [],
+      focusAreas: [],
+      checkpointPolicy: "final_only",
+    },
+    suggestedPaths: [],
+    suggestedSkills: [],
+    suggestedAgents: [],
+    suggestedEffort: {},
+    provider: "claude",
+    createdAt: "2026-03-26T00:00:00.000Z",
   } as unknown as IssuePlan;
 
   it("returns empty array when suggestedPaths is absent", () => {

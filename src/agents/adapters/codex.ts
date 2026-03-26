@@ -5,7 +5,7 @@ import type { CompiledExecution } from "./types.ts";
 import type { ProviderAdapter, ProviderCommandOptions } from "./registry.ts";
 import { renderPrompt } from "../prompting.ts";
 import { buildFullPlanPrompt, resolveEffortForProvider, extractValidationCommands } from "./shared.ts";
-import { REVIEW_RESULT_SCHEMA, extractPlanDirs } from "./commands.ts";
+import { extractPlanDirs } from "./commands.ts";
 import {
   collectProviderUsageSnapshotFromCli,
   type ProviderUsageSnapshot,

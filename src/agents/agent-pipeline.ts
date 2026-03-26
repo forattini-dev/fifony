@@ -12,7 +12,7 @@ import type {
 } from "../types.ts";
 import { now, clamp } from "../concerns/helpers.ts";
 import { logger } from "../concerns/logger.ts";
-import { getEffectiveAgentProviders } from "./providers.ts";
+import { getExecutionProviders } from "./providers.ts";
 import { addEvent } from "../domains/issues.ts";
 import { compileExecution, persistCompilationArtifacts } from "./adapters/index.ts";
 import { discoverSkills, buildSkillContext, discoverAgents, discoverCommands, buildCapabilitiesManifest } from "../agents/skills.ts";
@@ -27,6 +27,7 @@ import { readAgentDirective, addTokenUsage } from "./directive-parser.ts";
 import { buildTurnPrompt, buildProviderBasePrompt, buildRetryContext } from "./prompt-builder.ts";
 import { runCommandWithTimeout, runHook } from "./command-executor.ts";
 import { record as recordTokens } from "../domains/tokens.ts";
+import { buildContextMarkdown, buildTraceFromContext } from "./context-engine.ts";
 
 /** Compute the versioned stdout output filename for a given phase/version/attempt/turn. */
 function resolveOutputFileName(role: string, planVersion: number, attempt: number, turn: number): string {
@@ -74,7 +75,35 @@ export async function runAgentSession(
   const compactedOutput = previousOutput.length > maxOutputChars
     ? `[...${previousOutput.length - maxOutputChars} chars truncated...]\n${previousOutput.slice(-maxOutputChars)}`
     : previousOutput;
-  const turnPrompt = await buildTurnPrompt(issue, basePromptText, compactedOutput, turnIndex, maxTurns, nextPrompt);
+  const contextResult = await buildContextMarkdown({
+    role: provider.role,
+    title: issue.title,
+    description: issue.description,
+    issue,
+    workspacePath,
+    previousOutput: compactedOutput,
+    nextPrompt,
+    runtimeState: state,
+  }).catch((error) => {
+    logger.warn({ err: error, issueId: issue.id, role: provider.role }, "[Context] Failed to build context pack");
+    return {
+      pack: {
+        role: provider.role,
+        query: "",
+        generatedAt: now(),
+        hits: [],
+        lexicalHitCount: 0,
+        semanticHitCount: 0,
+        memoryHitCount: 0,
+        explicitHitCount: 0,
+      },
+      markdown: "",
+    };
+  });
+  const effectiveBasePrompt = contextResult.markdown
+    ? `${contextResult.markdown}\n\n${basePromptText}`
+    : basePromptText;
+  const turnPrompt = await buildTurnPrompt(issue, effectiveBasePrompt, compactedOutput, turnIndex, maxTurns, nextPrompt);
   const turnPromptFile = turnIndex === 1
     ? basePromptFile
     : join(workspacePath, `turn-${String(turnIndex).padStart(2, "0")}.md`);
@@ -124,7 +153,7 @@ export async function runAgentSession(
 
   addEvent(state, issue.id, "runner", `Turn ${turnIndex}/${maxTurns} started for ${issue.identifier}.`);
 
-  const turnResult = await runCommandWithTimeout(provider.command, workspacePath, issue, state.config, turnPrompt, turnPromptFile, turnEnv, outputFilePath);
+  const turnResult = await runCommandWithTimeout(provider.command, workspacePath, issue, state.config, turnPromptFile, turnEnv, outputFilePath);
 
   if (state.config.afterRunHook) {
     await runHook(state.config.afterRunHook, workspacePath, issue, "after_run", {
@@ -188,6 +217,8 @@ export async function runAgentSession(
     skillsUsed: directive.skillsUsed,
     agentsUsed: directive.agentsUsed,
     commandsRun: directive.commandsRun,
+    contextPack: contextResult.pack,
+    traceSteps: buildTraceFromContext(contextResult.pack, directive),
   });
 
   session.lastCode = lastCode;
@@ -234,7 +265,7 @@ export async function runAgentPipeline(
   basePromptFile: string,
   workflowConfig?: WorkflowConfig | null,
 ): Promise<AgentSessionResult> {
-  const providers = getEffectiveAgentProviders(state, issue, null, workflowConfig);
+  const providers = getExecutionProviders(state, issue, workflowConfig);
   const attempt = issue.attempts + 1;
   logger.debug({ issueId: issue.id, identifier: issue.identifier, attempt, providers: providers.map((p) => `${p.role}:${p.provider}`) }, "[Agent] Starting pipeline");
   const { pipeline, key: pipelineFile } = await loadAgentPipelineState(issue, attempt, providers);

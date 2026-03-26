@@ -37,6 +37,13 @@ export const SETTING_ID_PR_BASE_BRANCH = "runtime.prBaseBranch";
 export const SETTING_ID_AUTO_REVIEW_APPROVAL = "runtime.autoReviewApproval";
 export const SETTING_ID_DOCKER_EXECUTION = "runtime.dockerExecution";
 export const SETTING_ID_DOCKER_IMAGE = "runtime.dockerImage";
+export const SETTING_ID_MAX_REVIEW_AUTO_RETRIES = "runtime.maxReviewAutoRetries";
+export const SETTING_ID_ENABLE_PLAYWRIGHT_REVIEW = "runtime.enablePlaywrightReview";
+export const SETTING_ID_AUTO_REPLAN_ON_STALL = "runtime.autoReplanOnStall";
+export const SETTING_ID_AUTO_REPLAN_STALL_THRESHOLD = "runtime.autoReplanStallThreshold";
+export const SETTING_ID_ADAPTIVE_HARNESS_SELECTION = "runtime.adaptiveHarnessSelection";
+export const SETTING_ID_ADAPTIVE_REVIEW_ROUTING = "runtime.adaptiveReviewRouting";
+export const SETTING_ID_ADAPTIVE_POLICY_MIN_SAMPLES = "runtime.adaptivePolicyMinSamples";
 
 export async function loadRuntimeSettings(): Promise<RuntimeSettingRecord[]> {
   return loadPersistedSettings();
@@ -61,6 +68,13 @@ export const RUNTIME_CONFIG_SETTING_IDS = new Set<string>([
   SETTING_ID_AUTO_REVIEW_APPROVAL,
   SETTING_ID_DOCKER_EXECUTION,
   SETTING_ID_DOCKER_IMAGE,
+  SETTING_ID_MAX_REVIEW_AUTO_RETRIES,
+  SETTING_ID_ENABLE_PLAYWRIGHT_REVIEW,
+  SETTING_ID_AUTO_REPLAN_ON_STALL,
+  SETTING_ID_AUTO_REPLAN_STALL_THRESHOLD,
+  SETTING_ID_ADAPTIVE_HARNESS_SELECTION,
+  SETTING_ID_ADAPTIVE_REVIEW_ROUTING,
+  SETTING_ID_ADAPTIVE_POLICY_MIN_SAMPLES,
 ]);
 
 const VALID_REASONING_EFFORTS = new Set<ReasoningEffort>(["low", "medium", "high", "extra-high"]);
@@ -144,6 +158,13 @@ function buildRuntimeConfigSettings(
     { id: SETTING_ID_AUTO_REVIEW_APPROVAL, scope: "runtime", value: config.autoReviewApproval, source, updatedAt },
     { id: SETTING_ID_DOCKER_EXECUTION, scope: "runtime", value: config.dockerExecution, source, updatedAt },
     { id: SETTING_ID_DOCKER_IMAGE, scope: "runtime", value: config.dockerImage, source, updatedAt },
+    { id: SETTING_ID_MAX_REVIEW_AUTO_RETRIES, scope: "runtime", value: config.maxReviewAutoRetries ?? 2, source, updatedAt },
+    { id: SETTING_ID_ENABLE_PLAYWRIGHT_REVIEW, scope: "runtime", value: config.enablePlaywrightReview ?? false, source, updatedAt },
+    { id: SETTING_ID_AUTO_REPLAN_ON_STALL, scope: "runtime", value: config.autoReplanOnStall ?? false, source, updatedAt },
+    { id: SETTING_ID_AUTO_REPLAN_STALL_THRESHOLD, scope: "runtime", value: config.autoReplanStallThreshold ?? 2, source, updatedAt },
+    { id: SETTING_ID_ADAPTIVE_HARNESS_SELECTION, scope: "runtime", value: config.adaptiveHarnessSelection !== false, source, updatedAt },
+    { id: SETTING_ID_ADAPTIVE_REVIEW_ROUTING, scope: "runtime", value: config.adaptiveReviewRouting !== false, source, updatedAt },
+    { id: SETTING_ID_ADAPTIVE_POLICY_MIN_SAMPLES, scope: "runtime", value: config.adaptivePolicyMinSamples ?? 3, source, updatedAt },
   ];
 }
 
@@ -265,6 +286,43 @@ export function applyPersistedSettings(config: RuntimeConfig, settings: RuntimeS
       case SETTING_ID_DOCKER_IMAGE: {
         if (typeof setting.value === "string" && setting.value.trim()) {
           nextConfig.dockerImage = setting.value.trim();
+        }
+        break;
+      }
+      case SETTING_ID_MAX_REVIEW_AUTO_RETRIES: {
+        const parsed = parseIntegerSetting(setting.value);
+        if (parsed !== null && parsed >= 0 && parsed <= 10) {
+          nextConfig.maxReviewAutoRetries = parsed;
+        }
+        break;
+      }
+      case SETTING_ID_ENABLE_PLAYWRIGHT_REVIEW: {
+        nextConfig.enablePlaywrightReview = toBooleanValue(setting.value, false);
+        break;
+      }
+      case SETTING_ID_AUTO_REPLAN_ON_STALL: {
+        nextConfig.autoReplanOnStall = toBooleanValue(setting.value, false);
+        break;
+      }
+      case SETTING_ID_AUTO_REPLAN_STALL_THRESHOLD: {
+        const parsed = parseIntegerSetting(setting.value);
+        if (parsed !== null && parsed >= 2 && parsed <= 5) {
+          nextConfig.autoReplanStallThreshold = parsed;
+        }
+        break;
+      }
+      case SETTING_ID_ADAPTIVE_HARNESS_SELECTION: {
+        nextConfig.adaptiveHarnessSelection = toBooleanValue(setting.value, true);
+        break;
+      }
+      case SETTING_ID_ADAPTIVE_REVIEW_ROUTING: {
+        nextConfig.adaptiveReviewRouting = toBooleanValue(setting.value, true);
+        break;
+      }
+      case SETTING_ID_ADAPTIVE_POLICY_MIN_SAMPLES: {
+        const parsed = parseIntegerSetting(setting.value);
+        if (parsed !== null && parsed >= 1 && parsed <= 10) {
+          nextConfig.adaptivePolicyMinSamples = parsed;
         }
         break;
       }

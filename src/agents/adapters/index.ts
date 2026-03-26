@@ -1,14 +1,45 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { IssueEntry, AgentProviderDefinition, RuntimeConfig, AgentTokenUsage } from "../../types.ts";
-import type { CompiledExecution, CompiledReview, ExecutionAudit } from "./types.ts";
-import { buildExecutionPayload } from "./shared.ts";
-import type { ExecutionPayload } from "./shared.ts";
+import type { IssueEntry, AgentProviderDefinition, RuntimeConfig, ReviewScope } from "../../types.ts";
+import type { CompiledContractNegotiation, CompiledExecution, CompiledReview, ExecutionAudit } from "./types.ts";
+import { buildExecutionPayload, buildFullPlanPrompt, deriveExecutionContract, normalizeAcceptanceCriteria } from "./shared.ts";
 import { ADAPTERS } from "./registry.ts";
 import { renderPrompt } from "../prompting.ts";
-import { buildFullPlanPrompt } from "./shared.ts";
+import { deriveReviewProfile } from "../review-profile.ts";
 
 export type { CompiledExecution, CompiledReview, ExecutionAudit };
+export type { CompiledContractNegotiation };
+
+function buildReviewScopeConfig(scope: ReviewScope): {
+  label: string;
+  goal: string;
+  verdictRule: string;
+  instructions: string[];
+} {
+  if (scope === "checkpoint") {
+    return {
+      label: "checkpoint gate",
+      goal: "Decide whether the implementation is ready to advance from execution into final review.",
+      verdictRule: "Set overallVerdict to FAIL if any criterion fails. Set blockingVerdict to FAIL only if a blocking criterion fails. The checkpoint gate passes when blockingVerdict is PASS, even if advisory criteria fail.",
+      instructions: [
+        "Prioritize execution readiness, contractual blocking criteria, and obvious regressions.",
+        "Treat missing or skipped blocking criteria as FAIL. Advisory issues may remain advisory.",
+        "If blockingVerdict is PASS, emit FIFONY_STATUS=done and clearly separate any non-blocking follow-up items.",
+      ],
+    };
+  }
+
+  return {
+    label: "final review",
+    goal: "Decide whether the implementation satisfies the contract well enough to leave automated review.",
+    verdictRule: "Set overallVerdict to FAIL if any criterion fails. Set blockingVerdict to FAIL only if a blocking criterion fails. The final review gate passes when blockingVerdict is PASS; advisory failures must still be reported as non-blocking findings.",
+    instructions: [
+      "Evaluate the full contract, including blocking and advisory criteria.",
+      "Do not soften blocking failures. Advisory findings should be explicit but must remain non-blocking.",
+      "If blockingVerdict is PASS, emit FIFONY_STATUS=done and list any advisory follow-ups separately.",
+    ],
+  };
+}
 
 // ── Compile execution ────────────────────────────────────────────────────────
 
@@ -40,26 +71,146 @@ export async function compileReview(
   workspacePath: string,
   diffSummary: string,
   config?: RuntimeConfig,
+  playwrightMcpConfigPath?: string,
+  scope: ReviewScope = "final",
 ): Promise<CompiledReview> {
   const plan = issue.plan;
+  const acceptanceCriteria = plan ? normalizeAcceptanceCriteria(plan) : [];
+  const executionContract = plan ? deriveExecutionContract(plan) : null;
+  const reviewProfile = deriveReviewProfile(issue);
+  const scopeConfig = buildReviewScopeConfig(scope);
+
+  const hasFrontendChanges = !!playwrightMcpConfigPath;
+
   const prompt = await renderPrompt("compile-review", {
     issueIdentifier: issue.identifier,
     title: issue.title,
     description: issue.description || "(none)",
     workspacePath,
     planPrompt: plan ? buildFullPlanPrompt(plan) : "",
-    successCriteria: (plan?.successCriteria ?? []).map((value) => ({ value })),
-    deliverables: (plan?.deliverables ?? []).map((value) => ({ value })),
+    acceptanceCriteria: acceptanceCriteria.map((criterion) => ({
+      id: criterion.id,
+      description: criterion.description,
+      category: criterion.category,
+      verificationMethod: criterion.verificationMethod,
+      evidenceExpected: criterion.evidenceExpected,
+      blocking: criterion.blocking,
+      weight: criterion.weight,
+    })),
+    deliverables: (executionContract?.deliverables ?? []).map((value) => ({ value })),
+    requiredChecks: (executionContract?.requiredChecks ?? []).map((value) => ({ value })),
+    requiredEvidence: (executionContract?.requiredEvidence ?? []).map((value) => ({ value })),
+    executionContract,
+    reviewScope: scope,
+    reviewScopeLabel: scopeConfig.label,
+    reviewScopeGoal: scopeConfig.goal,
+    reviewScopeVerdictRule: scopeConfig.verdictRule,
+    reviewScopeInstructions: scopeConfig.instructions.map((value) => ({ value })),
+    reviewerProvider: reviewer.provider,
+    reviewerModel: reviewer.model || "",
+    reviewerEffort: reviewer.reasoningEffort || "",
+    reviewerSelectionReason: reviewer.selectionReason || "",
+    reviewerOverlays: (reviewer.overlays ?? []).map((value) => ({ value })),
+    reviewProfile,
+    reviewProfileSecondary: reviewProfile.secondary.map((value) => ({ value })),
+    reviewProfileRationale: reviewProfile.rationale.map((value) => ({ value })),
+    reviewProfileFocusAreas: reviewProfile.focusAreas.map((value) => ({ value })),
+    reviewProfileFailureModes: reviewProfile.failureModes.map((value) => ({ value })),
+    reviewProfileEvidencePriorities: reviewProfile.evidencePriorities.map((value) => ({ value })),
     diffSummary,
+    hasFrontendChanges,
     images: issue.images?.length ? issue.images : undefined,
+    preReviewValidation: issue.preReviewValidation ?? null,
+  });
+
+  const adapter = ADAPTERS[reviewer.provider];
+  let command = adapter
+    ? adapter.buildReviewCommand(reviewer, config)
+    : reviewer.command;
+
+  if (playwrightMcpConfigPath) {
+    // Inject Playwright MCP before the stdin redirect
+    command = command.replace(/ < "\$FIFONY_PROMPT_FILE"$/, ` --mcp-config "${playwrightMcpConfigPath}" < "$FIFONY_PROMPT_FILE"`);
+  }
+
+  return {
+    prompt,
+    command,
+    meta: {
+      scope,
+      reviewProfile,
+    },
+  };
+}
+
+export async function compileContractNegotiation(
+  issue: IssueEntry,
+  reviewer: AgentProviderDefinition,
+  workspacePath: string,
+  round: number,
+  maxRounds: number,
+): Promise<CompiledContractNegotiation> {
+  const plan = issue.plan;
+  const acceptanceCriteria = plan ? normalizeAcceptanceCriteria(plan) : [];
+  const executionContract = plan ? deriveExecutionContract(plan) : null;
+  const reviewProfile = deriveReviewProfile(issue);
+  const priorNegotiationRuns = Array.isArray(issue.contractNegotiationRuns) ? issue.contractNegotiationRuns : [];
+  const previousRun = [...priorNegotiationRuns]
+    .filter((entry) => entry.status === "completed")
+    .sort((left, right) => Date.parse(right.completedAt ?? right.startedAt) - Date.parse(left.completedAt ?? left.startedAt))[0];
+
+  const prompt = await renderPrompt("compile-contract-negotiation", {
+    issueIdentifier: issue.identifier,
+    title: issue.title,
+    description: issue.description || "(none)",
+    workspacePath,
+    round,
+    maxRounds,
+    planPrompt: plan ? buildFullPlanPrompt(plan) : "",
+    acceptanceCriteria: acceptanceCriteria.map((criterion) => ({
+      id: criterion.id,
+      description: criterion.description,
+      category: criterion.category,
+      verificationMethod: criterion.verificationMethod,
+      evidenceExpected: criterion.evidenceExpected,
+      blocking: criterion.blocking,
+      weight: criterion.weight,
+    })),
+    deliverables: (executionContract?.deliverables ?? []).map((value) => ({ value })),
+    requiredChecks: (executionContract?.requiredChecks ?? []).map((value) => ({ value })),
+    requiredEvidence: (executionContract?.requiredEvidence ?? []).map((value) => ({ value })),
+    executionContract,
+    reviewerProvider: reviewer.provider,
+    reviewerModel: reviewer.model || "",
+    reviewerEffort: reviewer.reasoningEffort || "",
+    reviewerSelectionReason: reviewer.selectionReason || "",
+    reviewerOverlays: (reviewer.overlays ?? []).map((value) => ({ value })),
+    reviewProfile,
+    reviewProfileSecondary: reviewProfile.secondary.map((value) => ({ value })),
+    reviewProfileRationale: reviewProfile.rationale.map((value) => ({ value })),
+    reviewProfileFocusAreas: reviewProfile.focusAreas.map((value) => ({ value })),
+    reviewProfileFailureModes: reviewProfile.failureModes.map((value) => ({ value })),
+    reviewProfileEvidencePriorities: reviewProfile.evidencePriorities.map((value) => ({ value })),
+    currentNegotiationStatus: issue.contractNegotiationStatus || "",
+    priorNegotiationSummary: previousRun?.summary
+      ? `${previousRun.summary}\n${previousRun.rationale ? `Reason: ${previousRun.rationale}` : ""}`.trim()
+      : "",
   });
 
   const adapter = ADAPTERS[reviewer.provider];
   const command = adapter
-    ? adapter.buildReviewCommand(reviewer, config)
+    ? adapter.buildReviewCommand(reviewer)
     : reviewer.command;
 
-  return { prompt, command };
+  return {
+    prompt,
+    command,
+    meta: {
+      reviewProfile,
+      round,
+      maxRounds,
+    },
+  };
 }
 
 // ── Audit ────────────────────────────────────────────────────────────────────

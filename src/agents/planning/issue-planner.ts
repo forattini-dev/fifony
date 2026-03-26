@@ -15,7 +15,6 @@
 export type { PlanningSessionStatus, PlanningSessionUsage, PlanningSession } from "./planning-session.ts";
 export type { GeneratePlanResult } from "./plan-generator.ts";
 export type { RefinePlanResult } from "./plan-refiner.ts";
-export type { PlanCallbacks } from "./planning-background.ts";
 
 // ── Session management ────────────────────────────────────────────────────────
 

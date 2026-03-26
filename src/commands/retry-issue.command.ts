@@ -2,6 +2,7 @@ import type { IssueEntry } from "../types.ts";
 import type { IEventStore, IIssueRepository } from "../ports/index.ts";
 import { TERMINAL_STATES } from "../concerns/constants.ts";
 import { now } from "../concerns/helpers.ts";
+import { assertPlanReadyForExecution, getPlanExecutionBlocker } from "../domains/contract-negotiation.ts";
 import { requestReworkCommand } from "./request-rework.command.ts";
 import { retryExecutionCommand } from "./retry-execution.command.ts";
 import { transitionIssueCommand } from "./transition-issue.command.ts";
@@ -25,7 +26,7 @@ export async function retryIssueCommand(
 
   if (TERMINAL_STATES.has(issue.state)) {
     await transitionIssueCommand({ issue, target: "Planning", note }, deps);
-    if (issue.plan?.steps?.length) {
+    if (issue.plan?.steps?.length && getPlanExecutionBlocker(issue) === null) {
       await transitionIssueCommand({ issue, target: "PendingApproval", note: "Existing plan found." }, deps);
       await transitionIssueCommand({ issue, target: "Queued", note: "Auto-queued after plan approval." }, deps);
     }
@@ -35,7 +36,7 @@ export async function retryIssueCommand(
 
   if (issue.state === "Approved") {
     await transitionIssueCommand({ issue, target: "Planning", note }, deps);
-    if (issue.plan?.steps?.length) {
+    if (issue.plan?.steps?.length && getPlanExecutionBlocker(issue) === null) {
       await transitionIssueCommand({ issue, target: "PendingApproval", note: "Existing plan found." }, deps);
       await transitionIssueCommand({ issue, target: "Queued", note: "Auto-queued for rework." }, deps);
     }
@@ -44,6 +45,10 @@ export async function retryIssueCommand(
   }
 
   if (issue.state === "Blocked" && issue.lastFailedPhase === "review") {
+    if (issue.checkpointStatus === "failed") {
+      await retryExecutionCommand({ issue, note }, deps);
+      return;
+    }
     issue.lastError = undefined;
     issue.lastFailedPhase = undefined;
     await transitionIssueCommand({ issue, target: "Reviewing", note }, deps);
@@ -70,6 +75,7 @@ export async function retryIssueCommand(
   }
 
   if (issue.state === "PendingApproval") {
+    assertPlanReadyForExecution(issue, "retry this issue");
     await transitionIssueCommand({ issue, target: "Queued", note }, deps);
     deps.eventStore.addEvent(issue.id, "manual", `Manual retry requested for ${issue.id}.`);
     return;

@@ -22,8 +22,8 @@ export async function replanIssueCommand(
   if (TERMINAL_STATES.has(issue.state)) {
     throw new Error(`Cannot replan issue in terminal state ${issue.state}.`);
   }
-  if (issue.state === "Running" || issue.state === "Reviewing" || issue.state === "Queued") {
-    throw new Error(`Cannot replan issue in ${issue.state} state — wait for it to finish or cancel it first.`);
+  if (issue.state === "Queued") {
+    throw new Error(`Cannot replan issue in ${issue.state} state — move it out of the execution queue first.`);
   }
 
   // Previous plans stay in issue_plans resource (1:N model — they become history automatically).

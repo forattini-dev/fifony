@@ -30,6 +30,16 @@ Frontend-design overlay is active.
 Prefer stronger hierarchy, spacing, and readability decisions over generic implementation choices.
 {{/if}}
 
+{{#if selectionReason}}
+Selection reason: {{selectionReason}}
+{{/if}}
+{{#if overlays.length}}
+Active overlays:
+{{#each overlays}}
+- {{this}}
+{{/each}}
+{{/if}}
+
 {{#if profileInstructions}}
 ## Agent Profile
 {{profileInstructions}}

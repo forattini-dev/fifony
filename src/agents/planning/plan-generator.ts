@@ -6,6 +6,7 @@ import type { IssuePlan, RuntimeConfig, IssueEntry, AgentTokenUsage } from "../.
 import { now } from "../../concerns/helpers.ts";
 import { logger } from "../../concerns/logger.ts";
 import { record as recordTokens } from "../../domains/tokens.ts";
+import { buildContextMarkdown } from "../context-engine.ts";
 import { persistSession, type PlanningSession, type PlanningSessionUsage } from "./planning-session.ts";
 import { parsePlanOutput, extractPlanTokenUsage } from "./planning-parser.ts";
 import {
@@ -44,10 +45,11 @@ export async function generatePlan(
   description: string,
   config: RuntimeConfig,
   _workflowDefinition: null,
-  options?: { fast?: boolean; persistSession?: boolean; images?: string[] },
+  options?: { fast?: boolean; persistSession?: boolean; images?: string[]; failureContext?: string },
 ): Promise<GeneratePlanResult> {
   const fast = options?.fast ?? false;
   const images = options?.images;
+  const failureContext = options?.failureContext;
   const shouldPersistSession = options?.persistSession !== false; // default true
   logger.info({ title: title.slice(0, 80), fast }, "[Planner] Starting plan generation");
 
@@ -67,7 +69,18 @@ export async function generatePlan(
   };
   if (shouldPersistSession) await persistSession(session);
 
-  const prompt = await buildPlanPrompt(title, description, fast, images);
+  const prompt = await buildPlanPrompt(title, description, fast, images, failureContext);
+  const planningContext = await buildContextMarkdown({
+    role: "planner",
+    title,
+    description,
+  }).catch((error) => {
+    logger.warn({ err: error }, "[Planner] Failed to build planning context");
+    return { pack: null, markdown: "" };
+  });
+  const promptWithContext = planningContext.markdown
+    ? `${planningContext.markdown}\n\n${prompt}`
+    : prompt;
 
   let plan: IssuePlan | null = null;
   let planUsage: PlanningSessionUsage;
@@ -80,7 +93,7 @@ export async function generatePlan(
 
     const tempDir = mkdtempSync(join(tmpdir(), "fifony-plan-"));
     const promptFile = join(tempDir, "fifony-plan-prompt.md");
-    writeFileSync(promptFile, `${prompt}\n`, "utf8");
+    writeFileSync(promptFile, `${promptWithContext}\n`, "utf8");
 
     // Track output bytes live — persist progress periodically so the UI can show it
     let lastProgressPersist = 0;
@@ -112,7 +125,7 @@ export async function generatePlan(
     });
 
     logger.info({ rawOutput: output.slice(0, 2000) }, `Plan raw output from ${preferred}`);
-    savePlanDebugFiles("cli", prompt, output);
+    savePlanDebugFiles("cli", promptWithContext, output);
 
     logger.debug({ outputLength: output.length }, "[Planner] Plan command completed, parsing output");
     plan = parsePlanOutput(output);
@@ -124,7 +137,7 @@ export async function generatePlan(
       outputTokens: tokenInfo?.outputTokens ?? 0,
       totalTokens: tokenInfo?.totalTokens ?? 0,
       model: tokenInfo?.model || planStageModel || preferred,
-      promptChars: prompt.length,
+      promptChars: promptWithContext.length,
       outputChars: output.length,
       durationMs,
     };
@@ -164,5 +177,5 @@ export async function generatePlan(
     ? `, ${planUsage.totalTokens.toLocaleString()} tokens (in: ${planUsage.inputTokens.toLocaleString()}, out: ${planUsage.outputTokens.toLocaleString()})`
     : `, ${planUsage.outputChars.toLocaleString()} output chars`;
   logger.info(`Plan generated for "${title}" via ${planUsage.model}: ${plan.steps.length} steps, complexity: ${plan.estimatedComplexity}${tokenSummary}, ${planUsage.durationMs}ms`);
-  return { plan, usage: planUsage, prompt };
+  return { plan, usage: planUsage, prompt: promptWithContext };
 }

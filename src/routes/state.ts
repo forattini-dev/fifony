@@ -1,20 +1,26 @@
 import type { IssueEntry, RuntimeMetrics, RuntimeState } from "../types.ts";
-import { isoWeek, now, toStringValue } from "../concerns/helpers.ts";
+import { isoWeek, now } from "../concerns/helpers.ts";
 import { logger } from "../concerns/logger.ts";
 import { persistState } from "../persistence/store.ts";
 import { markIssueDirty } from "../persistence/dirty-tracker.ts";
 import { addEvent, computeMetrics } from "../domains/issues.ts";
-import { ATTACHMENTS_ROOT } from "../concerns/constants.ts";
+import { ATTACHMENTS_ROOT, STATE_ROOT } from "../concerns/constants.ts";
 import type { RouteRegistrar } from "./http.ts";
 import { findIssue, mutateIssueState, parseIssue } from "../routes/helpers.ts";
 import { cleanWorkspace, createTestWorkspace, removeTestWorkspace } from "../domains/workspace.ts";
 import { detectAvailableProviders } from "../agents/providers.ts";
 import { analyzeParallelizability } from "../persistence/plugins/scheduler.ts";
+import { agentLogPath, getAgentStatus } from "../domains/agents.ts";
+import {
+  getIssueStateMachineVisualization,
+  getIssueStateMachineTransitions,
+  getIssueTransitionHistoryForIssue,
+} from "../domains/issue-state.ts";
 import {
   collectProviderUsage,
   collectProvidersUsage,
 } from "../agents/providers-usage.ts";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readSync, statSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { basename, extname, join } from "node:path";
 
@@ -322,10 +328,9 @@ export function registerStateRoutes(
     const issue = findIssue(state, issueId);
     if (!issue) return c.json({ ok: false, error: "Issue not found." }, 404);
     try {
-      const { getIssueTransitionHistory } = await import("../persistence/plugins/issue-state-machine.ts");
       const limit = parseInt(c.req.query("limit") ?? "50", 10);
       const offset = parseInt(c.req.query("offset") ?? "0", 10);
-      const transitions = await getIssueTransitionHistory(issue.id, { limit, offset });
+      const transitions = await getIssueTransitionHistoryForIssue(issue.id, { limit, offset });
       return c.json({ ok: true, issueId: issue.id, transitions, localHistory: issue.history });
     } catch (error) {
       return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 500);
@@ -334,8 +339,7 @@ export function registerStateRoutes(
 
   app.get("/api/state-machine/transitions", async (c) => {
     try {
-      const { getStateMachineTransitions } = await import("../persistence/plugins/issue-state-machine.ts");
-      return c.json({ ok: true, transitions: getStateMachineTransitions() });
+      return c.json({ ok: true, transitions: getIssueStateMachineTransitions() });
     } catch (error) {
       return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 500);
     }
@@ -343,13 +347,123 @@ export function registerStateRoutes(
 
   app.get("/api/state-machine/visualize", async (c) => {
     try {
-      const { visualizeStateMachine } = await import("../persistence/plugins/issue-state-machine.ts");
-      const dot = visualizeStateMachine();
+      const dot = getIssueStateMachineVisualization();
       if (!dot) return c.json({ ok: false, error: "Visualization not available." }, 404);
       return c.json({ ok: true, dot });
     } catch (error) {
       return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 500);
     }
+  });
+
+  // GET /api/issues/:id/agent/status — live agent job state + PID check
+  app.get("/api/issues/:id/agent/status", (c) => {
+    const issueId = parseIssue(c);
+    if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
+    const issue = findIssue(state, issueId);
+    if (!issue) return c.json({ ok: false, error: "Issue not found." }, 404);
+    return c.json({ ok: true, ...getAgentStatus(STATE_ROOT, issue.id, issue.identifier) });
+  });
+
+  // GET /api/issues/:id/agent/stream — SSE live tail of the agent's live-output.log
+  app.get("/api/issues/:id/agent/stream", (c) => {
+    const issueId = parseIssue(c);
+    if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
+    const issue = findIssue(state, issueId);
+    if (!issue) return c.json({ ok: false, error: "Issue not found." }, 404);
+
+    const getLogFile = (): string | null => {
+      if (issue.workspacePath) return agentLogPath(issue.workspacePath);
+      return null;
+    };
+
+    const enc = new TextEncoder();
+    const sseMsg = (data: unknown) => enc.encode(`data: ${JSON.stringify(data)}\n\n`);
+    const sseComment = () => enc.encode(": keepalive\n\n");
+
+    let chunkIntervalId: ReturnType<typeof setInterval>;
+    let keepaliveId: ReturnType<typeof setInterval>;
+    let statusCheckId: ReturnType<typeof setInterval>;
+
+    const stream = new ReadableStream({
+      start(ctrl) {
+        let lastSize = 0;
+        const logFile = getLogFile();
+
+        // Send initial content (last 16KB)
+        if (logFile && existsSync(logFile)) {
+          try {
+            const stat = statSync(logFile);
+            lastSize = stat.size;
+            const readSize = Math.min(lastSize, 16_384);
+            const fd = openSync(logFile, "r");
+            const buf = Buffer.alloc(readSize);
+            readSync(fd, buf, 0, readSize, Math.max(0, lastSize - readSize));
+            closeSync(fd);
+            ctrl.enqueue(sseMsg({ type: "init", text: buf.toString("utf8"), size: lastSize }));
+          } catch { ctrl.enqueue(sseMsg({ type: "init", text: "", size: 0 })); }
+        } else {
+          ctrl.enqueue(sseMsg({ type: "init", text: "", size: 0 }));
+        }
+
+        // Stream new bytes every second
+        chunkIntervalId = setInterval(() => {
+          const lf = getLogFile();
+          if (!lf || !existsSync(lf)) return;
+          try {
+            const stat = statSync(lf);
+            if (stat.size < lastSize) {
+              // File was truncated (new agent session)
+              lastSize = 0;
+              const readSize = Math.min(stat.size, 16_384);
+              let text = "";
+              if (readSize > 0) {
+                const fd = openSync(lf, "r");
+                const buf = Buffer.alloc(readSize);
+                readSync(fd, buf, 0, readSize, 0);
+                closeSync(fd);
+                text = buf.toString("utf8");
+                lastSize = stat.size;
+              }
+              ctrl.enqueue(sseMsg({ type: "init", text, size: lastSize }));
+            } else if (stat.size > lastSize) {
+              const readSize = stat.size - lastSize;
+              const fd = openSync(lf, "r");
+              const buf = Buffer.alloc(readSize);
+              readSync(fd, buf, 0, readSize, lastSize);
+              closeSync(fd);
+              lastSize = stat.size;
+              ctrl.enqueue(sseMsg({ type: "chunk", text: buf.toString("utf8"), size: lastSize }));
+            }
+          } catch {}
+        }, 1_000);
+
+        // Notify client when agent stops
+        statusCheckId = setInterval(() => {
+          const current = state.issues.find((i) => i.id === issueId);
+          if (!current) return;
+          const status = getAgentStatus(STATE_ROOT, issueId, current.identifier);
+          if (!status.running) {
+            try { ctrl.enqueue(sseMsg({ type: "status", running: false, state: status.state })); } catch {}
+          }
+        }, 5_000);
+
+        keepaliveId = setInterval(() => {
+          try { ctrl.enqueue(sseComment()); } catch {}
+        }, 15_000);
+      },
+      cancel() {
+        clearInterval(chunkIntervalId);
+        clearInterval(keepaliveId);
+        clearInterval(statusCheckId);
+      },
+    });
+
+    return c.body(stream, 200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
   });
 
   app.post("/api/refresh", async (c) => {

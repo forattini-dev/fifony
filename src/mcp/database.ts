@@ -305,7 +305,7 @@ export async function getIssue(issueId: string): Promise<IssueRecord | null> {
   return (issue as IssueRecord | null) ?? null;
 }
 
-export async function appendEvent(level: string, message: string, payload: Record<string, unknown> = {}, issueId?: string): Promise<void> {
+export async function appendEvent(level: string, message: string, _payload: Record<string, unknown> = {}, issueId?: string): Promise<void> {
   await initDatabase();
   const { randomUUID } = await import("node:crypto");
   await eventResource?.insert({

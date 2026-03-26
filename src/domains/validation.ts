@@ -20,7 +20,7 @@ export async function runValidationGate(issue: IssueEntry, config: RuntimeConfig
 
   return new Promise((resolve) => {
     // Use shell: true so the user's testCommand can contain pipes, &&, etc.
-    const child = execFile("sh", ["-c", command], {
+    execFile("sh", ["-c", command], {
       cwd,
       encoding: "utf8",
       timeout: 1_800_000,

@@ -1,4 +1,5 @@
 import { getAnalytics as getTokenAnalytics, getHourlySnapshot } from "../domains/tokens.ts";
+import { computeQualityGateMetrics } from "../domains/metrics.ts";
 import { getEcDailyEvents, getEcDailyLines } from "../persistence/store.ts";
 import { logger } from "../concerns/logger.ts";
 import { getApiRuntimeContextOrThrow } from "../persistence/plugins/api-runtime-context.ts";
@@ -106,6 +107,7 @@ export function registerAnalyticsRoutes(app: RouteRegistrar): void {
         issueCycleTimeDays: issueCycleMs.length
           ? { avg: msToDay(avg(issueCycleMs)!), median: msToDay(median(issueCycleMs)!), n: issueCycleMs.length }
           : null,
+        qualityGate: computeQualityGateMetrics(context.state.issues),
       });
     } catch (error) {
       logger.error({ err: error }, "Failed to compute KPI analytics");

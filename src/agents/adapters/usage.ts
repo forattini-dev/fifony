@@ -1,4 +1,3 @@
-import { homedir } from "node:os";
 import { cwd, env } from "node:process";
 import { logger } from "../../concerns/logger.ts";
 
@@ -353,7 +352,6 @@ export function parseClaudeUsageFromStatus(raw: string): ProviderUsageSnapshot {
 
   let currentHeading: { section: ClaudeUsageSection; modelScope?: string } | null = null;
   let lastPercentSection: typeof currentHeading = null;
-  let lastPercentUsed: number | null = null;
 
   for (const line of lines) {
     const normalized = line.toLowerCase();
@@ -399,7 +397,6 @@ export function parseClaudeUsageFromStatus(raw: string): ProviderUsageSnapshot {
     if (percentMatch?.[1] && currentHeading) {
       const used = parseInt(percentMatch[1], 10);
       lastPercentSection = currentHeading;
-      lastPercentUsed = used;
 
       if (currentHeading.section === "current-week-all") {
         base.weeklyPercentUsed = keepLargest(base.weeklyPercentUsed, used);
@@ -442,7 +439,6 @@ export function parseClaudeUsageFromStatus(raw: string): ProviderUsageSnapshot {
       }
 
       lastPercentSection = null;
-      lastPercentUsed = null;
     }
   }
 

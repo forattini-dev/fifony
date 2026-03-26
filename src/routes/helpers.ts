@@ -2,7 +2,6 @@ import type { IssueEntry, RuntimeEvent, RuntimeState } from "../types.ts";
 import type { PlanningSessionUsage } from "../agents/planning/issue-planner.ts";
 import type { ApiRouteContext } from "./http.ts";
 import { logger } from "../concerns/logger.ts";
-import { now } from "../concerns/helpers.ts";
 import { getEventStateResource } from "../persistence/store.ts";
 import { persistState } from "../persistence/store.ts";
 

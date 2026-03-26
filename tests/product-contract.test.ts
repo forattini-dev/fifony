@@ -22,6 +22,8 @@ describe("product contract: SPA routes", () => {
     "/onboarding",
     "/kanban",
     "/issues",
+    "/projects",
+    "/workspace",
     "/analytics",
     "/agents",
     "/settings",
@@ -49,6 +51,8 @@ describe("product contract: SPA routes", () => {
       "/onboarding": join(routeDir, "onboarding.jsx"),
       "/kanban": join(routeDir, "kanban.jsx"),
       "/issues": join(routeDir, "issues.jsx"),
+      "/projects": join(routeDir, "projects.jsx"),
+      "/workspace": join(routeDir, "workspace.jsx"),
       "/analytics": join(routeDir, "analytics.lazy.jsx"),
       "/agents": join(routeDir, "agents.jsx"),
       "/settings": join(routeDir, "settings.jsx"),
@@ -103,7 +107,7 @@ describe("product contract: SPA routes", () => {
 
 describe("product contract: FSM consistency", () => {
   it("every FSM transition target is a valid state", async () => {
-    const { issueStateMachineConfig, ISSUE_STATE_MACHINE_ID } = await import("../src/persistence/plugins/issue-state-machine.ts");
+    const { issueStateMachineConfig, ISSUE_STATE_MACHINE_ID } = await import("../src/persistence/plugins/fsm-issue.ts");
     const machine = issueStateMachineConfig.stateMachines[ISSUE_STATE_MACHINE_ID];
     const validStates = new Set(Object.keys(machine.states));
 
@@ -115,7 +119,7 @@ describe("product contract: FSM consistency", () => {
   });
 
   it("every state with an entry action has that action defined", async () => {
-    const { issueStateMachineConfig, ISSUE_STATE_MACHINE_ID } = await import("../src/persistence/plugins/issue-state-machine.ts");
+    const { issueStateMachineConfig, ISSUE_STATE_MACHINE_ID } = await import("../src/persistence/plugins/fsm-issue.ts");
     const machine = issueStateMachineConfig.stateMachines[ISSUE_STATE_MACHINE_ID];
     const actions = Object.keys(issueStateMachineConfig.actions || {});
 
@@ -128,7 +132,7 @@ describe("product contract: FSM consistency", () => {
   });
 
   it("every guard referenced in states is defined", async () => {
-    const { issueStateMachineConfig, ISSUE_STATE_MACHINE_ID } = await import("../src/persistence/plugins/issue-state-machine.ts");
+    const { issueStateMachineConfig, ISSUE_STATE_MACHINE_ID } = await import("../src/persistence/plugins/fsm-issue.ts");
     const machine = issueStateMachineConfig.stateMachines[ISSUE_STATE_MACHINE_ID];
     const guards = Object.keys(issueStateMachineConfig.guards || {});
 
@@ -143,7 +147,7 @@ describe("product contract: FSM consistency", () => {
   });
 
   it("initial state exists in state definitions", async () => {
-    const { issueStateMachineConfig, ISSUE_STATE_MACHINE_ID } = await import("../src/persistence/plugins/issue-state-machine.ts");
+    const { issueStateMachineConfig, ISSUE_STATE_MACHINE_ID } = await import("../src/persistence/plugins/fsm-issue.ts");
     const machine = issueStateMachineConfig.stateMachines[ISSUE_STATE_MACHINE_ID];
     assert.ok(machine.states[machine.initialState], `Initial state "${machine.initialState}" must be defined`);
   });

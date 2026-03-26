@@ -1,6 +1,9 @@
 import type { IssueEntry, RuntimeState } from "../../types.ts";
-import { TERMINAL_STATES } from "../../concerns/constants.ts";
+import { STATE_ROOT, TERMINAL_STATES } from "../../concerns/constants.ts";
 import { logger } from "../../concerns/logger.ts";
+import { syncIssueStateInMemory, syncIssueStateFromFsm } from "../../domains/issue-state.ts";
+import { canDispatchAgent } from "./fsm-agent.ts";
+import { transitionIssue } from "../../domains/issues.ts";
 
 // ── Job types — phase ordering determines dispatch order ──────────────────
 // review > execute > plan: finish closest-to-done first (pipeline drain)
@@ -101,41 +104,10 @@ function releaseSlot(): void {
   if (next) next();
 }
 
-// ── Pre-dispatch guards (absorbed from old canRunIssue) ──────────────────
-
-function issueDepsResolved(issue: IssueEntry): boolean {
-  if (!runtimeState || issue.blockedBy.length === 0) return true;
-  const map = new Map(runtimeState.issues.map((i) => [i.id, i]));
-  return issue.blockedBy.every((depId) => {
-    const dep = map.get(depId);
-    return dep?.state === "Approved" || dep?.state === "Merged";
-  });
-}
+// ── Pre-dispatch guard ────────────────────────────────────────────────────
 
 function canDispatch(issue: IssueEntry, job: JobType): boolean {
-  if (!issue.assignedToWorker) return false;
-  if (TERMINAL_STATES.has(issue.state)) return false;
-  if (running.has(issue.id)) return false;
-  if (!issueDepsResolved(issue)) {
-    logger.debug({ issueId: issue.id, blockedBy: issue.blockedBy }, "[Queue] Skipping — unresolved deps");
-    return false;
-  }
-
-  if (job === "plan") {
-    if (issue.state !== "Planning") return false;
-    if (issue.plan) return false; // plan exists — waiting for approval
-    if (issue.planningStatus === "planning") return false;
-  }
-
-  if (job === "execute") {
-    if (issue.state !== "Queued" && issue.state !== "Running") return false;
-  }
-
-  if (job === "review") {
-    if (issue.state !== "Reviewing") return false;
-  }
-
-  return true;
+  return canDispatchAgent(issue, job, running, runtimeState?.issues ?? []);
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────
@@ -162,25 +134,27 @@ function sortQueue(): void {
 
 async function dispatchPlan(issue: IssueEntry): Promise<void> {
   logger.info({ issueId: issue.id, identifier: issue.identifier }, "[Queue] Dispatching plan job");
-  const { runPlanningJob } = await import("../../agents/issue-runner.ts");
-  await runPlanningJob(runtimeState!, issue);
+  const { runPlanPhase } = await import("./fsm-agent.ts");
+  await runPlanPhase(runtimeState!, issue, STATE_ROOT);
 }
 
 async function dispatchExecute(issue: IssueEntry): Promise<void> {
-  const { runIssueOnce } = await import("../../agents/issue-runner.ts");
-  // Loop: keep running until the issue leaves Queued/Running
-  while (active && runtimeState) {
-    const current = getCurrentIssue(issue.id);
-    if (!current || (current.state !== "Queued" && current.state !== "Running")) break;
-    logger.info({ issueId: issue.id, identifier: current.identifier, state: current.state }, "[Queue] Dispatching execute job");
-    await runIssueOnce(runtimeState, current, running);
-  }
+  logger.info({ issueId: issue.id, identifier: issue.identifier }, "[Queue] Dispatching execute job");
+  const { runExecutePhase } = await import("./fsm-agent.ts");
+  await runExecutePhase(
+    runtimeState!,
+    issue,
+    running,
+    () => active,
+    (id) => getCurrentIssue(id),
+    STATE_ROOT,
+  );
 }
 
 async function dispatchReview(issue: IssueEntry): Promise<void> {
   logger.info({ issueId: issue.id, identifier: issue.identifier }, "[Queue] Dispatching review job");
-  const { runIssueOnce } = await import("../../agents/issue-runner.ts");
-  await runIssueOnce(runtimeState!, issue, running);
+  const { runReviewPhase } = await import("./fsm-agent.ts");
+  await runReviewPhase(runtimeState!, issue, running, STATE_ROOT);
 }
 
 // ── Stale check (replaces scheduler.ensureNotStale) ───────────────────────
@@ -246,7 +220,7 @@ export async function enqueue(issue: IssueEntry, job: JobType): Promise<void> {
   }
   queue.push({ issueId: issue.id, job, enqueuedAt: Date.now() });
   // Defer drain to next macrotask — FSM entry actions call enqueue() before
-  // executeTransition() updates issue.state in memory, so draining synchronously
+  // transitionIssue() updates issue.state in memory, so draining synchronously
   // would see the old state in canDispatch() and discard the job.
   setImmediate(() => {
     drain().catch((err) => logger.error({ err }, "[Queue] Drain loop error"));
@@ -263,21 +237,17 @@ export async function recoverState(): Promise<void> {
   if (!runtimeState) return;
 
   // 1. Reconcile FSM — persisted FSM state wins over in-memory
-  try {
-    const { getIssueStateMachinePlugin, ISSUE_STATE_MACHINE_ID } = await import("./issue-state-machine.ts");
-    const fsmPlugin = getIssueStateMachinePlugin();
-    if (fsmPlugin?.getState) {
-      for (const issue of runtimeState.issues) {
-        try {
-          const fsmState = await fsmPlugin.getState(ISSUE_STATE_MACHINE_ID, issue.id);
-          if (fsmState && fsmState !== issue.state) {
-            logger.warn({ issueId: issue.id, memoryState: issue.state, fsmState }, "[Queue] Reconciling desync — FSM is source of truth");
-            issue.state = fsmState as typeof issue.state;
-          }
-        } catch { /* FSM entity may not exist yet */ }
-      }
+  for (const issue of runtimeState.issues) {
+    const result = await syncIssueStateFromFsm(issue, {
+      reason: "Recovering queue state from FSM source of truth.",
+    });
+    if (result.changed) {
+      logger.warn(
+        { issueId: issue.id, memoryState: result.previousState, fsmState: result.currentState },
+        "[Queue] Reconciling desync — FSM is source of truth",
+      );
     }
-  } catch { /* FSM plugin may not be ready */ }
+  }
 
   // 2. Enqueue all in-progress issues
   for (const issue of runtimeState.issues) {
@@ -311,7 +281,6 @@ export async function recoverState(): Promise<void> {
 export async function recoverOrphans(): Promise<void> {
   if (!runtimeState) return;
   const { isAgentStillRunning, cleanStalePidFile } = await import("../../agents/agent.ts");
-  const { executeTransition } = await import("./issue-state-machine.ts");
   const { addEvent } = await import("../../domains/issues.ts");
 
   const candidates = runtimeState.issues.filter((i) => i.state === "Running" || i.state === "Queued");
@@ -322,8 +291,13 @@ export async function recoverOrphans(): Promise<void> {
     if (alive && pid) {
       logger.info({ issueId: issue.id, pid: pid.pid }, "[Queue] Agent still alive — keeping Running");
       if (issue.state !== "Running") {
-        try { await executeTransition(issue, "RUN", { issue, note: `Orphaned agent (PID ${pid.pid}), still alive — tracking resumed.` }); }
-        catch { issue.state = "Running"; }
+        try {
+          await transitionIssue(issue, "RUN", { issue, note: `Orphaned agent (PID ${pid.pid}), still alive — tracking resumed.` });
+        } catch {
+          syncIssueStateInMemory(issue, "Running", {
+            reason: `Orphaned agent (PID ${pid.pid}) still alive; fallback sync to Running after transition failure.`,
+          });
+        }
       }
       addEvent(runtimeState, issue.id, "info", `Orphaned agent (PID ${pid.pid}) still alive — tracking resumed.`);
     } else {
@@ -332,8 +306,16 @@ export async function recoverOrphans(): Promise<void> {
         issue.lastError = `Agent process crashed (PID ${pid?.pid}) — not found on boot.`;
         issue.lastFailedPhase = "crash";
         issue.attempts = (issue.attempts ?? 0) + 1;
-        try { await executeTransition(issue, "REQUEUE", { issue, note: "Agent process not found on boot — marked Queued." }); }
-        catch { issue.state = "Queued"; }
+        try {
+          await transitionIssue(issue, "REQUEUE", {
+            issue,
+            note: "Agent process not found on boot — marked Queued.",
+          });
+        } catch {
+          syncIssueStateInMemory(issue, "Queued", {
+            reason: `Agent process (PID ${pid?.pid}) missing on boot; fallback sync to Queued after transition failure.`,
+          });
+        }
         addEvent(runtimeState, issue.id, "info", `Agent for ${issue.identifier} not found — marked Queued.`);
       }
     }

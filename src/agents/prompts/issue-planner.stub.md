@@ -41,12 +41,22 @@ Visual evidence (attached screenshots for context):
 - {{this}}
 {{/each}}
 {{/if}}
+{{#if failureContext}}
+{{{failureContext}}}
+
+{{/if}}
 {{#unless fast}}
 
 Quality rules:
 - Be concrete, not generic. No vague phrases like 'implement' or 'improve' without detail.
 - Break work into actionable steps (2-8 steps). Each step describes WHAT, not HOW.
 - Each step must have a clear 'doneWhen' acceptance criterion.
+- Choose a `harnessMode` deliberately:
+  `solo` for trivial, low-risk work;
+  `standard` for normal multi-file work;
+  `contractual` for high-risk, UI-critical, workflow/FSM, integration, or high-complexity work.
+- Produce structured `acceptanceCriteria`. Every criterion must include category, verificationMethod, evidenceExpected, blocking, and weight.
+- Produce an `executionContract` that fixes deliverables, required checks, required evidence, focus areas, and checkpoint policy before execution begins.
 - Identify assumptions, constraints, unknowns, and risks.
 - For unknowns, specify what question needs answering and how to resolve it.
 - Suggest file paths that are likely relevant to the changes.
@@ -79,6 +89,7 @@ Use these exact field names:
 {
   "summary": "<YOUR one-line summary here>",
   "estimatedComplexity": "trivial|low|medium|high",
+  "harnessMode": "solo|standard|contractual",
   "steps": [
     {
       "step": 1,
@@ -93,7 +104,25 @@ Use these exact field names:
   "unknowns": [
     { "question": "<YOUR question>", "whyItMatters": "<YOUR reason>", "howToResolve": "<YOUR approach>" }
   ],
-  "successCriteria": ["<YOUR criteria>"],
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "description": "<criterion>",
+      "category": "functionality|correctness|regression|design|code_quality|performance|security|validation|integration",
+      "verificationMethod": "<ui_walkthrough|api_probe|run_command|code_inspection|integration_check>",
+      "evidenceExpected": "<what concrete evidence the reviewer should gather>",
+      "blocking": true,
+      "weight": 3
+    }
+  ],
+  "executionContract": {
+    "summary": "<definition of done summary>",
+    "deliverables": ["<artifact or behavior required at the end>"],
+    "requiredChecks": ["<command or verification step>"],
+    "requiredEvidence": ["<evidence the reviewer must collect>"],
+    "focusAreas": ["<path or subsystem to scrutinize>"],
+    "checkpointPolicy": "final_only|checkpointed"
+  },
   "risks": [
     { "risk": "<YOUR risk>", "impact": "<YOUR impact>", "mitigation": "<YOUR mitigation>" }
   ],

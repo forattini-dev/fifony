@@ -36,6 +36,8 @@ export type IssueEntry = {
   title: string;
   description: string;
   state: IssueState;
+  projectId?: string;
+  milestoneId?: string;
   branchName?: string;
   baseBranch?: string;
   headCommitAtStart?: string;
@@ -111,14 +113,40 @@ export type IssueEntry = {
   executeAttempt: number;
   /** Review attempt counter for current planVersion (resets on replan) */
   reviewAttempt: number;
+  /** Checkpoint review attempt counter for contractual checkpointed plans (resets on replan) */
+  checkpointAttempt?: number;
+  /** Current checkpoint state for contractual checkpointed execution */
+  checkpointStatus?: "pending" | "passed" | "failed";
+  /** Timestamp of the last successful checkpoint review */
+  checkpointPassedAt?: string;
+  /** Structured grading output from the last checkpoint review cycle */
+  checkpointReport?: GradingReport;
+  /** Negotiation attempt counter for pre-execution contract review */
+  contractNegotiationAttempt?: number;
+  /** Current status of the pre-execution contract negotiation */
+  contractNegotiationStatus?: ContractNegotiationStatus;
+  /** Persisted negotiation runs for the current and prior plans */
+  contractNegotiationRuns?: ContractNegotiationRun[];
   /** Previous plans archived before each replan */
   planHistory?: IssuePlan[];
   /** Summaries of previous failed execution attempts (for retry context) */
   previousAttemptSummaries?: AttemptSummary[];
   /** Validation gate result (test command execution) */
   validationResult?: ValidationResult;
+  /** Pre-review fast validation gate result — set after execution, before reviewer spawns */
+  preReviewValidation?: ValidationResult;
   /** URL of the PR created via push-pr merge mode */
   prUrl?: string;
+  /** Structured grading output from the last review cycle */
+  gradingReport?: GradingReport;
+  /** Active evaluator profile selected for the current review cycle */
+  reviewProfile?: ReviewProfile;
+  /** Persisted reviewer routing and verdict history for checkpoint/final cycles */
+  reviewRuns?: ReviewRun[];
+  /** Structured history of failed review criteria across checkpoint/final review cycles */
+  reviewFailureHistory?: ReviewFailureRecord[];
+  /** Audit trail of policy decisions that changed harness behavior */
+  policyDecisions?: PolicyDecision[];
 };
 
 export type AttemptSummary = {
@@ -145,6 +173,67 @@ export type ValidationResult = {
   output: string;
   command: string;
   ranAt: string;
+};
+
+export type AcceptanceCriterionCategory =
+  | "functionality"
+  | "correctness"
+  | "regression"
+  | "design"
+  | "code_quality"
+  | "performance"
+  | "security"
+  | "validation"
+  | "integration";
+
+export type AcceptanceCriterion = {
+  id: string;
+  description: string;
+  category: AcceptanceCriterionCategory;
+  verificationMethod: string;
+  evidenceExpected: string;
+  blocking: boolean;
+  weight: number;
+};
+
+export type ExecutionContract = {
+  summary: string;
+  deliverables: string[];
+  requiredChecks: string[];
+  requiredEvidence: string[];
+  focusAreas: string[];
+  checkpointPolicy: "final_only" | "checkpointed";
+};
+
+export type HarnessMode = "solo" | "standard" | "contractual";
+
+export type ReviewScope = "checkpoint" | "final";
+
+export type ContractNegotiationStatus = "running" | "approved" | "failed" | "skipped";
+
+export type ContractNegotiationDecisionStatus = "approved" | "revise";
+
+export type ContractNegotiationConcernArea =
+  | "harness_mode"
+  | "steps"
+  | "acceptance_criteria"
+  | "execution_contract"
+  | "validation"
+  | "suggested_paths";
+
+export type ContractNegotiationConcern = {
+  id: string;
+  severity: "blocking" | "advisory";
+  area: ContractNegotiationConcernArea;
+  problem: string;
+  requiredChange: string;
+};
+
+export type ContractNegotiationDecision = {
+  status: ContractNegotiationDecisionStatus;
+  summary: string;
+  rationale: string;
+  concerns: ContractNegotiationConcern[];
 };
 
 export type IssuePlanStep = {
@@ -180,6 +269,7 @@ export type IssuePlan = {
   // Core
   summary: string;
   estimatedComplexity: "trivial" | "low" | "medium" | "high";
+  harnessMode: HarnessMode;
   executionStrategy?: IssuePlanExecutionStrategy;
 
   // Structured plan (new format with phases)
@@ -191,7 +281,8 @@ export type IssuePlan = {
   assumptions?: string[];
   constraints?: string[];
   unknowns?: { question: string; whyItMatters: string; howToResolve: string }[];
-  successCriteria?: string[];
+  acceptanceCriteria: AcceptanceCriterion[];
+  executionContract: ExecutionContract;
   risks?: IssuePlanRisk[];
   validation?: string[];
   deliverables?: string[];
@@ -208,6 +299,43 @@ export type IssuePlan = {
   // Meta
   provider: string;
   createdAt: string;
+};
+
+export type DevServerState =
+  | "stopped"    // no pid file — clean state
+  | "starting"   // spawned, grace period not elapsed yet
+  | "running"    // alive + grace period elapsed (or health check passed)
+  | "stopping"   // SIGTERM sent, awaiting exit
+  | "crashed";   // process died unexpectedly
+
+export type DevServerEntry = {
+  id: string;
+  name: string;
+  command: string;
+  cwd?: string;
+  autoStart?: boolean;
+  /** Auto-restart on unexpected crash (default false) */
+  autoRestart?: boolean;
+  /** Max auto-restart attempts before giving up (default 5) */
+  maxCrashes?: number;
+  /** Optional port for health-check probing (future use) */
+  port?: number;
+};
+
+export type DevServerStatus = {
+  id: string;
+  name: string;
+  command: string;
+  cwd?: string;
+  state: DevServerState;
+  /** Convenience: true when state is "starting" or "running" */
+  running: boolean;
+  pid: number | null;
+  startedAt: string | null;
+  uptime: number;
+  logSize: number;
+  crashCount: number;
+  nextRetryAt?: string;
 };
 
 export type RuntimeConfig = {
@@ -242,9 +370,48 @@ export type RuntimeConfig = {
   beforeRunHook: string;
   afterRunHook: string;
   beforeRemoveHook: string;
+  devServers?: DevServerEntry[];
+  /** Maximum automated review→requeue cycles before escalating to human. Default: 2 */
+  maxReviewAutoRetries?: number;
+  /** When true, reviewer gets Playwright MCP access for UI verification (requires @playwright/mcp) */
+  enablePlaywrightReview?: boolean;
+  /** When true, auto-replan when the same error type repeats N times in a row (default: false) */
+  autoReplanOnStall?: boolean;
+  /** How many same-error attempts trigger auto-replan (default: 2) */
+  autoReplanStallThreshold?: number;
+  /** When true, planner output can be upgraded/downgraded to a stronger harness mode using historical lift. Default: true */
+  adaptiveHarnessSelection?: boolean;
+  /** When true, reviewer provider/model routing can adapt to historical lift by review profile. Default: true */
+  adaptiveReviewRouting?: boolean;
+  /** Minimum historical samples before adaptive policy trusts observed lift over heuristics. Default: 3 */
+  adaptivePolicyMinSamples?: number;
 };
 
 export type ProjectNameSource = "saved" | "detected" | "missing";
+export type MilestoneNameSource = ProjectNameSource;
+
+export type ProjectStatus = "planned" | "active" | "paused" | "done" | "cancelled";
+export type MilestoneStatus = ProjectStatus;
+
+export type ProjectProgressSummary = {
+  scopeCount: number;
+  completedCount: number;
+  progressPercent: number;
+};
+export type MilestoneProgressSummary = ProjectProgressSummary;
+
+export type ProjectEntry = {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string;
+  status: ProjectStatus;
+  createdAt: string;
+  updatedAt: string;
+  progress: ProjectProgressSummary;
+  issueCount: number;
+};
+export type MilestoneEntry = ProjectEntry;
 
 export type RuntimeMetrics = {
   total: number;
@@ -275,6 +442,9 @@ export type RuntimeState = {
   dashboardPort?: string;
   booting?: boolean;
   config: RuntimeConfig;
+  /** @deprecated Use milestones instead */
+  projects?: ProjectEntry[];
+  milestones: MilestoneEntry[];
   issues: IssueEntry[];
   events: RuntimeEvent[];
   metrics: RuntimeMetrics;
@@ -327,7 +497,203 @@ export type AgentProviderDefinition = {
   reasoningEffort?: ReasoningEffort;
 };
 
+export type ReviewProfileName =
+  | "general-quality"
+  | "ui-polish"
+  | "workflow-fsm"
+  | "integration-safety"
+  | "api-contract"
+  | "security-hardening";
+
+export type ReviewProfile = {
+  primary: ReviewProfileName;
+  secondary: ReviewProfileName[];
+  rationale: string[];
+  focusAreas: string[];
+  failureModes: string[];
+  evidencePriorities: string[];
+  severityBias: string;
+};
+
+export type ReviewRoutingSnapshot = {
+  provider: string;
+  model?: string;
+  reasoningEffort?: ReasoningEffort;
+  overlays: string[];
+  selectionReason?: string;
+};
+
+export type ReviewRunStatus = "running" | "completed" | "crashed";
+
+export type ContractNegotiationRunStatus = "running" | "completed" | "crashed";
+
+export type ReviewRun = {
+  id: string;
+  scope: ReviewScope;
+  planVersion: number;
+  attempt: number;
+  cycle: number;
+  status: ReviewRunStatus;
+  reviewProfile: ReviewProfile;
+  routing: ReviewRoutingSnapshot;
+  promptFile: string;
+  startedAt: string;
+  completedAt?: string;
+  sessionSuccess?: boolean;
+  continueRequested?: boolean;
+  blocked?: boolean;
+  exitCode?: number | null;
+  turns?: number;
+  overallVerdict?: "PASS" | "FAIL";
+  blockingVerdict?: "PASS" | "FAIL";
+  criteriaCount?: number;
+  failedCriteriaCount?: number;
+  blockingFailedCriteriaCount?: number;
+  advisoryFailedCriteriaCount?: number;
+  error?: string;
+};
+
+export type ContractNegotiationRun = {
+  id: string;
+  planVersion: number;
+  attempt: number;
+  status: ContractNegotiationRunStatus;
+  reviewProfile: ReviewProfile;
+  routing: ReviewRoutingSnapshot;
+  promptFile: string;
+  startedAt: string;
+  completedAt?: string;
+  sessionSuccess?: boolean;
+  continueRequested?: boolean;
+  blocked?: boolean;
+  exitCode?: number | null;
+  turns?: number;
+  decisionStatus?: ContractNegotiationDecisionStatus;
+  summary?: string;
+  rationale?: string;
+  concerns?: ContractNegotiationConcern[];
+  concernsCount?: number;
+  blockingConcernsCount?: number;
+  advisoryConcernsCount?: number;
+  appliedRefinement?: boolean;
+  error?: string;
+};
+
+export type ReviewFailureRecord = {
+  id: string;
+  runId: string;
+  scope: ReviewScope;
+  planVersion: number;
+  attempt: number;
+  criterionId: string;
+  description: string;
+  category: AcceptanceCriterionCategory;
+  verificationMethod: string;
+  blocking: boolean;
+  weight: number;
+  evidence: string;
+  recordedAt: string;
+  reviewProfile?: ReviewProfileName;
+  routing?: ReviewRoutingSnapshot;
+};
+
+export type PolicyDecisionKind =
+  | "harness-mode"
+  | "review-recovery";
+
+export type PolicyDecisionScope =
+  | "planning"
+  | "checkpoint-review"
+  | "final-review";
+
+export type PolicyDecision = {
+  id: string;
+  kind: PolicyDecisionKind;
+  scope: PolicyDecisionScope;
+  planVersion: number;
+  attempt?: number;
+  basis: "historical" | "heuristic" | "runtime";
+  from?: string;
+  to: string;
+  rationale: string;
+  recordedAt: string;
+  profile?: ReviewProfileName;
+  reviewScope?: ReviewScope;
+};
+
+export type GradingCriterion = {
+  id: string;
+  description: string;
+  category: AcceptanceCriterionCategory;
+  verificationMethod: string;
+  evidenceExpected: string;
+  blocking: boolean;
+  weight: number;
+  result: "PASS" | "FAIL" | "SKIP";
+  evidence: string;
+};
+
+export type GradingReport = {
+  scope: ReviewScope;
+  overallVerdict: "PASS" | "FAIL";
+  blockingVerdict: "PASS" | "FAIL";
+  criteria: GradingCriterion[];
+  reviewAttempt: number;
+};
+
 export type AgentDirectiveStatus = "done" | "continue" | "blocked" | "failed";
+
+export type AgentContextHitKind =
+  | "doc"
+  | "code-snippet"
+  | "issue-memory"
+  | "review-memory"
+  | "failure-memory"
+  | "config"
+  | "test";
+
+export type AgentContextHitSource = "explicit" | "lexical" | "semantic" | "memory" | "structural";
+
+export type AgentContextHit = {
+  id: string;
+  kind: AgentContextHitKind;
+  source: AgentContextHitSource;
+  path?: string;
+  sourceId?: string;
+  issueId?: string;
+  score: number;
+  reason: string;
+  excerpt: string;
+};
+
+export type AgentContextPack = {
+  role: AgentProviderRole;
+  query: string;
+  generatedAt: string;
+  hits: AgentContextHit[];
+  lexicalHitCount: number;
+  semanticHitCount: number;
+  memoryHitCount: number;
+  explicitHitCount: number;
+};
+
+export type AgentTraceStepType =
+  | "context_built"
+  | "lexical_search"
+  | "semantic_search"
+  | "memory_loaded"
+  | "prompt_compiled"
+  | "tool_used"
+  | "skill_used"
+  | "subagent_used"
+  | "command_used"
+  | "turn_finished";
+
+export type AgentTraceStep = {
+  type: AgentTraceStepType;
+  label: string;
+  detail?: string;
+};
 
 export type AgentTokenUsage = {
   inputTokens: number;
@@ -380,6 +746,8 @@ export type AgentSessionTurn = {
   skillsUsed?: string[];
   agentsUsed?: string[];
   commandsRun?: string[];
+  contextPack?: AgentContextPack;
+  traceSteps?: AgentTraceStep[];
 };
 
 export type AgentSessionState = {
@@ -478,6 +846,9 @@ export type S3dbDatabase = {
 export type S3dbModule = {
   S3db: new (options: Record<string, unknown>) => S3dbDatabase;
   SqliteClient: new (options: SqliteClientOptions) => unknown;
+  VectorPlugin?: new (options: Record<string, unknown>) => {
+    on?: (event: string, handler: (...args: unknown[]) => void) => void;
+  };
   ApiPlugin: new (options: Record<string, unknown>) => {
     stop?: () => Promise<void>;
   };

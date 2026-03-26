@@ -175,10 +175,30 @@ describe("extractPlanTokenUsage", () => {
 const MINIMAL_PLAN = {
   summary: "Implement JWT validation",
   estimatedComplexity: "medium",
+  harnessMode: "standard",
   steps: [
     { step: 1, action: "Add jwt dependency", files: ["package.json"] },
     { step: 2, action: "Write middleware", files: ["src/auth.ts"] },
   ],
+  acceptanceCriteria: [
+    {
+      id: "AC-1",
+      description: "Invalid tokens return 401",
+      category: "security",
+      verificationMethod: "api_probe",
+      evidenceExpected: "Observed 401 response for invalid token",
+      blocking: true,
+      weight: 3,
+    },
+  ],
+  executionContract: {
+    summary: "JWT middleware is implemented and verified",
+    deliverables: ["auth middleware"],
+    requiredChecks: ["pnpm test"],
+    requiredEvidence: ["401 response observed for invalid token"],
+    focusAreas: ["src/auth.ts"],
+    checkpointPolicy: "final_only",
+  },
 };
 
 describe("parsePlanOutput", () => {
@@ -198,6 +218,8 @@ describe("parsePlanOutput", () => {
       assert.equal(plan!.steps.length, 2);
       assert.equal(plan!.steps[0].action, "Add jwt dependency");
       assert.equal(plan!.estimatedComplexity, "medium");
+      assert.equal(plan!.acceptanceCriteria[0]?.id, "AC-1");
+      assert.equal(plan!.executionContract.requiredChecks[0], "pnpm test");
     });
 
     it("parses plan from result string containing JSON", () => {
@@ -244,6 +266,14 @@ describe("parsePlanOutput", () => {
   // ── Field normalisation ──
 
   describe("field normalisation", () => {
+    it("rejects plans that omit harnessMode", () => {
+      const raw = JSON.stringify({
+        structured_output: { ...MINIMAL_PLAN, harnessMode: undefined },
+      });
+      const plan = parsePlanOutput(raw);
+      assert.equal(plan, null);
+    });
+
     it("accepts 'complexity' as alias for 'estimatedComplexity'", () => {
       const raw = JSON.stringify({
         structured_output: { ...MINIMAL_PLAN, estimatedComplexity: undefined, complexity: "high" },
@@ -284,6 +314,7 @@ describe("parsePlanOutput", () => {
     // Mirrors actual output captured from gpt-5.4-mini via codex CLI
     const GPT54_MINI_OUTPUT = {
       issueTitle: "mobile",
+      harnessMode: "contractual",
       complexity: "medium",
       effortSuggestion: { planner: "low", executor: "medium", reviewer: "medium" },
       assumptions: ["Frontend-only change"],
@@ -308,6 +339,25 @@ describe("parsePlanOutput", () => {
           doneWhen: ["Charts fit within viewport", "KPI cards stack vertically"],
         },
       ],
+      acceptanceCriteria: [
+        {
+          id: "AC-1",
+          description: "Agents screen has no horizontal overflow at 360px",
+          category: "design",
+          verificationMethod: "ui_walkthrough",
+          evidenceExpected: "Viewport fits without horizontal scroll",
+          blocking: true,
+          weight: 3,
+        },
+      ],
+      executionContract: {
+        summary: "Mobile fixes are complete and verified",
+        deliverables: ["responsive agents view", "responsive analytics view"],
+        requiredChecks: ["pnpm test"],
+        requiredEvidence: ["No horizontal scroll at 360px"],
+        focusAreas: ["app/src/routes/agents.jsx", "app/src/routes/analytics.lazy.jsx"],
+        checkpointPolicy: "final_only",
+      },
     };
 
     it("parses issueTitle as summary", () => {
@@ -400,6 +450,7 @@ describe("parsePlanOutput", () => {
     // Hypothetical output from a model that uses snake_case and different aliases
     const ALT_MODEL_OUTPUT = {
       title: "Add auth middleware",
+      harness_mode: "standard",
       estimated_complexity: "low",
       steps: [
         {
@@ -411,12 +462,37 @@ describe("parsePlanOutput", () => {
       ],
       suggested_paths: ["src/middleware/"],
       suggested_labels: ["backend", "security"],
+      acceptanceCriteria: [
+        {
+          id: "AC-1",
+          description: "Middleware rejects requests with invalid tokens",
+          category: "security",
+          verificationMethod: "api_probe",
+          evidenceExpected: "Observed invalid token rejected",
+          blocking: true,
+          weight: 3,
+        },
+      ],
+      executionContract: {
+        summary: "Auth middleware is implemented and verified",
+        deliverables: ["JWT validation middleware"],
+        requiredChecks: ["pnpm test"],
+        requiredEvidence: ["Observed invalid token rejected"],
+        focusAreas: ["src/middleware/"],
+        checkpointPolicy: "final_only",
+      },
     };
 
     it("parses title as summary", () => {
       const plan = parsePlanOutput(JSON.stringify(ALT_MODEL_OUTPUT));
       assert.ok(plan !== null);
       assert.equal(plan!.summary, "Add auth middleware");
+    });
+
+    it("parses snake_case harness_mode", () => {
+      const plan = parsePlanOutput(JSON.stringify(ALT_MODEL_OUTPUT));
+      assert.ok(plan !== null);
+      assert.equal(plan!.harnessMode, "standard");
     });
 
     it("parses step number from fallback index", () => {

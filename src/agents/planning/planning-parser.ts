@@ -25,9 +25,27 @@ function isPlanPlaceholder(parsed: any): boolean {
   return false;
 }
 
+const ACCEPTANCE_CATEGORIES = new Set([
+  "functionality",
+  "correctness",
+  "regression",
+  "design",
+  "code_quality",
+  "performance",
+  "security",
+  "validation",
+  "integration",
+]);
+
+const HARNESS_MODES = new Set(["solo", "standard", "contractual"]);
+
 export function tryBuildPlan(parsed: any): IssuePlan | null {
   if (!parsed || typeof parsed !== "object") return null;
+  const harnessMode = String(parsed.harnessMode || parsed.harness_mode || "").trim();
   if (!Array.isArray(parsed.steps) || parsed.steps.length === 0) return null;
+  if (!Array.isArray(parsed.acceptanceCriteria) || parsed.acceptanceCriteria.length === 0) return null;
+  if (!parsed.executionContract || typeof parsed.executionContract !== "object") return null;
+  if (!HARNESS_MODES.has(harnessMode)) return null;
   if (isPlanPlaceholder(parsed)) {
     logger.warn("[Planner] Rejected plan — model returned template placeholders instead of real content");
     return null;
@@ -36,11 +54,28 @@ export function tryBuildPlan(parsed: any): IssuePlan | null {
   const summary = parsed.summary || parsed.issueTitle || parsed.title || parsed.issue_title || parsed.description || "";
 
   const complexities = ["trivial", "low", "medium", "high"];
+  const acceptanceCriteria = parsed.acceptanceCriteria.map((criterion: any, index: number) => ({
+    id: String(criterion.id || `AC-${index + 1}`),
+    description: String(criterion.description || "").trim(),
+    category: ACCEPTANCE_CATEGORIES.has(String(criterion.category || "").trim())
+      ? String(criterion.category).trim() as IssuePlan["acceptanceCriteria"][number]["category"]
+      : "functionality",
+    verificationMethod: String(criterion.verificationMethod || "").trim(),
+    evidenceExpected: String(criterion.evidenceExpected || "").trim(),
+    blocking: typeof criterion.blocking === "boolean" ? criterion.blocking : true,
+    weight: typeof criterion.weight === "number" ? criterion.weight : 1,
+  }));
+
+  if (acceptanceCriteria.some((criterion) => !criterion.description || !criterion.verificationMethod || !criterion.evidenceExpected)) {
+    logger.warn("[Planner] Rejected plan — acceptance criteria missing required fields");
+    return null;
+  }
 
   return {
     summary: String(summary),
     estimatedComplexity: complexities.includes(parsed.estimatedComplexity) ? parsed.estimatedComplexity
       : complexities.includes(parsed.complexity) ? parsed.complexity : "medium",
+    harnessMode: harnessMode as IssuePlan["harnessMode"],
     executionStrategy: parsed.executionStrategy && typeof parsed.executionStrategy === "object"
       ? {
         approach: String(parsed.executionStrategy.approach || ""),
@@ -65,7 +100,15 @@ export function tryBuildPlan(parsed: any): IssuePlan | null {
       whyItMatters: String(u.whyItMatters || u.why_it_matters || ""),
       howToResolve: String(u.howToResolve || u.how_to_resolve || ""),
     })) : undefined,
-    successCriteria: toStringArray(parsed.successCriteria || parsed.success_criteria),
+    acceptanceCriteria,
+    executionContract: {
+      summary: String(parsed.executionContract.summary || summary),
+      deliverables: toStringArray(parsed.executionContract.deliverables),
+      requiredChecks: toStringArray(parsed.executionContract.requiredChecks),
+      requiredEvidence: toStringArray(parsed.executionContract.requiredEvidence),
+      focusAreas: toStringArray(parsed.executionContract.focusAreas),
+      checkpointPolicy: parsed.executionContract.checkpointPolicy === "checkpointed" ? "checkpointed" : "final_only",
+    },
     risks: Array.isArray(parsed.risks) ? parsed.risks.map((r: any) => ({
       risk: String(r.risk || ""),
       impact: String(r.impact || ""),

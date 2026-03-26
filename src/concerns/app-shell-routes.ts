@@ -1,6 +1,8 @@
 export const APP_SHELL_ROUTES = [
   "/onboarding",
   "/kanban",
+  "/projects",
+  "/workspace",
   "/issues",
   "/analytics",
   "/agents",

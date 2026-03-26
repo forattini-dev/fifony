@@ -42,7 +42,6 @@ export async function runCommandWithTimeout(
   workspacePath: string,
   issue: IssueEntry,
   config: RuntimeConfig,
-  promptText: string,
   promptFile: string,
   extraEnv: Record<string, string> = {},
   outputFile?: string,
@@ -248,7 +247,7 @@ export async function runHook(
     ...HOOK_RUNTIME_CONFIG,
     agentProvider: normalizeAgentProvider(env.FIFONY_AGENT_PROVIDER ?? "codex"),
     agentCommand: command,
-  }, "", "", { FIFONY_HOOK_NAME: hookName, ...extraEnv });
+  }, "", { FIFONY_HOOK_NAME: hookName, ...extraEnv });
 
   if (!result.success) {
     throw new Error(`${hookName} hook failed: ${result.output}`);

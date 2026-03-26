@@ -184,6 +184,19 @@ export async function callTool(name: string, args: Record<string, unknown> = {})
     }, null, 2));
   }
 
+  if (name === "fifony.build_context") {
+    const issueId = typeof args.issueId === "string" ? args.issueId.trim() : "";
+    const role = typeof args.role === "string" ? args.role.trim() : "";
+    if (!issueId) throw new Error("issueId is required");
+    try {
+      const suffix = role ? `?role=${encodeURIComponent(role)}` : "";
+      const result = await apiGet(`/api/issues/${encodeURIComponent(issueId)}/context${suffix}`);
+      return toolText(JSON.stringify(result, null, 2));
+    } catch (error) {
+      throw new Error(`Failed to build context for ${issueId}: ${String(error)}`);
+    }
+  }
+
   if (name === "fifony.cancel_issue") {
     const issueId = typeof args.issueId === "string" ? args.issueId.trim() : "";
     if (!issueId) throw new Error("issueId is required");

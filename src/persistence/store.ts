@@ -2,8 +2,10 @@ import type {
   RuntimeState,
   RuntimeStateRecord,
   IssueEntry,
+  MilestoneEntry,
   RuntimeEvent,
   RuntimeSettingRecord,
+  DevServerEntry,
   S3dbModule,
   S3dbDatabase,
   S3dbResource,
@@ -11,8 +13,10 @@ import type {
 import {
   S3DB_DATABASE_PATH,
   S3DB_ISSUE_RESOURCE,
+  EMBEDDING_VECTOR_DIMENSIONS,
   S3DB_RUNTIME_RECORD_ID,
   S3DB_RUNTIME_SCHEMA_VERSION,
+  S3DB_CONTEXT_FRAGMENT_RESOURCE,
 } from "../concerns/constants.ts";
 import { now, debugBoot, fail } from "../concerns/helpers.ts";
 import { logger } from "../concerns/logger.ts";
@@ -24,47 +28,56 @@ import {
   setIssueStateMachinePlugin,
   setIssueResourceStateApi,
   issueStateMachineConfig,
-  ISSUE_STATE_MACHINE_ID,
-} from "./plugins/issue-state-machine.ts";
+} from "./plugins/fsm-issue.ts";
 
 let loadedS3dbModule: S3dbModule | null = null;
 let stateDb: S3dbDatabase | null = null;
 let runtimeStateResource: S3dbResource | null = null;
 let issueStateResource: S3dbResource | null = null;
+let milestoneStateResource: S3dbResource | null = null;
 let issuePlanResource: S3dbResource | null = null;
 let eventStateResource: S3dbResource | null = null;
 let settingStateResource: S3dbResource | null = null;
 let agentSessionResource: S3dbResource | null = null;
 let agentPipelineResource: S3dbResource | null = null;
+let devServerResource: S3dbResource | null = null;
+let contextFragmentResource: S3dbResource | null = null;
 let activeApiPlugin: { stop?: () => Promise<void> } | null = null;
 let activeStateMachinePlugin: { stop?: () => Promise<void> } | null = null;
 let activeEcPlugin: S3dbModule["EventualConsistencyPlugin"] extends new (...a: never[]) => infer R ? R | null : null = null;
 
 import {
   markIssueDirty,
+  markMilestoneDirty,
   markIssuePlanDirty,
   markEventDirty,
   hasDirtyState,
   getDirtyIssueIds,
-  getDirtyIssuePlanIds,
+  getDirtyMilestoneIds,
   getDirtyEventIds,
   snapshotAndClearDirtyIssueIds,
+  snapshotAndClearDirtyMilestoneIds,
   snapshotAndClearDirtyIssuePlanIds,
   snapshotAndClearDirtyEventIds,
   markAllIssuesDirty,
+  markAllMilestonesDirty,
   markAllIssuePlansDirty,
   markAllEventsDirty,
 } from "./dirty-tracker.ts";
+import { normalizeMilestone, refreshMilestoneSummaries } from "../domains/projects.ts";
 
-export { markIssueDirty, markIssuePlanDirty, markEventDirty, hasDirtyState };
+export { markIssueDirty, markMilestoneDirty, markIssuePlanDirty, markEventDirty, hasDirtyState };
 
 export function getStateDb(): S3dbDatabase | null { return stateDb; }
 export function getIssueStateResource(): S3dbResource | null { return issueStateResource; }
+export function getMilestoneStateResource(): S3dbResource | null { return milestoneStateResource; }
 export function getIssuePlanResource(): S3dbResource | null { return issuePlanResource; }
 export function getEventStateResource(): S3dbResource | null { return eventStateResource; }
 export function getSettingStateResource(): S3dbResource | null { return settingStateResource; }
 export function getAgentSessionResource(): S3dbResource | null { return agentSessionResource; }
 export function getAgentPipelineResource(): S3dbResource | null { return agentPipelineResource; }
+export function getDevServerResource(): S3dbResource | null { return devServerResource; }
+export function getContextFragmentResource(): S3dbResource | null { return contextFragmentResource; }
 
 // ── Plan resource helpers (1:N model) ─────────────────────────────────────
 
@@ -141,6 +154,7 @@ export async function loadS3dbModule(): Promise<S3dbModule> {
     loadedS3dbModule = {
       S3db: imported.S3db as S3dbModule["S3db"],
       SqliteClient: imported.SqliteClient as S3dbModule["SqliteClient"],
+      VectorPlugin: imported.VectorPlugin as S3dbModule["VectorPlugin"],
       ApiPlugin: ApiPlugin as S3dbModule["ApiPlugin"],
       WebSocketPlugin: imported.WebSocketPlugin as S3dbModule["WebSocketPlugin"],
       StateMachinePlugin: imported.StateMachinePlugin as S3dbModule["StateMachinePlugin"],
@@ -155,7 +169,7 @@ export async function loadS3dbModule(): Promise<S3dbModule> {
 
 export async function initStateStore(): Promise<void> {
   debugBoot("initStateStore:start");
-  const { S3db, SqliteClient, StateMachinePlugin } = await loadS3dbModule();
+  const { S3db, SqliteClient, StateMachinePlugin, VectorPlugin } = await loadS3dbModule();
   debugBoot("initStateStore:module-loaded");
 
   stateDb = new S3db({
@@ -167,6 +181,26 @@ export async function initStateStore(): Promise<void> {
 
   for (const resourceConfig of NATIVE_RESOURCE_CONFIGS) {
     await stateDb.createResource(resourceConfig);
+  }
+
+  if (VectorPlugin) {
+    try {
+      await stateDb.usePlugin(
+        new VectorPlugin({
+          dimensions: EMBEDDING_VECTOR_DIMENSIONS,
+          distanceMetric: "cosine",
+          emitEvents: false,
+          verboseEvents: false,
+          partitionPolicy: "warn",
+          maxUnpartitionedRecords: 1000,
+          searchPageSize: 200,
+        }) as unknown,
+        "vector",
+      );
+      logger.info("Vector plugin installed for semantic context retrieval.");
+    } catch (error) {
+      logger.warn(`Vector plugin failed to install: ${String(error)}`);
+    }
   }
 
   if (StateMachinePlugin) {
@@ -234,19 +268,25 @@ export async function initStateStore(): Promise<void> {
   const [
     runtimeStateResourceName,
     issueResourceName,
+    milestoneResourceName,
     issuePlanResourceName,
     eventResourceName,
     settingResourceName,
     agentSessionResourceName,
     agentPipelineResourceName,
+    devServerResourceName,
+    contextFragmentResourceName,
   ] = NATIVE_RESOURCE_NAMES;
   runtimeStateResource = await stateDb.getResource(runtimeStateResourceName);
   issueStateResource = await stateDb.getResource(issueResourceName);
+  milestoneStateResource = await stateDb.getResource(milestoneResourceName);
   issuePlanResource = await stateDb.getResource(issuePlanResourceName);
   eventStateResource = await stateDb.getResource(eventResourceName);
   settingStateResource = await stateDb.getResource(settingResourceName);
   agentSessionResource = await stateDb.getResource(agentSessionResourceName);
   agentPipelineResource = await stateDb.getResource(agentPipelineResourceName);
+  devServerResource = await stateDb.getResource(devServerResourceName);
+  contextFragmentResource = await stateDb.getResource(contextFragmentResourceName || S3DB_CONTEXT_FRAGMENT_RESOURCE);
 
   // Capture resource.state API injected by StateMachinePlugin (resource-level shortcuts)
   if (issueStateResource && (issueStateResource as any).state) {
@@ -351,6 +391,7 @@ async function recoverStateFromIssueResource(): Promise<RuntimeState | null> {
       sourceRepoUrl: "",
       sourceRef: "workspace",
       config: {} as any,
+      milestones: [],
       issues,
       events: [],
       metrics: getMetrics(issues),
@@ -363,6 +404,7 @@ async function recoverStateFromIssueResource(): Promise<RuntimeState | null> {
 }
 
 export async function persistState(state: RuntimeState): Promise<void> {
+  refreshMilestoneSummaries(state);
   state.metrics = {
     ...getMetrics(state.issues),
     activeWorkers: state.metrics.activeWorkers,
@@ -373,9 +415,10 @@ export async function persistState(state: RuntimeState): Promise<void> {
   // Only write the runtime state blob if something changed
   const dirty = hasDirtyState();
   const dirtyIssueCount = getDirtyIssueIds().size;
+  const dirtyMilestoneCount = getDirtyMilestoneIds().size;
   const dirtyEventCount = getDirtyEventIds().size;
-  if (dirty || dirtyIssueCount > 0 || dirtyEventCount > 0) {
-    logger.debug({ dirty, dirtyIssues: dirtyIssueCount, dirtyEvents: dirtyEventCount }, "[Store] Persisting state");
+  if (dirty || dirtyIssueCount > 0 || dirtyMilestoneCount > 0 || dirtyEventCount > 0) {
+    logger.debug({ dirty, dirtyIssues: dirtyIssueCount, dirtyMilestones: dirtyMilestoneCount, dirtyEvents: dirtyEventCount }, "[Store] Persisting state");
   }
 
   if (dirty) {
@@ -387,6 +430,27 @@ export async function persistState(state: RuntimeState): Promise<void> {
       updatedAt: now(),
       state,
     } satisfies RuntimeStateRecord);
+  }
+
+  const dirtyMilestones = milestoneStateResource ? snapshotAndClearDirtyMilestoneIds() : new Set<string>();
+  if (milestoneStateResource && dirtyMilestones.size > 0) {
+    for (const milestone of state.milestones) {
+      if (!dirtyMilestones.has(milestone.id)) continue;
+      const clean = {
+        id: milestone.id,
+        slug: milestone.slug,
+        name: milestone.name,
+        description: milestone.description,
+        status: milestone.status,
+        createdAt: milestone.createdAt,
+        updatedAt: milestone.updatedAt,
+      };
+      try {
+        await milestoneStateResource.replace(milestone.id, clean);
+      } catch (error) {
+        logger.warn(`Failed to persist milestone ${milestone.id}: ${String(error)}`);
+      }
+    }
   }
 
   // Snapshot dirty IDs before iterating to avoid losing IDs added during persist
@@ -429,6 +493,7 @@ export async function persistState(state: RuntimeState): Promise<void> {
   broadcastToWebSocketClients({
     type: "state:update",
     metrics: state.metrics,
+    milestones: state.milestones,
     issues: state.issues,
     events: state.events.slice(0, 50),
     updatedAt: state.updatedAt,
@@ -437,6 +502,7 @@ export async function persistState(state: RuntimeState): Promise<void> {
 
 /** Force persist all issues (used during boot and shutdown). */
 export async function persistStateFull(state: RuntimeState): Promise<void> {
+  markAllMilestonesDirty(state.milestones.map((milestone) => milestone.id));
   markAllIssuesDirty(state.issues.map((i) => i.id));
   markAllIssuePlansDirty(state.issues.map((i) => i.id));
   markAllEventsDirty(state.events.map((e) => e.id));
@@ -466,6 +532,60 @@ export async function loadPersistedSettings(): Promise<RuntimeSettingRecord[]> {
 export async function replacePersistedSetting(setting: RuntimeSettingRecord): Promise<void> {
   if (!settingStateResource) return;
   await settingStateResource.replace(setting.id, setting);
+}
+
+// ── Dev servers resource helpers ──────────────────────────────────────────────
+
+export async function loadPersistedDevServers(): Promise<DevServerEntry[]> {
+  if (!devServerResource?.list) return [];
+  try {
+    const records = await devServerResource.list({ limit: 200 });
+    return Array.isArray(records)
+      ? records.filter((r): r is DevServerEntry =>
+        Boolean(r && typeof r.id === "string" && typeof r.command === "string"),
+      )
+      : [];
+  } catch (error) {
+    logger.warn(`Failed to load dev servers from s3db: ${String(error)}`);
+    return [];
+  }
+}
+
+export async function replacePersistedDevServer(entry: DevServerEntry): Promise<void> {
+  if (!devServerResource) return;
+  await devServerResource.replace(entry.id, { ...entry, updatedAt: now() });
+}
+
+export async function loadPersistedMilestones(): Promise<MilestoneEntry[]> {
+  if (!milestoneStateResource?.list) return [];
+  try {
+    const records = await milestoneStateResource.list({ limit: 500 });
+    return Array.isArray(records)
+      ? records
+        .map((record) => normalizeMilestone(record as Record<string, unknown>))
+        .filter((milestone): milestone is MilestoneEntry => milestone !== null)
+      : [];
+  } catch (error) {
+    logger.warn(`Failed to load milestones from s3db: ${String(error)}`);
+    return [];
+  }
+}
+
+export async function deletePersistedDevServer(id: string): Promise<void> {
+  if (!devServerResource) return;
+  try { await (devServerResource as any).delete(id); } catch {}
+}
+
+export async function replaceAllDevServers(entries: DevServerEntry[]): Promise<void> {
+  if (!devServerResource) return;
+  const existing = await loadPersistedDevServers();
+  const incomingIds = new Set(entries.map((e) => e.id));
+  // Delete removed entries
+  await Promise.all(
+    existing.filter((e) => !incomingIds.has(e.id)).map((e) => deletePersistedDevServer(e.id)),
+  );
+  // Upsert all current entries
+  await Promise.all(entries.map((e) => replacePersistedDevServer(e)));
 }
 
 /**
@@ -595,6 +715,7 @@ export async function closeStateStore(): Promise<void> {
     stateDb = null;
     runtimeStateResource = null;
     issueStateResource = null;
+    milestoneStateResource = null;
     issuePlanResource = null;
     eventStateResource = null;
     settingStateResource = null;

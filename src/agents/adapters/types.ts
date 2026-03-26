@@ -1,4 +1,4 @@
-import type { AgentTokenUsage } from "../../types.ts";
+import type { AgentTokenUsage, ReviewProfile, ReviewScope } from "../../types.ts";
 import type { ExecutionPayload } from "./shared.ts";
 
 export type CompiledExecution = {
@@ -22,6 +22,20 @@ export type CompiledExecution = {
 export type CompiledReview = {
   prompt: string;
   command: string;
+  meta: {
+    scope: ReviewScope;
+    reviewProfile: ReviewProfile;
+  };
+};
+
+export type CompiledContractNegotiation = {
+  prompt: string;
+  command: string;
+  meta: {
+    reviewProfile: ReviewProfile;
+    round: number;
+    maxRounds: number;
+  };
 };
 
 export type ExecutionAudit = {

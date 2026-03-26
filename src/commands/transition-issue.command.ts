@@ -1,18 +1,19 @@
 import type { IssueEntry, IssueState } from "../types.ts";
-import type { IIssueRepository } from "../ports/index.ts";
-import {
-  findIssueStateMachineTransitionPath,
-  getIssueStateMachinePlugin,
-  ISSUE_STATE_MACHINE_ID,
-} from "../persistence/plugins/issue-state-machine.ts";
 import { transitionIssue } from "../domains/issues.ts";
+import {
+  syncIssueStateFromFsm,
+  getIssueStateMachineTransitionPath,
+} from "../domains/issue-state.ts";
 import { logger } from "../concerns/logger.ts";
 
 export type TransitionIssueInput = {
   issue: IssueEntry;
   target: IssueState;
   note: string;
-  fallbackToLocal?: boolean;
+};
+
+type TransitionIssueDeps = {
+  [key: string]: unknown;
 };
 
 /**
@@ -21,29 +22,30 @@ export type TransitionIssueInput = {
  */
 export async function transitionIssueCommand(
   input: TransitionIssueInput,
-  deps: {
-    issueRepository: IIssueRepository;
-  },
+  _deps?: TransitionIssueDeps,
 ): Promise<void> {
   const { issue, target, note } = input;
 
-  // Resolve the real FSM state (source of truth) — in-memory may be stale
+  // Resolve source-of-truth FSM state and reconcile in-memory entry if stale.
   let currentState = issue.state;
-  try {
-    const plugin = getIssueStateMachinePlugin();
-    if (plugin?.getState) {
-      const fsmState = await plugin.getState(ISSUE_STATE_MACHINE_ID, issue.id);
-      if (fsmState && fsmState !== currentState) {
-        logger.debug({ issueId: issue.id, memoryState: currentState, fsmState }, "[Transition] Syncing stale in-memory state with FSM");
-        issue.state = fsmState as typeof issue.state;
-        currentState = fsmState as IssueState;
-      }
-    }
-  } catch { /* FSM not available — use in-memory */ }
+  const syncResult = await syncIssueStateFromFsm(issue, {
+    reason: "Transition command reconciled issue state from FSM source of truth.",
+  });
+  if (syncResult.changed) {
+    logger.debug(
+      {
+        issueId: issue.id,
+        memoryState: syncResult.previousState,
+        fsmState: syncResult.currentState,
+      },
+      "[Transition] Syncing stale in-memory state with FSM",
+    );
+    currentState = syncResult.currentState;
+  }
 
   if (currentState === target) return;
 
-  const path = findIssueStateMachineTransitionPath(null, currentState, target);
+  const path = getIssueStateMachineTransitionPath(currentState, target);
   if (!path || path.length === 0) {
     throw new Error(`State machine does not allow transition from '${currentState}' to '${target}' for issue ${issue.id}.`);
   }

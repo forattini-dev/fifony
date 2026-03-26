@@ -11,7 +11,7 @@
  *   prompt-builder.ts     — prompt construction for sessions, turns, and providers
  *   command-executor.ts   — runCommandWithTimeout and runHook
  *   workspace-setup.ts    — workspace creation, git worktree, and cleanWorkspace
- *   agent-pipeline.ts     — runAgentSession, runAgentPipeline, runPlanningJob, runIssueOnce
+ *   persistence/plugins/fsm-agent.ts          — runPlanPhase, runExecutePhase, runReviewPhase, canDispatchAgent
  */
 
 // ── Re-exports from directive-parser ──────────────────────────────────────
@@ -47,8 +47,8 @@ export { cleanWorkspace, prepareWorkspace, createGitWorktree } from "../domains/
 // ── Re-exports from agent-pipeline ────────────────────────────────────────
 export { runAgentPipeline, runAgentSession } from "./agent-pipeline.ts";
 
-// ── Re-exports from issue-runner ──────────────────────────────────────────
-export { runPlanningJob } from "./issue-runner.ts";
+// ── Re-exports from agent-fsm ─────────────────────────────────────────────
+export { runPlanPhase as runPlanningJob, runExecutePhase, runReviewPhase, canDispatchAgent } from "../persistence/plugins/fsm-agent.ts";
 
 // ── Public functions consumed by queue-workers.ts / api-server.ts ────────
 
@@ -56,7 +56,6 @@ import type { IssueEntry } from "../types.ts";
 import { isAgentStillRunning } from "./pid-manager.ts";
 
 export { isAgentStillRunning };
-export { runIssueOnce } from "./issue-runner.ts";
 
 export function issueHasResumableSession(issue: IssueEntry): boolean {
   return Boolean(issue.workspacePath) && issue.state === "Running";

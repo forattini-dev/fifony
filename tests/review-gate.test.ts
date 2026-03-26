@@ -15,7 +15,7 @@ import { getPlanCommand } from "../src/agents/planning/planning-prompts.ts";
 describe("review gate: FSM invariants", () => {
   // Import the state machine config to test transitions
   it("Reviewing state has no MERGE event", async () => {
-    const { issueStateMachineConfig, ISSUE_STATE_MACHINE_ID } = await import("../src/persistence/plugins/issue-state-machine.ts");
+    const { issueStateMachineConfig, ISSUE_STATE_MACHINE_ID } = await import("../src/persistence/plugins/fsm-issue.ts");
     const config = issueStateMachineConfig.stateMachines[ISSUE_STATE_MACHINE_ID];
     const reviewingState = config.states.Reviewing;
     assert.ok(reviewingState, "Reviewing state exists");
@@ -25,7 +25,7 @@ describe("review gate: FSM invariants", () => {
   });
 
   it("Reviewing can only transition to PendingDecision, Queued, or Blocked", async () => {
-    const { issueStateMachineConfig, ISSUE_STATE_MACHINE_ID } = await import("../src/persistence/plugins/issue-state-machine.ts");
+    const { issueStateMachineConfig, ISSUE_STATE_MACHINE_ID } = await import("../src/persistence/plugins/fsm-issue.ts");
     const config = issueStateMachineConfig.stateMachines[ISSUE_STATE_MACHINE_ID];
     const targets = Object.values(config.states.Reviewing.on || {});
     const allowed = new Set(["PendingDecision", "Queued", "Blocked"]);
@@ -35,7 +35,7 @@ describe("review gate: FSM invariants", () => {
   });
 
   it("PendingDecision can transition to Approved (APPROVE event)", async () => {
-    const { issueStateMachineConfig, ISSUE_STATE_MACHINE_ID } = await import("../src/persistence/plugins/issue-state-machine.ts");
+    const { issueStateMachineConfig, ISSUE_STATE_MACHINE_ID } = await import("../src/persistence/plugins/fsm-issue.ts");
     const config = issueStateMachineConfig.stateMachines[ISSUE_STATE_MACHINE_ID];
     const pd = config.states.PendingDecision;
     assert.ok(pd, "PendingDecision state exists");
@@ -43,7 +43,7 @@ describe("review gate: FSM invariants", () => {
   });
 
   it("Approved can transition to Merged (MERGE event)", async () => {
-    const { issueStateMachineConfig, ISSUE_STATE_MACHINE_ID } = await import("../src/persistence/plugins/issue-state-machine.ts");
+    const { issueStateMachineConfig, ISSUE_STATE_MACHINE_ID } = await import("../src/persistence/plugins/fsm-issue.ts");
     const config = issueStateMachineConfig.stateMachines[ISSUE_STATE_MACHINE_ID];
     const approved = config.states.Approved;
     assert.ok(approved, "Approved state exists");
@@ -51,7 +51,7 @@ describe("review gate: FSM invariants", () => {
   });
 
   it("terminal states cannot transition (except REOPEN)", async () => {
-    const { issueStateMachineConfig, ISSUE_STATE_MACHINE_ID } = await import("../src/persistence/plugins/issue-state-machine.ts");
+    const { issueStateMachineConfig, ISSUE_STATE_MACHINE_ID } = await import("../src/persistence/plugins/fsm-issue.ts");
     const config = issueStateMachineConfig.stateMachines[ISSUE_STATE_MACHINE_ID];
     for (const terminal of ["Merged", "Cancelled"]) {
       const state = config.states[terminal];

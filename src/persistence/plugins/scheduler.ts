@@ -3,7 +3,7 @@ import type {
   ParallelismAnalysis,
   RuntimeState,
 } from "../../types.ts";
-import { EXECUTING_STATES, TERMINAL_STATES, COMPLETED_STATES } from "../../concerns/constants.ts";
+import { EXECUTING_STATES, COMPLETED_STATES } from "../../concerns/constants.ts";
 import { now } from "../../concerns/helpers.ts";
 import { logger } from "../../concerns/logger.ts";
 import { persistState } from "../store.ts";
@@ -35,7 +35,7 @@ export function installGracefulShutdown(
     for (const issue of state.issues) {
       if (issue.state === "Running" || issue.state === "Reviewing") {
         try {
-          await transitionIssueCommand({ issue, target: "Queued", note: `Interrupted by ${signal} — queued for resume on next start.`, fallbackToLocal: true }, container);
+          await transitionIssueCommand({ issue, target: "Queued", note: `Interrupted by ${signal} — queued for resume on next start.` }, container);
         } catch {
           logger.warn(`Could not transition issue ${issue.identifier} to Queued during shutdown.`);
         }

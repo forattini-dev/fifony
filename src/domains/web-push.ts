@@ -137,7 +137,7 @@ export async function sendPushToAll(
   let sent = 0;
   let removed = 0;
 
-  const results = await Promise.allSettled(
+  await Promise.allSettled(
     [...subscriptions.values()].map(async (sub) => {
       try {
         await webpush.sendNotification(sub, jsonPayload, { TTL: 3600 });

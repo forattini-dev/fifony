@@ -4,14 +4,12 @@ import type {
   IssueEntry,
   IssueState,
   JsonRecord,
+  MilestoneEntry,
   RuntimeConfig,
   RuntimeEvent,
   RuntimeEventType,
   RuntimeState,
 } from "../types.ts";
-import {
-  executeTransition,
-} from "../persistence/plugins/issue-state-machine.ts";
 import {
   PERSIST_EVENTS_MAX,
   TERMINAL_STATES,
@@ -34,9 +32,26 @@ import {
 import { logger } from "../concerns/logger.ts";
 import { parseEffortConfig } from "./config.ts";
 import { computeMetrics as _computeMetrics } from "./metrics.ts";
+import { normalizeMilestone, refreshMilestoneSummaries } from "./projects.ts";
 
 export { computeMetrics } from "./metrics.ts";
 export { deriveConfig, applyWorkflowConfig, validateConfig } from "./config.ts";
+
+export type IssueTransitionExecutor = (
+  issue: IssueEntry,
+  event: string,
+  context?: Record<string, unknown>,
+) => Promise<{ previousState: IssueState }>;
+
+let issueTransitionExecutor: IssueTransitionExecutor | null = null;
+
+export function setIssueTransitionExecutor(executor: IssueTransitionExecutor | null): void {
+  issueTransitionExecutor = executor;
+}
+
+export function getIssueTransitionExecutor(): IssueTransitionExecutor | null {
+  return issueTransitionExecutor;
+}
 
 export function normalizeIssue(
   raw: JsonRecord,
@@ -52,6 +67,7 @@ export function normalizeIssue(
     title: toStringValue(raw.title, `Issue ${id}`),
     description: toStringValue(raw.description, ""),
     state: normalizeState(raw.state, raw.plan && typeof raw.plan === "object" ? "PendingApproval" : "Planning"),
+    milestoneId: toStringValue(raw.milestoneId || raw.projectId) || undefined,
     branchName: toStringValue(raw.branchName),
     url: toStringValue(raw.url),
     assigneeId: toStringValue(raw.assigneeId),
@@ -68,7 +84,13 @@ export function normalizeIssue(
     planVersion: 0,
     executeAttempt: 0,
     reviewAttempt: 0,
+    checkpointAttempt: 0,
+    contractNegotiationAttempt: 0,
     planHistory: [],
+    contractNegotiationRuns: [],
+    reviewRuns: [],
+    reviewFailureHistory: [],
+    policyDecisions: [],
   };
 
   return issue;
@@ -105,6 +127,7 @@ export function createIssueFromPayload(
     title: toStringValue(payload.title, `Issue ${identifier}`),
     description: toStringValue(payload.description, ""),
     state: initialState,
+    milestoneId: toStringValue(payload.milestoneId || payload.projectId) || undefined,
     branchName: toStringValue(payload.branchName),
     baseBranch: toStringValue(payload.baseBranch) || defaultBranch,
     url: toStringValue(payload.url),
@@ -126,7 +149,13 @@ export function createIssueFromPayload(
     planVersion: payload.plan ? 1 : 0,
     executeAttempt: 0,
     reviewAttempt: 0,
+    checkpointAttempt: 0,
+    contractNegotiationAttempt: 0,
     planHistory: [],
+    contractNegotiationRuns: [],
+    reviewRuns: [],
+    reviewFailureHistory: [],
+    policyDecisions: [],
   };
 
   // If plan provides suggestions, apply them
@@ -158,6 +187,7 @@ export function buildRuntimeState(
   previous: RuntimeState | null,
   config: RuntimeConfig,
   projectMetadata: ProjectMetadata = resolveProjectMetadata([], TARGET_ROOT),
+  persistedMilestones: MilestoneEntry[] = [],
 ): RuntimeState {
   const mergedIssues = (previous?.issues ?? []).reduce<IssueEntry[]>((issues, rawIssue) => {
       if (!rawIssue || typeof rawIssue !== "object") return issues;
@@ -170,6 +200,7 @@ export function buildRuntimeState(
         title: toStringValue(existing.title, `Issue ${toStringValue(existing.identifier, existing.id)}`),
         description: toStringValue(existing.description, ""),
         state: normalizeState(existing.state, existing.plan ? "PendingApproval" : "Planning"),
+        milestoneId: toStringValue(existing.milestoneId || existing.projectId) || undefined,
         paths: toStringArray(existing.paths),
         labels: toStringArray(existing.labels),
         blockedBy: toStringArray(existing.blockedBy),
@@ -182,7 +213,16 @@ export function buildRuntimeState(
         planVersion: toNumberValue(existing.planVersion, existing.plan ? 1 : 0),
         executeAttempt: toNumberValue(existing.executeAttempt, toNumberValue(existing.attempts, 0)),
         reviewAttempt: toNumberValue(existing.reviewAttempt, toNumberValue(existing.attempts, 0)),
+        checkpointAttempt: toNumberValue(existing.checkpointAttempt, 0),
+        contractNegotiationAttempt: toNumberValue(existing.contractNegotiationAttempt, 0),
+        checkpointStatus: toStringValue(existing.checkpointStatus) as IssueEntry["checkpointStatus"],
+        checkpointPassedAt: toStringValue(existing.checkpointPassedAt),
+        contractNegotiationStatus: toStringValue(existing.contractNegotiationStatus) as IssueEntry["contractNegotiationStatus"],
         planHistory: Array.isArray(existing.planHistory) ? existing.planHistory : [],
+        contractNegotiationRuns: Array.isArray(existing.contractNegotiationRuns) ? existing.contractNegotiationRuns : [],
+        reviewRuns: Array.isArray(existing.reviewRuns) ? existing.reviewRuns : [],
+        reviewFailureHistory: Array.isArray(existing.reviewFailureHistory) ? existing.reviewFailureHistory : [],
+        policyDecisions: Array.isArray(existing.policyDecisions) ? existing.policyDecisions : [],
       });
       return issues;
     }, [])
@@ -201,7 +241,11 @@ export function buildRuntimeState(
 
   const metrics = _computeMetrics(mergedIssues);
 
-  return {
+  const mergedMilestones = (previous?.milestones ?? persistedMilestones)
+    .map((milestone) => normalizeMilestone(milestone as unknown as JsonRecord))
+    .filter((milestone): milestone is MilestoneEntry => Boolean(milestone));
+
+  const state: RuntimeState = {
     startedAt: previous?.startedAt ?? now(),
     updatedAt: now(),
     trackerKind: "filesystem",
@@ -215,6 +259,7 @@ export function buildRuntimeState(
       ...config,
       dashboardPort: previous?.config.dashboardPort,
     },
+    milestones: mergedMilestones,
     issues: mergedIssues,
     events: previous?.events ?? [],
     metrics,
@@ -224,6 +269,9 @@ export function buildRuntimeState(
       "No external tracker dependency (filesystem-backed local mode).",
     ],
   };
+
+  refreshMilestoneSummaries(state);
+  return state;
 }
 
 export function addEvent(
@@ -268,7 +316,13 @@ export async function transitionIssue(
   context: Record<string, unknown> = {},
 ): Promise<void> {
   logger.debug({ issueId: issue.id, identifier: issue.identifier, from: issue.state, event, context }, "[State] Issue transition");
-  await executeTransition(issue, event, { ...context, issue });
+  if (!issueTransitionExecutor) {
+    const { executeTransition } = await import("../persistence/plugins/fsm-issue.ts");
+    await executeTransition(issue, event, { ...context, issue });
+    return;
+  }
+
+  await issueTransitionExecutor(issue, event, { ...context, issue });
 }
 
 export function issueDependenciesResolved(issue: IssueEntry, allIssues: IssueEntry[]): boolean {

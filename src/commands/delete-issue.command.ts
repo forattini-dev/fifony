@@ -3,7 +3,7 @@ import { readAgentPid } from "../agents/pid-manager.ts";
 import { cleanWorkspace } from "../domains/workspace.ts";
 import { logger } from "../concerns/logger.ts";
 import { getIssueStateResource } from "../persistence/store.ts";
-import { getIssueResourceStateApi } from "../persistence/plugins/issue-state-machine.ts";
+import { deleteIssueStateMachineResourceState } from "../domains/issue-state.ts";
 
 export type DeleteIssueInput = {
   issue: IssueEntry;
@@ -43,8 +43,7 @@ export async function deleteIssueCommand(input: DeleteIssueInput): Promise<void>
 
   // 5. Delete FSM state
   try {
-    const fsmApi = getIssueResourceStateApi();
-    if (fsmApi?.delete) await fsmApi.delete(issue.id);
+    await deleteIssueStateMachineResourceState(issue.id);
   } catch (error) {
     logger.debug({ issueId: issue.id, err: String(error) }, "[Delete] FSM state cleanup (non-critical)");
   }

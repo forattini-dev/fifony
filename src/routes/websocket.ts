@@ -60,6 +60,7 @@ export function broadcastToWebSocketClients(message: Record<string, unknown>): v
         type: "state:delta",
         seq: broadcastSeq,
         metrics: message.metrics,
+        milestones: message.milestones,
         updatedAt: message.updatedAt,
         issuesDelta: changedIssues,
         issuesRemoved: removedIds,
@@ -97,6 +98,7 @@ export function makeWebSocketConfig(state: RuntimeState) {
           seq: broadcastSeq,
           timestamp: now(),
           metrics: computeMetrics(state.issues),
+          milestones: state.milestones,
           issues: state.issues,
           events: state.events.slice(0, 50),
         }));
@@ -104,7 +106,7 @@ export function makeWebSocketConfig(state: RuntimeState) {
         logger.debug(`WebSocket initial send failed for ${socketId}: ${String(error)}`);
       }
     },
-    onMessage: (socketId: string, message: string | Buffer, send: WsSendFn) => {
+    onMessage: (_socketId: string, message: string | Buffer, send: WsSendFn) => {
       try {
         const msg = JSON.parse(typeof message === "string" ? message : message.toString("utf8"));
         if (msg.type === "ping") {

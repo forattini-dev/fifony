@@ -1,27 +1,21 @@
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import {
   Dirent,
   existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
-  rmSync,
   writeFileSync,
 } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { basename, dirname, join, relative as relativePath, resolve } from "node:path";
-import { env } from "node:process";
 
-import { logger } from "../concerns/logger.ts";
-import { getSettingStateResource } from "../persistence/store.ts";
 import type { ProjectNameSource, RuntimeSettingRecord } from "../types.ts";
 import {
   PROJECT_NAME_SETTING_ID,
   buildProjectDraft,
   buildQueueTitle,
   detectProjectNameFromPath,
-  normalizeProjectName,
   readSavedProjectName,
 } from "../shared/project-meta.ts";
 
@@ -296,136 +290,7 @@ function buildFallbackAnalysis(targetRoot: string): ProjectAnalysis {
   };
 }
 
-function parseAnalysisOutput(raw: string): ProjectAnalysis | null {
-  const text = raw.trim();
-  if (!text) return null;
-
-  // Try to extract JSON from the output (may be wrapped in markdown or Claude JSON envelope)
-  let jsonText = text;
-
-  // Handle Claude --output-format json envelope: { "result": "..." }
-  try {
-    const envelope = JSON.parse(text);
-    if (typeof envelope.result === "string") {
-      jsonText = envelope.result.trim();
-    } else if (envelope.description || envelope.domains) {
-      // Already the analysis object
-      return validateAnalysis(envelope);
-    }
-  } catch {
-    // not a JSON envelope, proceed
-  }
-
-  // Strip markdown fences if present
-  const fenced = jsonText.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-  if (fenced) {
-    jsonText = fenced[1].trim();
-  }
-
-  try {
-    const parsed = JSON.parse(jsonText);
-    return validateAnalysis(parsed);
-  } catch {
-    // try to find JSON object in the text
-    const match = jsonText.match(/\{[\s\S]*\}/);
-    if (match) {
-      try {
-        const parsed = JSON.parse(match[0]);
-        return validateAnalysis(parsed);
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  }
-}
-
-function validateAnalysis(parsed: Record<string, unknown>): ProjectAnalysis | null {
-  if (!parsed || typeof parsed !== "object") return null;
-
-  const description = typeof parsed.description === "string" ? parsed.description.trim() : "";
-  const language = typeof parsed.language === "string" ? parsed.language.trim().toLowerCase() : "";
-  const domains = Array.isArray(parsed.domains)
-    ? (parsed.domains as unknown[]).filter((d): d is string => typeof d === "string")
-    : [];
-  const stack = Array.isArray(parsed.stack)
-    ? (parsed.stack as unknown[]).filter((s): s is string => typeof s === "string")
-    : [];
-  const suggestedAgents = Array.isArray(parsed.suggestedAgents)
-    ? (parsed.suggestedAgents as unknown[]).filter((a): a is string => typeof a === "string")
-    : [];
-
-  if (!description && domains.length === 0 && stack.length === 0) return null;
-
-  return {
-    description: description || "A software project.",
-    language,
-    domains,
-    stack,
-    suggestedAgents,
-    source: "cli",
-  };
-}
-
-function isBlockedProjectAnalysisResponse(analysis: ProjectAnalysis): boolean {
-  const normalized = `${analysis.description || ""}`.toLowerCase();
-  const indicators = [
-    "could not inspect the repository files",
-    "local command execution is blocked",
-    "please provide access",
-    "paste the key files",
-    "failed to inspect",
-    "unable to access the repository",
-  ];
-  return indicators.some((indicator) => normalized.includes(indicator));
-}
-
-// ── Analysis cache ────────────────────────────────────────────────────────────
-
-const ANALYSIS_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
-
-function computeProjectHash(targetRoot: string): string {
-  const buildFiles = Object.keys(BUILD_FILE_SIGNALS);
-  const found = buildFiles.filter((f) => existsSync(join(targetRoot, f))).sort();
-  return createHash("sha256").update(found.join(",")).digest("hex").slice(0, 16);
-}
-
-async function loadCachedAnalysis(targetRoot: string): Promise<ProjectAnalysis | null> {
-  const resource = getSettingStateResource();
-  if (!resource) return null;
-  const hash = computeProjectHash(targetRoot);
-  const key = `project-analysis:${hash}`;
-  try {
-    const record = await resource.get(key);
-    if (!record?.value) return null;
-    const cached = record.value as { analysis: ProjectAnalysis; updatedAt: string };
-    if (!cached.analysis || !cached.updatedAt) return null;
-    if (Date.now() - Date.parse(cached.updatedAt) > ANALYSIS_CACHE_TTL_MS) return null;
-    return cached.analysis;
-  } catch {
-    return null;
-  }
-}
-
-async function saveCachedAnalysis(targetRoot: string, analysis: ProjectAnalysis): Promise<void> {
-  const resource = getSettingStateResource();
-  if (!resource) return;
-  const hash = computeProjectHash(targetRoot);
-  const key = `project-analysis:${hash}`;
-  try {
-    await resource.replace(key, {
-      id: key,
-      scope: "system",
-      source: "detected",
-      value: { analysis, updatedAt: new Date().toISOString() },
-    });
-  } catch {
-    // non-critical
-  }
-}
-
 export { buildFallbackAnalysis };
-
 
 // ── Reference repositories ───────────────────────────────────────────────────
 

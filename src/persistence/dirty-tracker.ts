@@ -4,11 +4,16 @@
  */
 
 const dirtyIssueIds = new Set<string>();
+const dirtyMilestoneIds = new Set<string>();
 const dirtyIssuePlanIds = new Set<string>();
 const dirtyEventIds = new Set<string>();
 
 export function markIssueDirty(id: string): void {
   dirtyIssueIds.add(id);
+}
+
+export function markMilestoneDirty(id: string): void {
+  dirtyMilestoneIds.add(id);
 }
 
 export function markIssuePlanDirty(id: string): void {
@@ -20,7 +25,7 @@ export function markEventDirty(id: string): void {
 }
 
 export function hasDirtyState(): boolean {
-  return dirtyIssueIds.size > 0 || dirtyEventIds.size > 0;
+  return dirtyIssueIds.size > 0 || dirtyMilestoneIds.size > 0 || dirtyEventIds.size > 0;
 }
 
 export function getDirtyIssueIds(): Set<string> {
@@ -31,6 +36,10 @@ export function getDirtyIssuePlanIds(): Set<string> {
   return dirtyIssuePlanIds;
 }
 
+export function getDirtyMilestoneIds(): Set<string> {
+  return dirtyMilestoneIds;
+}
+
 export function getDirtyEventIds(): Set<string> {
   return dirtyEventIds;
 }
@@ -39,6 +48,12 @@ export function getDirtyEventIds(): Set<string> {
 export function snapshotAndClearDirtyIssueIds(): Set<string> {
   const snapshot = new Set(dirtyIssueIds);
   for (const id of snapshot) dirtyIssueIds.delete(id);
+  return snapshot;
+}
+
+export function snapshotAndClearDirtyMilestoneIds(): Set<string> {
+  const snapshot = new Set(dirtyMilestoneIds);
+  for (const id of snapshot) dirtyMilestoneIds.delete(id);
   return snapshot;
 }
 
@@ -71,6 +86,10 @@ export function clearDirtyEventIds(): void {
 
 export function markAllIssuesDirty(ids: string[]): void {
   for (const id of ids) dirtyIssueIds.add(id);
+}
+
+export function markAllMilestonesDirty(ids: string[]): void {
+  for (const id of ids) dirtyMilestoneIds.add(id);
 }
 
 export function markAllIssuePlansDirty(ids: string[]): void {

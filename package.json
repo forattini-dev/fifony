@@ -61,6 +61,7 @@
     "node": ">=23"
   },
   "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
     "cli-args-parser": "^1.0.6",
     "node-cron": "^4.2.1",
     "node-pty": "1.2.0-beta.12",
@@ -69,18 +70,18 @@
     "raffel": "^1.0.19",
     "react-hotkeys-hook": "^5.2.4",
     "recker": "^1.0.86",
-    "s3db.js": "21.3.16",
+    "s3db.js": "21.3.19",
     "web-push": "^3.6.7",
     "yaml": "^2.8.3"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.2",
     "@tanstack/react-query": "^5.95.2",
-    "@tanstack/react-router": "^1.168.3",
-    "@tanstack/router-plugin": "^1.167.4",
+    "@tanstack/react-router": "^1.168.4",
+    "@tanstack/router-plugin": "^1.167.5",
     "@vitejs/plugin-react": "^6.0.1",
     "daisyui": "^5.5.19",
-    "lucide-react": "^1.0.1",
+    "lucide-react": "^1.7.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "sharp": "^0.34.5",

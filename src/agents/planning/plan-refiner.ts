@@ -6,6 +6,7 @@ import type { IssuePlan, RuntimeConfig, IssueEntry, AgentTokenUsage } from "../.
 import { now } from "../../concerns/helpers.ts";
 import { logger } from "../../concerns/logger.ts";
 import { record as recordTokens } from "../../domains/tokens.ts";
+import { buildContextMarkdown } from "../context-engine.ts";
 import { type PlanningSessionUsage } from "./planning-session.ts";
 import { parsePlanOutput, extractPlanTokenUsage } from "./planning-parser.ts";
 import {
@@ -37,6 +38,18 @@ export async function refinePlan(
 
   const refineStartMs = Date.now();
   const prompt = await buildRefinePrompt(issue.title, issue.description, issue.plan, feedback, issue.images);
+  const planningContext = await buildContextMarkdown({
+    role: "planner",
+    title: issue.title,
+    description: [issue.description, feedback].filter(Boolean).join("\n\n"),
+    issue,
+  }).catch((error) => {
+    logger.warn({ err: error }, "[Planner] Failed to build refine context");
+    return { pack: null, markdown: "" };
+  });
+  const promptWithContext = planningContext.markdown
+    ? `${planningContext.markdown}\n\n${prompt}`
+    : prompt;
 
   let plan: IssuePlan | null = null;
   let refineUsage: PlanningSessionUsage;
@@ -47,7 +60,7 @@ export async function refinePlan(
 
     const tempDir = mkdtempSync(join(tmpdir(), "fifony-refine-"));
     const promptFile = join(tempDir, "fifony-refine-prompt.md");
-    writeFileSync(promptFile, `${prompt}\n`, "utf8");
+    writeFileSync(promptFile, `${promptWithContext}\n`, "utf8");
 
     const output = await runPlanningProcess({
       command,
@@ -59,7 +72,7 @@ export async function refinePlan(
     });
 
     logger.info({ rawOutput: output.slice(0, 2000) }, `Refine raw output from ${preferred}`);
-    savePlanDebugFiles("refine-cli", prompt, output);
+    savePlanDebugFiles("refine-cli", promptWithContext, output);
 
     plan = parsePlanOutput(output);
 
@@ -70,7 +83,7 @@ export async function refinePlan(
       outputTokens: tokenInfo?.outputTokens ?? 0,
       totalTokens: tokenInfo?.totalTokens ?? 0,
       model: tokenInfo?.model || planStageModel || preferred,
-      promptChars: prompt.length,
+      promptChars: promptWithContext.length,
       outputChars: output.length,
       durationMs,
     };

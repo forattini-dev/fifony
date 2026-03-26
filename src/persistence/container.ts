@@ -8,8 +8,10 @@ import type {
 // Persistence adapters
 import { createS3dbIssueRepository } from "./s3db-issue-repository.ts";
 import { createS3dbEventStore } from "./s3db-event-store.ts";
-import { setFsmEventEmitter, setEnqueueFn } from "./plugins/issue-state-machine.ts";
+import { setFsmEventEmitter, setEnqueueFn } from "./plugins/fsm-issue.ts";
 import { enqueue } from "./plugins/queue-workers.ts";
+import { setIssueTransitionExecutor } from "../domains/issues.ts";
+import { executeTransition } from "./plugins/fsm-issue.ts";
 
 // Store
 import { persistState } from "./store.ts";
@@ -44,6 +46,9 @@ export function createContainer(state: RuntimeState): Container {
 
   // Wire enqueue so FSM entry actions can dispatch jobs without circular imports
   setEnqueueFn((issue, job) => enqueue(issue, job));
+
+  // Wire issue transition executor to keep domain orchestration dependency-free
+  setIssueTransitionExecutor((issue, event, context) => executeTransition(issue, event, context));
 
   return container;
 }

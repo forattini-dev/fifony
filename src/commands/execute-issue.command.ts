@@ -2,6 +2,7 @@ import type { IssueEntry } from "../types.ts";
 import type { IIssueRepository, IEventStore } from "../ports/index.ts";
 import { TARGET_ROOT } from "../concerns/constants.ts";
 import { ensureGitRepoReadyForWorktrees } from "../domains/workspace.ts";
+import { assertPlanReadyForExecution } from "../domains/contract-negotiation.ts";
 import { transitionIssueCommand } from "./transition-issue.command.ts";
 
 export type ExecuteIssueInput = {
@@ -21,6 +22,7 @@ export async function executeIssueCommand(
     throw new Error(`Cannot execute issue in state ${issue.state}. Must be in PendingApproval.`);
   }
 
+  assertPlanReadyForExecution(issue, "execute this issue");
   ensureGitRepoReadyForWorktrees(TARGET_ROOT, "execute issues");
 
   await transitionIssueCommand(

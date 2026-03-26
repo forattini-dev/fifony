@@ -1,7 +1,7 @@
 import { renderPrompt } from "../../agents/prompting.js";
 import { buildIntegrationSnippet } from "../../agents/integrations/catalog.js";
 import { getIssue, getIssues, listEvents, WORKSPACE_ROOT } from "../database.js";
-import { apiGet, apiPost } from "../api-client.js";
+import { apiGet } from "../api-client.js";
 import { buildIntegrationGuide, buildIssuePrompt } from "../resources/resource-builder.js";
 
 export async function getPrompt(name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {

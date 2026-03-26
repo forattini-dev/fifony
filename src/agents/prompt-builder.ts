@@ -3,17 +3,23 @@ import type {
   IssueEntry,
 } from "../types.ts";
 import { renderPrompt } from "./prompting.ts";
+import { buildRecurringFailureContext } from "./review-failure-history.ts";
 
 /** Build retry context from previous failed attempts for injection into prompts. */
 export function buildRetryContext(issue: IssueEntry): string {
   const summaries = issue.previousAttemptSummaries;
-  if (!summaries || summaries.length === 0) return "";
+  const recurringFailureContext = buildRecurringFailureContext(issue);
+  if ((!summaries || summaries.length === 0) && !recurringFailureContext) return "";
 
-  const lines = ["## Previous Attempts\n"];
-  lines.push("The following previous attempts FAILED. Do NOT repeat the same approach. Try a fundamentally different strategy.\n");
+  const lines: string[] = [];
 
-  for (let i = 0; i < summaries.length; i++) {
-    const s = summaries[i];
+  if (summaries && summaries.length > 0) {
+    lines.push("## Previous Attempts\n");
+    lines.push("The following previous attempts FAILED. Do NOT repeat the same approach. Try a fundamentally different strategy.\n");
+  }
+
+  for (let i = 0; i < (summaries?.length ?? 0); i++) {
+    const s = summaries![i];
     const phaseLabel = s.phase === "review" ? "review" : s.phase === "crash" ? "crash" : s.phase === "plan" ? "plan" : "execution";
     lines.push(`### Attempt ${i + 1} — ${phaseLabel} failure (plan v${s.planVersion}, exec #${s.executeAttempt})`);
 
@@ -44,6 +50,25 @@ export function buildRetryContext(issue: IssueEntry): string {
       lines.push(`*Full output saved in: outputs/${s.outputFile}*`);
     }
     lines.push("");
+  }
+
+  // Append grading failures from last review cycle if available
+  if (issue.lastFailedPhase === "review" && issue.gradingReport) {
+    const failedCriteria = issue.gradingReport.criteria.filter((c) =>
+      c.result === "FAIL" && ((issue.gradingReport?.blockingVerdict ?? "FAIL") === "FAIL" ? c.blocking : true),
+    );
+    if (failedCriteria.length > 0) {
+      lines.push("## Previous Review Grade: FAIL\n");
+      lines.push("The automated reviewer graded your last submission and found these specific failures:");
+      for (const c of failedCriteria) {
+        lines.push(`- **${c.id}** [${c.category}] FAILED: ${c.description} — ${c.evidence}`);
+      }
+      lines.push("\nYou MUST address ALL of these before submitting. The reviewer will check each one again.\n");
+    }
+  }
+
+  if (recurringFailureContext) {
+    lines.push(recurringFailureContext);
   }
 
   // Hard limit to ~2000 tokens (~8000 chars)

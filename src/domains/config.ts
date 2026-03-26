@@ -90,6 +90,9 @@ export function deriveConfig(args: string[]): RuntimeConfig {
     autoReviewApproval: true,
     dockerExecution: false,
     dockerImage: "fifony-agent:latest",
+    adaptiveHarnessSelection: toStringValue(env.FIFONY_ADAPTIVE_HARNESS_SELECTION, "true") !== "false",
+    adaptiveReviewRouting: toStringValue(env.FIFONY_ADAPTIVE_REVIEW_ROUTING, "true") !== "false",
+    adaptivePolicyMinSamples: clamp(parseEnvNumber("FIFONY_ADAPTIVE_POLICY_MIN_SAMPLES", 3), 1, 10),
     afterCreateHook: env.FIFONY_AFTER_CREATE_HOOK ?? "",
     beforeRunHook: env.FIFONY_BEFORE_RUN_HOOK ?? "",
     afterRunHook: env.FIFONY_AFTER_RUN_HOOK ?? "",
@@ -115,6 +118,9 @@ export function validateConfig(config: RuntimeConfig): string[] {
   if (config.maxTurns < 1 || config.maxTurns > 16) errors.push(`maxTurns out of range: ${config.maxTurns} (1-16)`);
   if (config.commandTimeoutMs < 1000) errors.push(`commandTimeoutMs too low: ${config.commandTimeoutMs} (min 1000)`);
   if (config.retryDelayMs < 0) errors.push(`retryDelayMs negative: ${config.retryDelayMs}`);
+  if ((config.adaptivePolicyMinSamples ?? 3) < 1 || (config.adaptivePolicyMinSamples ?? 3) > 10) {
+    errors.push(`adaptivePolicyMinSamples out of range: ${config.adaptivePolicyMinSamples} (1-10)`);
+  }
   for (const [stateKey, limit] of Object.entries(config.maxConcurrentByState)) {
     if (limit < 1) errors.push(`maxConcurrentByState[${stateKey}] must be >= 1, got ${limit}`);
   }

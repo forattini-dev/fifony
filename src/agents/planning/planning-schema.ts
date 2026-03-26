@@ -17,14 +17,31 @@ export const STEP_SCHEMA = {
 export const PLAN_JSON_SCHEMA = JSON.stringify({
   type: "object",
   additionalProperties: false,
-  required: ["summary", "steps", "estimatedComplexity", "suggestedPaths", "suggestedEffort"],
+  required: ["summary", "steps", "estimatedComplexity", "harnessMode", "acceptanceCriteria", "executionContract", "suggestedPaths", "suggestedEffort"],
   properties: {
     summary: { type: "string" },
     estimatedComplexity: { type: "string", enum: ["trivial", "low", "medium", "high"] },
+    harnessMode: { type: "string", enum: ["solo", "standard", "contractual"] },
     assumptions: { type: "array", items: { type: "string" } },
     constraints: { type: "array", items: { type: "string" } },
     unknowns: { type: "array", items: { type: "object", additionalProperties: false, properties: { question: { type: "string" }, whyItMatters: { type: "string" }, howToResolve: { type: "string" } }, required: ["question", "whyItMatters", "howToResolve"] } },
-    successCriteria: { type: "array", items: { type: "string" } },
+    acceptanceCriteria: { type: "array", items: { type: "object", additionalProperties: false, required: ["id", "description", "category", "verificationMethod", "evidenceExpected", "blocking", "weight"], properties: {
+      id: { type: "string" },
+      description: { type: "string" },
+      category: { type: "string", enum: ["functionality", "correctness", "regression", "design", "code_quality", "performance", "security", "validation", "integration"] },
+      verificationMethod: { type: "string" },
+      evidenceExpected: { type: "string" },
+      blocking: { type: "boolean" },
+      weight: { type: "number" },
+    } } },
+    executionContract: { type: "object", additionalProperties: false, required: ["summary", "deliverables", "requiredChecks", "requiredEvidence", "focusAreas", "checkpointPolicy"], properties: {
+      summary: { type: "string" },
+      deliverables: { type: "array", items: { type: "string" } },
+      requiredChecks: { type: "array", items: { type: "string" } },
+      requiredEvidence: { type: "array", items: { type: "string" } },
+      focusAreas: { type: "array", items: { type: "string" } },
+      checkpointPolicy: { type: "string", enum: ["final_only", "checkpointed"] },
+    } },
     steps: { type: "array", items: STEP_SCHEMA },
     phases: { type: "array", items: { type: "object", additionalProperties: false, required: ["phaseName", "goal", "tasks"], properties: {
       phaseName: { type: "string" },

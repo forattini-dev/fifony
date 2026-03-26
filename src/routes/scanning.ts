@@ -7,7 +7,7 @@ import { scanProjectFiles } from "../domains/project.ts";
 
 export function registerScanningRoutes(
   app: RouteRegistrar,
-  state: RuntimeState,
+  _state: RuntimeState,
 ): void {
   app.get("/api/scan/project", async (c) => {
     try {

@@ -115,6 +115,25 @@ describe("retry commands", () => {
     assert.match(events[0].message, /Manual retry requested/i);
   });
 
+  it("retryIssueCommand routes failed checkpoints back to execution", async () => {
+    const { retryIssueCommand } = await import("../src/commands/retry-issue.command.ts");
+    const issue = makeIssue({
+      state: "Blocked",
+      attempts: 1,
+      lastError: "Checkpoint review failed",
+      lastFailedPhase: "review",
+      checkpointStatus: "failed",
+    });
+    const { deps, events } = makeDeps();
+
+    await retryIssueCommand({ issue }, deps);
+
+    assert.equal(issue.state, "Queued");
+    assert.equal(issue.attempts, 2);
+    assert.equal(events.length, 1);
+    assert.match(events[0].message, /Execution retry requested/i);
+  });
+
   it("retryIssueCommand reopens approved issues and auto-queues existing plans", async () => {
     const { retryIssueCommand } = await import("../src/commands/retry-issue.command.ts");
     const issue = makeIssue({

@@ -12,6 +12,7 @@ import { now, clamp } from "../concerns/helpers.ts";
 import { addEvent } from "../domains/issues.ts";
 import { persistState } from "../persistence/store.ts";
 import { detectAvailableProviders, discoverModels } from "../agents/providers.ts";
+import { warmEmbeddingProvider } from "../agents/embedding-provider.ts";
 import { resolveProjectMetadata, SETTING_ID_PROJECT_NAME } from "../domains/project.ts";
 import type { RouteRegistrar } from "./http.ts";
 import {
@@ -102,6 +103,34 @@ export function registerSettingsRoutes(
     await persistWorkerConcurrencySetting(state.config.workerConcurrency);
     await persistState(state);
     return c.json({ ok: true, workerConcurrency: state.config.workerConcurrency });
+  });
+
+  app.post("/api/providers/embeddings/warmup", async (c) => {
+    try {
+      const result = await warmEmbeddingProvider();
+      const message = result.kind === "disabled"
+        ? "Embeddings are disabled; skipping local model warmup."
+        : result.kind === "remote"
+        ? `Remote embedding provider ${result.model || "configured"} is active; no local download is required.`
+        : result.source === "migrated-legacy-cache"
+        ? `Local embedding model ${result.model} is ready after migrating the legacy workspace cache to ${result.cacheDir}.`
+        : result.source === "existing-cache"
+        ? `Local embedding model ${result.model} is ready from the shared cache at ${result.cacheDir}.`
+        : `Local embedding model ${result.model} downloaded to ${result.cacheDir}.`;
+
+      state.updatedAt = now();
+      addEvent(state, undefined, "manual", message);
+      await persistState(state);
+
+      return c.json({ ok: true, ...result, message });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn({ err: error }, "[Embeddings] Warmup failed");
+      state.updatedAt = now();
+      addEvent(state, undefined, "manual", `Embedding warmup failed: ${message}`);
+      await persistState(state);
+      return c.json({ ok: false, error: message }, 502);
+    }
   });
 
   app.get("/api/config/workflow", async (c) => {

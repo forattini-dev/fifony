@@ -74,13 +74,28 @@ export const S3DB_DATABASE_PATH = `${STATE_ROOT}/fifony.sqlite`;
 
 export const S3DB_RUNTIME_RESOURCE = "runtime_state";
 export const S3DB_ISSUE_RESOURCE = "issues";
+export const S3DB_MILESTONE_RESOURCE = "milestones";
 export const S3DB_ISSUE_PLAN_RESOURCE = "issue_plans";
 export const S3DB_EVENT_RESOURCE = "events";
 export const S3DB_SETTINGS_RESOURCE = "settings";
 export const S3DB_AGENT_SESSION_RESOURCE = "agent_sessions";
 export const S3DB_AGENT_PIPELINE_RESOURCE = "agent_pipelines";
+export const S3DB_DEV_SERVERS_RESOURCE = "dev_servers";
+export const S3DB_CONTEXT_FRAGMENT_RESOURCE = "context_fragments";
 export const S3DB_RUNTIME_RECORD_ID = "current";
 export const S3DB_RUNTIME_SCHEMA_VERSION = 1;
+export const EMBEDDING_VECTOR_DIMENSIONS = 384;
+export const GLOBAL_FIFONY_ROOT = resolvePersistenceRoot(
+  env.FIFONY_GLOBAL_ROOT
+    ?? join(homedir(), ".fifony"),
+);
+export const LEGACY_WORKSPACE_EMBEDDING_CACHE_DIR = resolveInputPath(
+  join(STATE_ROOT, "models", "embeddings"),
+);
+export const EMBEDDING_LOCAL_CACHE_DIR = resolveInputPath(
+  env.FIFONY_EMBEDDINGS_CACHE_DIR
+    ?? join(GLOBAL_FIFONY_ROOT, "models", "embeddings"),
+);
 
 export const FRONTEND_DIR = `${PACKAGE_ROOT}/app/dist`;
 export const FRONTEND_INDEX = `${FRONTEND_DIR}/index.html`;
@@ -112,6 +127,25 @@ export const TERMINAL_STATES = new Set<IssueState>(["Merged", "Cancelled", "Arch
 export const COMPLETED_STATES = new Set<IssueState>(["Approved", "Merged", "Cancelled", "Archived"]);
 export const EXECUTING_STATES = new Set<IssueState>(["Running", "Reviewing"]);
 export const PERSIST_EVENTS_MAX = 500;
+
+/** Default max automated review→requeue cycles before escalating to human */
+export const DEFAULT_MAX_REVIEW_AUTO_RETRIES = 2;
+
+/** Default max turns per execution phase (fallback when no per-mode default applies) */
+export const DEFAULT_MAX_TURNS = 20;
+
+/** Per-harness-mode defaults for max agent turns per execution phase */
+export const DEFAULT_MAX_TURNS_BY_MODE: Record<string, number> = {
+  solo: 10,
+  standard: 20,
+  contractual: 30,
+};
+
+/** Default number of same-error attempts before triggering auto-replan */
+export const DEFAULT_AUTO_REPLAN_STALL_THRESHOLD = 2;
+
+/** Default number of planner↔reviewer negotiation rounds before failing the contract gate */
+export const DEFAULT_MAX_CONTRACT_NEGOTIATION_ROUNDS = 2;
 
 // ── CLI skip flags ──────────────────────────────────────────────────────────
 const FAST_BOOT = CLI_ARGS.includes("--fast-boot");

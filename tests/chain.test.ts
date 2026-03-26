@@ -66,12 +66,40 @@ function makePlan(overrides: Partial<IssuePlan> = {}): IssuePlan {
   return {
     summary: "Test plan summary",
     estimatedComplexity: "medium",
+    harnessMode: "standard",
     steps: [
       { step: 1, action: "Analyze requirements", files: ["src/index.ts"], ownerType: "agent" },
       { step: 2, action: "Implement changes", files: ["src/core.ts"], ownerType: "agent" },
       { step: 3, action: "Write tests", files: ["tests/core.test.ts"], ownerType: "agent" },
     ],
-    successCriteria: ["All tests pass", "No TypeScript errors"],
+    acceptanceCriteria: [
+      {
+        id: "AC-1",
+        description: "All tests pass",
+        category: "validation",
+        verificationMethod: "run_command",
+        evidenceExpected: "pnpm test exits 0",
+        blocking: true,
+        weight: 3,
+      },
+      {
+        id: "AC-2",
+        description: "No TypeScript errors",
+        category: "validation",
+        verificationMethod: "run_command",
+        evidenceExpected: "pnpm typecheck exits 0",
+        blocking: true,
+        weight: 3,
+      },
+    ],
+    executionContract: {
+      summary: "Implementation is complete and validation passes",
+      deliverables: ["code changes", "tests"],
+      requiredChecks: ["pnpm typecheck", "pnpm test"],
+      requiredEvidence: ["Typecheck passes", "Tests pass"],
+      focusAreas: ["src/index.ts", "src/core.ts"],
+      checkpointPolicy: "final_only",
+    },
     validation: ["pnpm typecheck", "pnpm test"],
     suggestedPaths: ["src/index.ts", "src/core.ts"],
     suggestedSkills: [], suggestedAgents: [],
@@ -107,13 +135,23 @@ describe("claude chain", () => {
       estimatedComplexity: "medium",
       assumptions: ["RS256 keys are managed externally"],
       constraints: ["No breaking API changes"],
-      successCriteria: ["All protected endpoints return 401 for invalid tokens"],
+      acceptanceCriteria: [
+        {
+          id: "AC-1",
+          description: "All protected endpoints return 401 for invalid tokens",
+          category: "security",
+          verificationMethod: "api_probe",
+          evidenceExpected: "Observed 401 response for invalid token on protected endpoint",
+          blocking: true,
+          weight: 3,
+        },
+      ],
       validation: ["pnpm typecheck", "pnpm test"],
     });
 
     assert.ok(plan.summary.length > 0, "has summary");
     assert.equal(plan.steps.length, 3, "has 3 steps");
-    assert.ok(plan.successCriteria?.length, "has success criteria");
+    assert.ok(plan.acceptanceCriteria.length, "has acceptance criteria");
     assert.ok(plan.validation?.length, "has validation commands");
   });
 

@@ -526,7 +526,7 @@ export async function cleanWorkspace(
 
 // ── Workspace diff ──────────────────────────────────────────────────────────
 
-export function inferChangedWorkspacePaths(workspacePath: string, limit = 32, issue?: IssueEntry): string[] {
+export function inferChangedWorkspacePaths(_workspacePath: string, limit = 32, issue?: IssueEntry): string[] {
   if (!issue?.baseBranch || !issue.branchName) return [];
   try {
     const output = execSync(
@@ -684,7 +684,7 @@ export { ensureWorktreeCommitted };
 
 /** Merge a worktree branch into TARGET_ROOT using git merge --no-ff.
  *  When abortOnConflict is false, conflict markers are left in place for agent resolution. */
-function mergeWorktree(issue: IssueEntry, worktreePath: string, abortOnConflict = true): MergeResult {
+function mergeWorktree(issue: IssueEntry, abortOnConflict = true): MergeResult {
   const result: MergeResult = { copied: [], deleted: [], skipped: [], conflicts: [] };
   ensureWorktreeCommitted(issue);
 
@@ -755,7 +755,7 @@ export function shouldSkipMergePath(relativePath: string): boolean {
 export function mergeWorkspace(issue: IssueEntry, abortOnConflict = true): MergeResult {
   ensureGitRepoReadyForWorktrees(TARGET_ROOT, "merge issues");
   assertIssueHasGitWorktree(issue, "merge");
-  return mergeWorktree(issue, issue.worktreePath, abortOnConflict);
+  return mergeWorktree(issue, abortOnConflict);
 }
 
 // ── Dry merge (pre-merge conflict detection) ────────────────────────────────

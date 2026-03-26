@@ -155,10 +155,6 @@ function computeLastHoursStart(hours: number): Date {
   return new Date(Date.now() - hours * 60 * 60 * 1000);
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function makePeriod(input: number, output: number, sessions: number, since: string): UsagePeriod {
   return { inputTokens: input, outputTokens: output, tokensUsed: input + output, sessions, since };
 }
@@ -176,20 +172,6 @@ function parseTimestamp(value: unknown): number {
   if (typeof value !== "string") return 0;
   const timestamp = Date.parse(value);
   return Number.isNaN(timestamp) ? 0 : timestamp;
-}
-
-function parseNumber(value: string | undefined | null): number {
-  if (!value) return 0;
-  const clean = value.replace(/[^\d]/g, "");
-  if (!clean) return 0;
-  const parsed = Number.parseInt(clean, 10);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function keepLargest(current: number | null, incoming: number): number {
-  if (!Number.isFinite(incoming)) return current ?? 0;
-  if (incoming <= 0) return current ?? 0;
-  return current === null ? incoming : Math.max(current, incoming);
 }
 
 // Known weekly token limits per plan (approximate, based on public info)

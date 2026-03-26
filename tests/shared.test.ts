@@ -24,10 +24,30 @@ function makePlan(overrides: Partial<IssuePlan> = {}): IssuePlan {
   return {
     summary: "Implement JWT authentication",
     estimatedComplexity: "medium",
+    harnessMode: "standard",
     steps: [
       { step: 1, action: "Create auth middleware", files: ["src/auth.ts"], ownerType: "agent", doneWhen: "middleware returns 401 for invalid tokens" },
       { step: 2, action: "Add JWT validation", files: ["src/middleware.ts"] },
     ],
+    acceptanceCriteria: [
+      {
+        id: "AC-1",
+        description: "Invalid tokens return 401 on protected endpoints",
+        category: "security",
+        verificationMethod: "api_probe",
+        evidenceExpected: "Observed 401 response for invalid token",
+        blocking: true,
+        weight: 3,
+      },
+    ],
+    executionContract: {
+      summary: "JWT auth is wired into protected API routes and verified end-to-end",
+      deliverables: ["auth middleware implemented"],
+      requiredChecks: ["pnpm test"],
+      requiredEvidence: ["401 response observed for invalid token"],
+      focusAreas: ["src/auth.ts", "src/middleware.ts"],
+      checkpointPolicy: "final_only",
+    },
     suggestedPaths: ["src/auth.ts", "src/middleware.ts"],
     suggestedSkills: [],
     suggestedAgents: [],
@@ -204,15 +224,28 @@ describe("buildRiskSection", () => {
 // ── buildValidationSection() ──────────────────────────────────────────────────
 
 describe("buildValidationSection", () => {
-  it("returns empty string when nothing to validate", () => {
-    assert.equal(buildValidationSection(makePlan()), "");
+  it("renders execution contract details", () => {
+    const result = buildValidationSection(makePlan());
+    assert.ok(result.includes("## Execution Contract"), "has contract header");
+    assert.ok(result.includes("JWT auth is wired into protected API routes"), "has contract summary");
   });
 
-  it("renders success criteria", () => {
-    const plan = makePlan({ successCriteria: ["All tokens validate correctly"] });
+  it("renders acceptance criteria", () => {
+    const plan = makePlan({
+      acceptanceCriteria: [{
+        id: "AC-2",
+        description: "All tokens validate correctly",
+        category: "correctness",
+        verificationMethod: "api_probe",
+        evidenceExpected: "Observed valid token accepted and invalid token rejected",
+        blocking: true,
+        weight: 3,
+      }],
+    });
     const result = buildValidationSection(plan);
-    assert.ok(result.includes("## Success Criteria"), "has header");
+    assert.ok(result.includes("## Acceptance Criteria"), "has header");
     assert.ok(result.includes("All tokens validate correctly"), "has criterion");
+    assert.ok(result.includes("api_probe"), "has verification method");
   });
 
   it("renders validation checks", () => {
@@ -283,13 +316,21 @@ describe("buildFullPlanPrompt", () => {
     const plan = makePlan({
       assumptions: ["Token expiry 1h"],
       risks: [{ risk: "Leak", impact: "high", mitigation: "HTTPS" }],
-      successCriteria: ["Tests pass"],
+      acceptanceCriteria: [{
+        id: "AC-1",
+        description: "Tests pass",
+        category: "validation",
+        verificationMethod: "run_command",
+        evidenceExpected: "pnpm test exits 0",
+        blocking: true,
+        weight: 3,
+      }],
     });
     const result = buildFullPlanPrompt(plan);
     assert.ok(result.includes("## Plan Context"), "has context");
     assert.ok(result.includes("## Execution Steps"), "has steps");
     assert.ok(result.includes("## Risks"), "has risks");
-    assert.ok(result.includes("## Success Criteria"), "has validation");
+    assert.ok(result.includes("## Acceptance Criteria"), "has validation");
   });
 
   it("omits empty sections (no double blank lines for missing sections)", () => {
@@ -454,16 +495,25 @@ describe("buildExecutionPayload", () => {
     assert.deepEqual(payload.plan.phases[0].dependencies, ["nothing"]);
   });
 
-  it("populates constraints, successCriteria, validation", () => {
+  it("populates constraints, acceptanceCriteria, validation, and executionContract", () => {
     const plan = makePlan({
       constraints: ["No breaking changes"],
-      successCriteria: ["Tests pass"],
+      acceptanceCriteria: [{
+        id: "AC-1",
+        description: "Tests pass",
+        category: "validation",
+        verificationMethod: "run_command",
+        evidenceExpected: "pnpm test exits 0",
+        blocking: true,
+        weight: 3,
+      }],
       validation: ["pnpm test"],
     });
     const payload = buildExecutionPayload(makeIssue(), makeProvider(), plan, "/workspace");
     assert.deepEqual(payload.constraints, ["No breaking changes"]);
-    assert.deepEqual(payload.successCriteria, ["Tests pass"]);
+    assert.equal(payload.acceptanceCriteria[0]?.description, "Tests pass");
     assert.deepEqual(payload.validation, ["pnpm test"]);
+    assert.equal(payload.executionContract.summary, "JWT auth is wired into protected API routes and verified end-to-end");
   });
 
   it("sets workspacePath correctly", () => {
