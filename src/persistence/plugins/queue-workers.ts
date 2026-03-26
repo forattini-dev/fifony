@@ -2,7 +2,12 @@ import type { IssueEntry, RuntimeState } from "../../types.ts";
 import { STATE_ROOT, TERMINAL_STATES } from "../../concerns/constants.ts";
 import { logger } from "../../concerns/logger.ts";
 import { syncIssueStateInMemory, syncIssueStateFromFsm } from "../../domains/issue-state.ts";
-import { canDispatchAgent } from "./fsm-agent.ts";
+import {
+  canDispatchManagedAgent,
+  runManagedExecuteJob,
+  runManagedReviewJob,
+  runPlanningJob,
+} from "../../domains/agents.ts";
 import { transitionIssue } from "../../domains/issues.ts";
 
 // ── Job types — phase ordering determines dispatch order ──────────────────
@@ -107,7 +112,7 @@ function releaseSlot(): void {
 // ── Pre-dispatch guard ────────────────────────────────────────────────────
 
 function canDispatch(issue: IssueEntry, job: JobType): boolean {
-  return canDispatchAgent(issue, job, running, runtimeState?.issues ?? []);
+  return canDispatchManagedAgent(issue, job, running, runtimeState?.issues ?? []);
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────
@@ -134,14 +139,12 @@ function sortQueue(): void {
 
 async function dispatchPlan(issue: IssueEntry): Promise<void> {
   logger.info({ issueId: issue.id, identifier: issue.identifier }, "[Queue] Dispatching plan job");
-  const { runPlanPhase } = await import("./fsm-agent.ts");
-  await runPlanPhase(runtimeState!, issue, STATE_ROOT);
+  await runPlanningJob(runtimeState!, issue, STATE_ROOT);
 }
 
 async function dispatchExecute(issue: IssueEntry): Promise<void> {
   logger.info({ issueId: issue.id, identifier: issue.identifier }, "[Queue] Dispatching execute job");
-  const { runExecutePhase } = await import("./fsm-agent.ts");
-  await runExecutePhase(
+  await runManagedExecuteJob(
     runtimeState!,
     issue,
     running,
@@ -153,8 +156,7 @@ async function dispatchExecute(issue: IssueEntry): Promise<void> {
 
 async function dispatchReview(issue: IssueEntry): Promise<void> {
   logger.info({ issueId: issue.id, identifier: issue.identifier }, "[Queue] Dispatching review job");
-  const { runReviewPhase } = await import("./fsm-agent.ts");
-  await runReviewPhase(runtimeState!, issue, running, STATE_ROOT);
+  await runManagedReviewJob(runtimeState!, issue, running, STATE_ROOT);
 }
 
 // ── Stale check (replaces scheduler.ensureNotStale) ───────────────────────

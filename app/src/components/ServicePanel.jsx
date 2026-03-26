@@ -10,7 +10,7 @@ import {
   Server,
 } from "lucide-react";
 import { api } from "../api.js";
-import { useDevServers, useDevServerLog } from "../hooks/useDevServer.js";
+import { useServices, useServiceLog } from "../hooks/useServices.js";
 import { formatDuration } from "../utils.js";
 
 // ── Uptime counter ────────────────────────────────────────────────────────────
@@ -33,7 +33,7 @@ function UptimeCounter({ startedAt, running }) {
 // ── Log viewer ────────────────────────────────────────────────────────────────
 
 function LogViewer({ id, visible }) {
-  const { log, connected } = useDevServerLog(id, visible);
+  const { log, connected } = useServiceLog(id, visible);
   const logRef = useRef(null);
   const [autoScroll, setAutoScroll] = useState(true);
 
@@ -74,33 +74,33 @@ function LogViewer({ id, visible }) {
   );
 }
 
-// ── Single server card ────────────────────────────────────────────────────────
+// ── Single service card ───────────────────────────────────────────────────────
 
-function DevServerCard({ server, onRefresh }) {
+function ServiceCard({ service, onRefresh }) {
   const [busy, setBusy] = useState(false);
   const [showLog, setShowLog] = useState(false);
 
   const handleStart = useCallback(async () => {
     setBusy(true);
     try {
-      await api.post(`/dev-server/${server.id}/start`, {});
+      await api.post(`/services/${service.id}/start`, {});
       await onRefresh();
     } finally {
       setBusy(false);
     }
-  }, [server.id, onRefresh]);
+  }, [service.id, onRefresh]);
 
   const handleStop = useCallback(async () => {
     setBusy(true);
     try {
-      await api.post(`/dev-server/${server.id}/stop`, {});
+      await api.post(`/services/${service.id}/stop`, {});
       await onRefresh();
     } finally {
       setBusy(false);
     }
-  }, [server.id, onRefresh]);
+  }, [service.id, onRefresh]);
 
-  const state = server.state ?? (server.running ? "running" : "stopped");
+  const state = service.state ?? (service.running ? "running" : "stopped");
   const dotColor = {
     running:  "text-success",
     starting: "text-warning",
@@ -126,15 +126,15 @@ function DevServerCard({ server, onRefresh }) {
 
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-2 flex-wrap">
-            <span className="text-sm font-semibold truncate">{server.name}</span>
-            <span className="text-xs opacity-40 font-mono truncate">{server.command}</span>
+            <span className="text-sm font-semibold truncate">{service.name}</span>
+            <span className="text-xs opacity-40 font-mono truncate">{service.command}</span>
           </div>
           <div className="flex items-center gap-3 mt-0.5">
             {stateLabel}
-            {server.pid && <span className="text-xs opacity-30 tabular-nums">PID {server.pid}</span>}
-            <UptimeCounter startedAt={server.startedAt} running={server.running} />
-            {state === "crashed" && (server.crashCount ?? 0) > 0 && (
-              <span className="text-xs text-error/60">{server.crashCount}x</span>
+            {service.pid && <span className="text-xs opacity-30 tabular-nums">PID {service.pid}</span>}
+            <UptimeCounter startedAt={service.startedAt} running={service.running} />
+            {state === "crashed" && (service.crashCount ?? 0) > 0 && (
+              <span className="text-xs text-error/60">{service.crashCount}x</span>
             )}
           </div>
         </div>
@@ -170,49 +170,49 @@ function DevServerCard({ server, onRefresh }) {
         </div>
       </div>
 
-      {showLog && <LogViewer id={server.id} visible={showLog} />}
+      {showLog && <LogViewer id={service.id} visible={showLog} />}
     </div>
   );
 }
 
 // ── Panel ─────────────────────────────────────────────────────────────────────
 
-export default function DevServerPanel() {
-  const { servers, loading, refresh } = useDevServers();
+export default function ServicePanel() {
+  const { services, loading, refresh } = useServices();
 
   const handleStartAll = useCallback(async () => {
     await Promise.all(
-      servers.filter((s) => !s.running).map((s) => api.post(`/dev-server/${s.id}/start`, {})),
+      services.filter((service) => !service.running).map((service) => api.post(`/services/${service.id}/start`, {})),
     );
     await refresh();
-  }, [servers, refresh]);
+  }, [services, refresh]);
 
   const handleStopAll = useCallback(async () => {
     await Promise.all(
-      servers.filter((s) => s.running).map((s) => api.post(`/dev-server/${s.id}/stop`, {})),
+      services.filter((service) => service.running).map((service) => api.post(`/services/${service.id}/stop`, {})),
     );
     await refresh();
-  }, [servers, refresh]);
+  }, [services, refresh]);
 
-  if (loading && servers.length === 0) {
+  if (loading && services.length === 0) {
     return null;
   }
 
-  if (servers.length === 0) {
+  if (services.length === 0) {
     return null;
   }
 
-  const anyRunning = servers.some((s) => s.running);
-  const allRunning = servers.every((s) => s.running);
+  const anyRunning = services.some((service) => service.running);
+  const allRunning = services.every((service) => service.running);
 
   return (
     <div className="mb-4">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <Server className="size-3.5 opacity-40" />
-          <span className="text-xs font-semibold uppercase tracking-widest opacity-50">Dev Servers</span>
+          <span className="text-xs font-semibold uppercase tracking-widest opacity-50">Services</span>
         </div>
-        {servers.length > 1 && (
+        {services.length > 1 && (
           <div className="flex gap-1.5">
             {!allRunning && (
               <button className="btn btn-xs btn-ghost opacity-60 hover:opacity-100" onClick={handleStartAll}>
@@ -229,8 +229,8 @@ export default function DevServerPanel() {
       </div>
 
       <div className="flex flex-col gap-2">
-        {servers.map((server) => (
-          <DevServerCard key={server.id} server={server} onRefresh={refresh} />
+        {services.map((service) => (
+          <ServiceCard key={service.id} service={service} onRefresh={refresh} />
         ))}
       </div>
     </div>

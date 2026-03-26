@@ -36,8 +36,8 @@ import { registerScanningRoutes } from "../../routes/scanning.js";
 import { registerCatalogRoutes } from "../../routes/catalog.js";
 import { registerReferenceRepositoryRoutes } from "../../routes/reference-repositories.js";
 import { registerMiscRoutes } from "../../routes/misc.js";
-import { registerDevServerRoutes } from "../../routes/dev-server.js";
-import { registerMilestoneRoutes } from "../../routes/projects.js";
+import { registerServiceRoutes } from "../../routes/services.js";
+import { registerDevProfileRoutes } from "../../routes/dev-profile.js";
 
 // ── Route collector ──────────────────────────────────────────────────────────
 // Accumulates routes before ApiPlugin construction (ApiPlugin only accepts routes
@@ -58,7 +58,7 @@ class RouteCollector implements RouteRegistrar {
 export async function startApiServer(
   state: RuntimeState,
   port: number,
-  _options?: { tls?: boolean },
+  _options?: { tls?: boolean; devPort?: number },
 ): Promise<void> {
   logger.info({ port }, "[API] Starting API server");
   const stateDb = getStateDb();
@@ -83,7 +83,6 @@ export async function startApiServer(
   for (const item of existingResources || []) {
     if (
       typeof item?.name === "string" &&
-      item.name.startsWith("fifony_") &&
       !nativeResourceNames.has(item.name)
     ) {
       resourceConfigs[item.name] = { enabled: false };
@@ -104,7 +103,16 @@ export async function startApiServer(
     });
   };
 
-  const serveAppShell = () => {
+  const devPort = _options?.devPort;
+
+  const serveAppShell = (path?: string) => {
+    // In dev mode, redirect browser to the Vite HMR server
+    if (devPort) {
+      return new Response(null, {
+        status: 302,
+        headers: { location: `http://localhost:${devPort}${path ?? "/"}` },
+      });
+    }
     if (!existsSync(FRONTEND_INDEX)) {
       return new Response("Not found", { status: 404 });
     }
@@ -120,7 +128,7 @@ export async function startApiServer(
   };
 
   const appShellRoutes = Object.fromEntries(
-    APP_SHELL_ROUTES.map((path) => [`GET ${path}`, () => serveAppShell()]),
+    APP_SHELL_ROUTES.map((path) => [`GET ${path}`, () => serveAppShell(path)]),
   );
 
   // Collect routes from route modules before plugin instantiation
@@ -132,9 +140,9 @@ export async function startApiServer(
   registerScanningRoutes(collector, state);
   registerCatalogRoutes(collector);
   registerReferenceRepositoryRoutes(collector);
-  registerMilestoneRoutes(collector, state);
   registerMiscRoutes(collector, state);
-  registerDevServerRoutes(collector, state);
+  registerServiceRoutes(collector, state);
+  registerDevProfileRoutes(collector);
 
   const apiPlugin = new ApiPlugin({
     port,
@@ -152,7 +160,7 @@ export async function startApiServer(
     }],
     rootRoute: () => new Response(null, {
       status: 302,
-      headers: { location: "/kanban" },
+      headers: { location: devPort ? `http://localhost:${devPort}/` : "/kanban" },
     }),
     static: [{
       driver: "filesystem",

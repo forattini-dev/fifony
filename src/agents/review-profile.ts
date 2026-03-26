@@ -85,7 +85,7 @@ export function deriveReviewProfile(issue: IssueEntry): ReviewProfile {
   }
 
   const integrationScore = scores.find((entry) => entry.name === "integration-safety")!;
-  if (hasPath(paths, /workspace|merge|push|rebase|git|dirty-tracker|dev-server|store\.ts/)) {
+  if (hasPath(paths, /workspace|merge|push|rebase|git|dirty-tracker|services?|store\.ts/)) {
     integrationScore.score += 5;
     integrationScore.rationale.push("Touched integration or git/workspace code where destructive behavior and state drift must be caught.");
   }
@@ -169,7 +169,7 @@ export function deriveReviewProfile(issue: IssueEntry): ReviewProfile {
       failureModes: [
         "Destructive workspace behavior that can delete user work or dirty target branches",
         "Cross-system drift between runtime state, resources, and filesystem artifacts",
-        "Merge/push/dev-server flows that work only in the happy path and break under dirty state",
+        "Merge/push/service-management flows that work only in the happy path and break under dirty state",
       ],
       evidencePriorities: [
         "Verify failure handling, not just success path behavior",

@@ -95,6 +95,9 @@ export function deriveExecutionContract(plan: IssuePlan): ExecutionContract {
     requiredEvidence: Array.isArray(ec.requiredEvidence) ? ec.requiredEvidence.slice() : [],
     focusAreas: Array.isArray(ec.focusAreas) ? ec.focusAreas.slice() : [],
     checkpointPolicy: ec.checkpointPolicy === "checkpointed" ? "checkpointed" : "final_only",
+    blueprintId: ec.blueprintId,
+    delegationPolicy: ec.delegationPolicy,
+    budgetPolicy: ec.budgetPolicy,
   };
 }
 
@@ -125,7 +128,14 @@ export function buildValidationSection(plan: IssuePlan): string {
   parts.push("", "## Execution Contract");
   parts.push(`Summary: ${executionContract.summary}`);
   parts.push(`Checkpoint policy: ${executionContract.checkpointPolicy}`);
+  if (executionContract.blueprintId) parts.push(`Blueprint: ${executionContract.blueprintId}`);
   if (executionContract.focusAreas.length) parts.push(`Focus areas: ${executionContract.focusAreas.join(", ")}`);
+  if (executionContract.delegationPolicy) {
+    parts.push(`Delegation policy: ${executionContract.delegationPolicy.mode} (max fanout ${executionContract.delegationPolicy.maxFanout})`);
+  }
+  if (executionContract.budgetPolicy) {
+    parts.push(`Budget policy: local retries=${executionContract.budgetPolicy.maxLocalRetries}, remote rounds=${executionContract.budgetPolicy.maxRemoteRounds}, wall clock=${executionContract.budgetPolicy.maxWallClockMinutes}m`);
+  }
   if (executionContract.requiredChecks.length) {
     parts.push("Required checks:");
     executionContract.requiredChecks.forEach((check) => parts.push(`- ${check}`));
@@ -427,15 +437,7 @@ export function buildExecutionPayload(
     },
 
     constraints: plan.constraints || [],
-    acceptanceCriteria: acceptanceCriteria.map((criterion) => ({
-      id: criterion.id,
-      description: criterion.description,
-      category: criterion.category,
-      verificationMethod: criterion.verificationMethod,
-      evidenceExpected: criterion.evidenceExpected,
-      blocking: criterion.blocking,
-      weight: criterion.weight,
-    })),
+    acceptanceCriteria,
     validation: plan.validation || [],
     deliverables: plan.deliverables || [],
     executionContract,

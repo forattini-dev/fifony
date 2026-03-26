@@ -1,12 +1,73 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Server, Play, Square, Terminal, Circle, Loader2,
-  Plus, ChevronUp, Trash2, Pencil, Sparkles, Check, X,
+  Plus, ChevronUp, Trash2, Pencil, Sparkles, Check, X, FlaskConical,
 } from "lucide-react";
 import { api } from "../api.js";
-import { useDevServers, useDevServerLog } from "../hooks/useDevServer.js";
+import { useServices, useServiceLog } from "../hooks/useServices.js";
+import {
+  SETTINGS_QUERY_KEY,
+  getSettingValue,
+  getSettingsList,
+  upsertSettingPayload,
+  useRuntimeDoctor,
+  useRuntimeProbe,
+  useRuntimeStatus,
+  useSettings,
+} from "../hooks.js";
 import { formatDuration } from "../utils.js";
+
+const SERVICE_ENV_SETTING_ID = "runtime.serviceEnv";
+const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function envMapToText(env) {
+  if (!env || typeof env !== "object") return "";
+  return Object.entries(env)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}=${value ?? ""}`)
+    .join("\n");
+}
+
+function normalizeEnvMap(env) {
+  const next = {};
+  if (!env || typeof env !== "object") return next;
+  for (const [key, value] of Object.entries(env)) {
+    const trimmedKey = key.trim();
+    if (!trimmedKey || !ENV_KEY_PATTERN.test(trimmedKey)) continue;
+    next[trimmedKey] = value == null ? "" : String(value);
+  }
+  return next;
+}
+
+function parseEnvText(text) {
+  const env = {};
+  const errors = [];
+  const lines = String(text ?? "").split(/\r?\n/);
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const rawLine = lines[index];
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+
+    const eqIndex = rawLine.indexOf("=");
+    if (eqIndex <= 0) {
+      errors.push(`Line ${index + 1}: expected KEY=value`);
+      continue;
+    }
+
+    const key = rawLine.slice(0, eqIndex).trim();
+    const value = rawLine.slice(eqIndex + 1);
+    if (!ENV_KEY_PATTERN.test(key)) {
+      errors.push(`Line ${index + 1}: invalid variable name "${key}"`);
+      continue;
+    }
+    env[key] = value;
+  }
+
+  return { env, errors };
+}
 
 export const Route = createFileRoute("/workspace")({
   component: WorkspacePage,
@@ -86,7 +147,7 @@ function ansiToHtml(text) {
 // ── Log viewer ─────────────────────────────────────────────────────────────────
 
 function LogViewer({ id, running }) {
-  const { log, connected } = useDevServerLog(id, true);
+  const { log, connected } = useServiceLog(id, true);
   const logRef = useRef(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const html = useMemo(() => (log ? ansiToHtml(log) : ""), [log]);
@@ -129,7 +190,7 @@ function LogViewer({ id, running }) {
         onScroll={handleScroll}
         className="overflow-y-auto p-4 text-xs font-mono whitespace-pre-wrap break-all leading-relaxed bg-base-100"
         style={{ minHeight: "12rem", maxHeight: "28rem" }}
-        dangerouslySetInnerHTML={{ __html: html || '<span style="opacity:0.3">No output yet. Start the server to see logs here.</span>' }}
+        dangerouslySetInnerHTML={{ __html: html || '<span style="opacity:0.3">No output yet. Start the service to see logs here.</span>' }}
       />
     </div>
   );
@@ -137,19 +198,34 @@ function LogViewer({ id, running }) {
 
 // ── Inline edit form ───────────────────────────────────────────────────────────
 
-function ServerEditForm({ initial, onSave, onCancel, onDelete, isNew = false, onDetect }) {
+function ServiceEditForm({ initial, onSave, onCancel, onDelete, isNew = false, onDetect }) {
   const [draft, setDraft] = useState({
     name: initial?.name ?? "",
     command: initial?.command ?? "",
     cwd: initial?.cwd ?? "",
+    envText: envMapToText(initial?.env),
     autoStart: initial?.autoStart ?? false,
   });
   const [busy, setBusy] = useState(false);
+  const [envError, setEnvError] = useState("");
 
   const set = (field, val) => setDraft(d => ({ ...d, [field]: val }));
 
   const handleSave = async () => {
-    const trimmed = { ...draft, name: draft.name.trim(), command: draft.command.trim(), cwd: draft.cwd.trim() || undefined };
+    const parsedEnv = parseEnvText(draft.envText);
+    if (parsedEnv.errors.length > 0) {
+      setEnvError(parsedEnv.errors[0]);
+      return;
+    }
+    setEnvError("");
+    const trimmed = {
+      ...draft,
+      name: draft.name.trim(),
+      command: draft.command.trim(),
+      cwd: draft.cwd.trim() || undefined,
+      env: Object.keys(parsedEnv.env).length > 0 ? parsedEnv.env : undefined,
+    };
+    delete trimmed.envText;
     if (!trimmed.name || !trimmed.command) return;
     setBusy(true);
     try { await onSave(trimmed); }
@@ -190,6 +266,16 @@ function ServerEditForm({ initial, onSave, onCancel, onDelete, isNew = false, on
           <span className="text-xs opacity-70">Auto-start</span>
         </label>
       </div>
+      <textarea
+        className="textarea textarea-bordered min-h-28 w-full font-mono text-xs leading-relaxed"
+        placeholder={"Environment variables\nAPI_URL=https://localhost:3000\nFEATURE_FLAG=true"}
+        value={draft.envText}
+        onChange={(e) => set("envText", e.target.value)}
+      />
+      <div className="flex items-center justify-between gap-2 text-xs">
+        <span className="opacity-50">One `KEY=value` per line. Service values override global service env keys.</span>
+        {envError ? <span className="text-error">{envError}</span> : null}
+      </div>
 
       <div className="flex items-center gap-1.5">
         {isNew && (
@@ -219,36 +305,364 @@ function ServerEditForm({ initial, onSave, onCancel, onDelete, isNew = false, on
   );
 }
 
-// ── Server card ────────────────────────────────────────────────────────────────
+function GlobalServiceEnvCard() {
+  const qc = useQueryClient();
+  const settingsQuery = useSettings();
+  const settings = getSettingsList(settingsQuery.data);
+  const persistedEnv = useMemo(
+    () => normalizeEnvMap(getSettingValue(settings, SERVICE_ENV_SETTING_ID, {})),
+    [settings],
+  );
+  const persistedText = useMemo(() => envMapToText(persistedEnv), [persistedEnv]);
+  const [envText, setEnvText] = useState(persistedText);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
 
-function ServerCard({ server, onRefresh, onEdit, onDelete }) {
+  useEffect(() => {
+    setEnvText((current) => current === persistedText ? current : persistedText);
+  }, [persistedText]);
+
+  const handleSave = useCallback(async () => {
+    const parsed = parseEnvText(envText);
+    if (parsed.errors.length > 0) {
+      setMessage(parsed.errors[0]);
+      return;
+    }
+
+    setSaving(true);
+    setMessage("");
+    const setting = {
+      id: SERVICE_ENV_SETTING_ID,
+      scope: "runtime",
+      value: parsed.env,
+      source: "user",
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      qc.setQueryData(SETTINGS_QUERY_KEY, (current) => upsertSettingPayload(current, setting));
+      const response = await api.post(`/settings/${encodeURIComponent(SERVICE_ENV_SETTING_ID)}`, {
+        scope: "runtime",
+        value: parsed.env,
+        source: "user",
+      });
+      if (response?.setting) {
+        qc.setQueryData(SETTINGS_QUERY_KEY, (current) => upsertSettingPayload(current, response.setting));
+      }
+      setMessage("Global service environment updated.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+      qc.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
+    } finally {
+      setSaving(false);
+    }
+  }, [envText, qc]);
+
+  return (
+    <div className="card bg-base-200 border border-base-300">
+      <div className="card-body p-4 gap-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-xs font-medium uppercase tracking-wider opacity-60">Global service environment</div>
+            <p className="mt-1 text-xs opacity-50">Applied to every service at launch time. Per-service env overrides keys with the same name.</p>
+          </div>
+          <button className="btn btn-xs btn-primary gap-1" onClick={handleSave} disabled={saving}>
+            {saving ? <Loader2 className="size-3 animate-spin" /> : <Check className="size-3" />}
+            Save env
+          </button>
+        </div>
+        <textarea
+          className="textarea textarea-bordered min-h-28 w-full font-mono text-xs leading-relaxed"
+          placeholder={"NODE_ENV=development\nAPI_ORIGIN=http://localhost:3000"}
+          value={envText}
+          onChange={(e) => setEnvText(e.target.value)}
+        />
+        <div className="text-xs">
+          {message
+            ? <span className={message.includes("updated") ? "text-success" : "text-error"}>{message}</span>
+            : <span className="opacity-50">Format: one `KEY=value` per line.</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function useDevProfile() {
+  const [profile, setProfile] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [busyAction, setBusyAction] = useState("");
+  const [error, setError] = useState("");
+
+  const refresh = useCallback(async () => {
+    try {
+      const response = await api.get("/dev-profile");
+      setProfile(response?.profile ?? null);
+      setError("");
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    const id = setInterval(refresh, 15000);
+    return () => clearInterval(id);
+  }, [refresh]);
+
+  const runAction = useCallback(async (path) => {
+    setBusyAction(path);
+    try {
+      const response = await api.post(path, {});
+      setProfile(response?.profile ?? null);
+      setError("");
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setBusyAction("");
+    }
+  }, []);
+
+  return {
+    profile,
+    loading,
+    error,
+    busyAction,
+    refresh,
+    bootstrap: () => runAction("/dev-profile/bootstrap"),
+    reset: () => runAction("/dev-profile/reset"),
+  };
+}
+
+function DevProfileCard() {
+  const { profile, loading, error, busyAction, bootstrap, reset } = useDevProfile();
+
+  return (
+    <div className="card bg-base-200 border border-base-300">
+      <div className="card-body p-4 gap-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-xs font-medium uppercase tracking-wider opacity-60">Dev profile</div>
+            <p className="mt-1 text-xs opacity-50">Isolated worktree + separate Fifony state for local harness experimentation.</p>
+          </div>
+          {loading ? <Loader2 className="size-4 animate-spin opacity-40" /> : null}
+        </div>
+
+        {profile ? (
+          <>
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-xl border border-base-300 bg-base-100/70 px-3 py-2.5">
+                <div className="text-[10px] uppercase tracking-wider opacity-45">Bootstrapped</div>
+                <div className="mt-1 text-sm font-medium">{profile.bootstrapped ? "yes" : "no"}</div>
+                <div className="text-xs opacity-50">{profile.worktreeAttached ? "worktree attached" : "worktree missing"}</div>
+              </div>
+              <div className="rounded-xl border border-base-300 bg-base-100/70 px-3 py-2.5">
+                <div className="text-[10px] uppercase tracking-wider opacity-45">Workspace</div>
+                <div className="mt-1 text-sm font-medium">{profile.workspaceExists ? "present" : "missing"}</div>
+                <div className="text-xs opacity-50 break-all">{profile.workspaceRoot}</div>
+              </div>
+              <div className="rounded-xl border border-base-300 bg-base-100/70 px-3 py-2.5">
+                <div className="text-[10px] uppercase tracking-wider opacity-45">State</div>
+                <div className="mt-1 text-sm font-medium">{profile.persistenceExists ? "present" : "empty"}</div>
+                <div className="text-xs opacity-50 break-all">{profile.persistenceRoot}</div>
+              </div>
+              <div className="rounded-xl border border-base-300 bg-base-100/70 px-3 py-2.5">
+                <div className="text-[10px] uppercase tracking-wider opacity-45">Runbooks</div>
+                <div className="mt-1 text-sm font-medium">{profile.bootstrapFiles?.runbooks?.length || 0}</div>
+                <div className="text-xs opacity-50">{profile.trashEntries?.length || 0} reset snapshot(s)</div>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-base-300 bg-base-100/70 px-3 py-2.5">
+              <div className="text-[10px] uppercase tracking-wider opacity-45">Launch command</div>
+              <div className="mt-1 font-mono text-xs break-all opacity-75">{profile.launchCommand}</div>
+            </div>
+          </>
+        ) : (
+          <div className="rounded-xl border border-base-300 bg-base-100/70 px-3 py-2.5 text-xs opacity-50">
+            Dev profile data is not available yet.
+          </div>
+        )}
+
+        {error ? (
+          <div className="rounded-xl border border-error/20 bg-error/5 px-3 py-2.5 text-xs text-error">{error}</div>
+        ) : null}
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <button className="btn btn-xs btn-primary gap-1" onClick={bootstrap} disabled={busyAction !== ""}>
+            {busyAction === "/dev-profile/bootstrap" ? <Loader2 className="size-3 animate-spin" /> : <FlaskConical className="size-3" />}
+            Bootstrap
+          </button>
+          <button className="btn btn-xs btn-ghost text-error gap-1" onClick={reset} disabled={busyAction !== ""}>
+            {busyAction === "/dev-profile/reset" ? <Loader2 className="size-3 animate-spin" /> : <Trash2 className="size-3" />}
+            Reset to trash
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RuntimeHealthCard() {
+  const statusQuery = useRuntimeStatus();
+  const probeQuery = useRuntimeProbe();
+  const doctorQuery = useRuntimeDoctor();
+
+  const snapshot = statusQuery.data?.snapshot ?? null;
+  const probe = probeQuery.data ?? null;
+  const checks = Array.isArray(doctorQuery.data?.checks) ? doctorQuery.data.checks : [];
+  const failingChecks = checks.filter((check) => check.status === "fail").length;
+  const warningChecks = checks.filter((check) => check.status === "warn").length;
+
+  if (statusQuery.isLoading && doctorQuery.isLoading) {
+    return (
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+        {[0, 1].map((index) => (
+          <div key={index} className="card bg-base-200 border border-base-300 animate-pulse">
+            <div className="card-body p-4 gap-3">
+              <div className="h-4 w-40 rounded bg-base-300" />
+              <div className="h-3 w-full rounded bg-base-300" />
+              <div className="h-3 w-3/4 rounded bg-base-300" />
+              <div className="h-20 rounded bg-base-300" />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+      <div className="card bg-base-200 border border-base-300">
+        <div className="card-body p-4 gap-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-xs font-medium uppercase tracking-wider opacity-60">Runtime health</div>
+              <p className="mt-1 text-xs opacity-50">Operational snapshot for provider, agents, services, and memory flushes.</p>
+            </div>
+            <div className={`badge badge-sm ${snapshot?.ok ? "badge-success" : "badge-warning"}`}>
+              {snapshot?.ok ? "healthy" : "attention"}
+            </div>
+          </div>
+
+          {snapshot ? (
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              <div className="rounded-xl border border-base-300 bg-base-100/70 px-3 py-2.5">
+                <div className="text-[10px] uppercase tracking-wider opacity-45">Provider</div>
+                <div className="mt-1 text-sm font-medium">{snapshot.providers.configuredProvider}</div>
+                <div className="text-xs opacity-50">{snapshot.providers.available.filter((provider) => provider.available).length} detected</div>
+              </div>
+              <div className="rounded-xl border border-base-300 bg-base-100/70 px-3 py-2.5">
+                <div className="text-[10px] uppercase tracking-wider opacity-45">Issues</div>
+                <div className="mt-1 text-sm font-medium">{snapshot.issues.running} running · {snapshot.issues.reviewing} reviewing</div>
+                <div className="text-xs opacity-50">{snapshot.issues.total} total issues</div>
+              </div>
+              <div className="rounded-xl border border-base-300 bg-base-100/70 px-3 py-2.5">
+                <div className="text-[10px] uppercase tracking-wider opacity-45">Services</div>
+                <div className="mt-1 text-sm font-medium">{snapshot.services.running}/{snapshot.services.total} running</div>
+                <div className="text-xs opacity-50">{snapshot.services.crashed} crashed · {snapshot.services.starting} starting</div>
+              </div>
+              <div className="rounded-xl border border-base-300 bg-base-100/70 px-3 py-2.5">
+                <div className="text-[10px] uppercase tracking-wider opacity-45">Agents</div>
+                <div className="mt-1 text-sm font-medium">{snapshot.agents.active} active</div>
+                <div className="text-xs opacity-50">{snapshot.agents.crashed} crashed · {snapshot.agents.idle} idle</div>
+              </div>
+              <div className="rounded-xl border border-base-300 bg-base-100/70 px-3 py-2.5">
+                <div className="text-[10px] uppercase tracking-wider opacity-45">Memory</div>
+                <div className="mt-1 text-sm font-medium">{snapshot.memory.totalFlushes} flushes</div>
+                <div className="text-xs opacity-50">{snapshot.memory.issuesWithFlushes} issue workspaces seeded</div>
+              </div>
+              <div className="rounded-xl border border-base-300 bg-base-100/70 px-3 py-2.5">
+                <div className="text-[10px] uppercase tracking-wider opacity-45">Probe</div>
+                <div className="mt-1 text-sm font-medium">{probe?.ok ? "passing" : "degraded"}</div>
+                <div className="text-xs opacity-50">{failingChecks} fail · {warningChecks} warn</div>
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-warning/20 bg-warning/5 px-3 py-2.5 text-xs text-warning">
+              Runtime health data is not available right now.
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="card bg-base-200 border border-base-300">
+        <div className="card-body p-4 gap-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-xs font-medium uppercase tracking-wider opacity-60">Doctor</div>
+              <p className="mt-1 text-xs opacity-50">Detailed checks for workspace git, providers, services, agents, and memory.</p>
+            </div>
+            {doctorQuery.isFetching ? <Loader2 className="size-3.5 animate-spin opacity-40" /> : null}
+          </div>
+
+          {checks.length > 0 ? (
+            <div className="space-y-2">
+              {checks.map((check) => {
+                const tone = check.status === "fail"
+                  ? "border-error/20 bg-error/5 text-error"
+                  : check.status === "warn"
+                    ? "border-warning/20 bg-warning/5 text-warning"
+                    : "border-success/20 bg-success/5 text-success";
+
+                return (
+                  <div key={check.id} className={`rounded-xl border px-3 py-2.5 ${tone}`}>
+                    <div className="flex items-start gap-2">
+                      <Circle className="mt-1 size-2.5 shrink-0 fill-current" />
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold uppercase tracking-wider">{check.title}</div>
+                        <p className="mt-1 text-xs leading-relaxed text-base-content/70">{check.summary}</p>
+                        {check.suggestedAction ? (
+                          <p className="mt-1 text-[11px] text-base-content/55">Action: {check.suggestedAction}</p>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-base-300 bg-base-100/70 px-3 py-2.5 text-xs opacity-50">
+              No doctor checks available yet.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Service card ───────────────────────────────────────────────────────────────
+
+function ServiceCard({ service, onRefresh, onEdit, onDelete }) {
   const [busy, setBusy] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   const [editing, setEditing] = useState(false);
 
   const handleStart = useCallback(async () => {
     setBusy(true);
-    try { await api.post(`/dev-server/${server.id}/start`, {}); await onRefresh(); }
+    try { await api.post(`/services/${service.id}/start`, {}); await onRefresh(); }
     finally { setBusy(false); }
-  }, [server.id, onRefresh]);
+  }, [service.id, onRefresh]);
 
   const handleStop = useCallback(async () => {
     setBusy(true);
-    try { await api.post(`/dev-server/${server.id}/stop`, {}); await onRefresh(); }
+    try { await api.post(`/services/${service.id}/stop`, {}); await onRefresh(); }
     finally { setBusy(false); }
-  }, [server.id, onRefresh]);
+  }, [service.id, onRefresh]);
 
   const handleSave = async (updated) => {
-    await onEdit({ ...updated, id: server.id });
+    await onEdit({ ...updated, id: service.id });
     setEditing(false);
   };
 
   const handleDelete = async () => {
-    if (!confirm(`Remove "${server.name}"?`)) return;
-    await onDelete(server.id);
+    if (!confirm(`Remove "${service.name}"?`)) return;
+    await onDelete(service.id);
   };
 
-  const state = server.state ?? (server.running ? "running" : "stopped");
+  const state = service.state ?? (service.running ? "running" : "stopped");
   const dotColor = {
     running:  "text-success fill-success",
     starting: "text-warning fill-warning",
@@ -275,18 +689,18 @@ function ServerCard({ server, onRefresh, onEdit, onDelete }) {
           <Circle className={`size-2.5 shrink-0 ${dotColor}`} />
           <div className="flex-1 min-w-0">
             <div className="flex items-baseline gap-2 flex-wrap">
-              <span className="font-semibold text-sm">{server.name}</span>
-              {server.cwd && <span className="text-xs opacity-30 font-mono">{server.cwd}</span>}
+              <span className="font-semibold text-sm">{service.name}</span>
+              {service.cwd && <span className="text-xs opacity-30 font-mono">{service.cwd}</span>}
             </div>
-            <div className="font-mono text-xs opacity-40 truncate mt-0.5">{server.command}</div>
+            <div className="font-mono text-xs opacity-40 truncate mt-0.5">{service.command}</div>
           </div>
           <div className="flex items-center gap-1 shrink-0">
             <div className="flex items-center gap-2 text-xs mr-1">
               {stateLabel}
-              {server.pid && <span className="opacity-30 tabular-nums">PID {server.pid}</span>}
-              <UptimeCounter startedAt={server.startedAt} running={server.running} />
-              {state === "crashed" && server.crashCount > 0 && (
-                <span className="text-error/60 tabular-nums">{server.crashCount}×</span>
+              {service.pid && <span className="opacity-30 tabular-nums">PID {service.pid}</span>}
+              <UptimeCounter startedAt={service.startedAt} running={service.running} />
+              {state === "crashed" && service.crashCount > 0 && (
+                <span className="text-error/60 tabular-nums">{service.crashCount}×</span>
               )}
             </div>
             {canStop ? (
@@ -316,23 +730,29 @@ function ServerCard({ server, onRefresh, onEdit, onDelete }) {
         </div>
 
         {editing && (
-          <ServerEditForm
-            initial={{ name: server.name, command: server.command, cwd: server.cwd || "", autoStart: !!server.autoStart }}
+          <ServiceEditForm
+            initial={{
+              name: service.name,
+              command: service.command,
+              cwd: service.cwd || "",
+              env: service.env,
+              autoStart: !!service.autoStart,
+            }}
             onSave={handleSave}
             onCancel={() => setEditing(false)}
             onDelete={handleDelete}
           />
         )}
 
-        {logOpen && <LogViewer id={server.id} running={server.running} />}
+        {logOpen && <LogViewer id={service.id} running={service.running} />}
       </div>
     </div>
   );
 }
 
-// ── New server card ────────────────────────────────────────────────────────────
+// ── New service card ───────────────────────────────────────────────────────────
 
-function AddServerCard({ onAdd, onCancel }) {
+function AddServiceCard({ onAdd, onCancel }) {
   const [detecting, setDetecting] = useState(false);
   const [suggestions, setSuggestions] = useState([]);
 
@@ -340,7 +760,7 @@ function AddServerCard({ onAdd, onCancel }) {
     setDetecting(true);
     setSuggestions([]);
     try {
-      const res = await api.get("/dev-server/detect");
+      const res = await api.get("/services/detect");
       setSuggestions(res?.suggestions || []);
     } finally {
       setDetecting(false);
@@ -364,7 +784,7 @@ function AddServerCard({ onAdd, onCancel }) {
       <div className="card-body p-4 gap-0">
         <div className="flex items-center gap-2 mb-1">
           <Plus className="size-3.5 opacity-40" />
-          <span className="text-xs font-medium opacity-60 uppercase tracking-wider">New server</span>
+          <span className="text-xs font-medium opacity-60 uppercase tracking-wider">New service</span>
         </div>
 
         {suggestions.length > 0 && (
@@ -384,7 +804,7 @@ function AddServerCard({ onAdd, onCancel }) {
           </div>
         )}
 
-        <ServerEditForm
+        <ServiceEditForm
           isNew
           onSave={handleSave}
           onCancel={onCancel}
@@ -398,37 +818,37 @@ function AddServerCard({ onAdd, onCancel }) {
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 function WorkspacePage() {
-  const { servers, loading, refresh } = useDevServers();
+  const { services, loading, refresh } = useServices();
   const [addingNew, setAddingNew] = useState(false);
 
   const handleStartAll = useCallback(async () => {
-    await Promise.all(servers.filter(s => !s.running).map(s => api.post(`/dev-server/${s.id}/start`, {})));
+    await Promise.all(services.filter((service) => !service.running).map((service) => api.post(`/services/${service.id}/start`, {})));
     await refresh();
-  }, [servers, refresh]);
+  }, [services, refresh]);
 
   const handleStopAll = useCallback(async () => {
-    await Promise.all(servers.filter(s => s.running).map(s => api.post(`/dev-server/${s.id}/stop`, {})));
+    await Promise.all(services.filter((service) => service.running).map((service) => api.post(`/services/${service.id}/stop`, {})));
     await refresh();
-  }, [servers, refresh]);
+  }, [services, refresh]);
 
   const handleEdit = useCallback(async (entry) => {
-    await api.put(`/dev-server/${entry.id}`, entry);
+    await api.put(`/services/${entry.id}`, entry);
     await refresh();
   }, [refresh]);
 
   const handleDelete = useCallback(async (id) => {
-    await api.delete(`/dev-server/${id}`);
+    await api.delete(`/services/${id}`);
     await refresh();
   }, [refresh]);
 
   const handleAdd = useCallback(async (entry) => {
-    await api.put(`/dev-server/${entry.id}`, entry);
+    await api.put(`/services/${entry.id}`, entry);
     await refresh();
     setAddingNew(false);
   }, [refresh]);
 
-  const anyRunning = servers.some(s => s.running);
-  const allRunning = servers.length > 0 && servers.every(s => s.running);
+  const anyRunning = services.some((service) => service.running);
+  const allRunning = services.length > 0 && services.every((service) => service.running);
 
   return (
     <div className="flex-1 flex flex-col min-h-0 px-4 pb-4 gap-4">
@@ -439,7 +859,7 @@ function WorkspacePage() {
           <h1 className="text-sm font-semibold opacity-70 uppercase tracking-widest">Workspace</h1>
         </div>
         <div className="flex items-center gap-1.5">
-          {servers.length > 0 && !allRunning && (
+          {services.length > 0 && !allRunning && (
             <button className="btn btn-xs btn-ghost opacity-60 hover:opacity-100" onClick={handleStartAll}>
               Start all
             </button>
@@ -451,7 +871,7 @@ function WorkspacePage() {
           )}
           {!addingNew && (
             <button className="btn btn-xs btn-ghost opacity-60 hover:opacity-100 gap-1" onClick={() => setAddingNew(true)}>
-              <Plus className="size-3" />Add server
+              <Plus className="size-3" />Add service
             </button>
           )}
         </div>
@@ -481,36 +901,40 @@ function WorkspacePage() {
         </div>
       )}
 
+      <GlobalServiceEnvCard />
+      <DevProfileCard />
+      <RuntimeHealthCard />
+
       {/* Empty state */}
-      {!loading && servers.length === 0 && !addingNew && (
+      {!loading && services.length === 0 && !addingNew && (
         <div className="flex-1 flex flex-col items-center justify-center gap-4">
           <Server className="size-10 opacity-10" />
           <div className="text-center">
-            <p className="text-sm font-medium opacity-70">No dev servers configured</p>
+            <p className="text-sm font-medium opacity-70">No services configured</p>
             <p className="text-xs opacity-40 mt-1">Add your project's start commands to launch and monitor them here.</p>
           </div>
           <div className="flex items-center gap-2">
             <button className="btn btn-sm btn-primary gap-2" onClick={() => setAddingNew(true)}>
-              <Plus className="size-4" />Add server
+              <Plus className="size-4" />Add service
             </button>
           </div>
         </div>
       )}
 
-      {/* Server list */}
-      {(servers.length > 0 || addingNew) && (
+      {/* Service list */}
+      {(services.length > 0 || addingNew) && (
         <div className="flex flex-col gap-3">
-          {servers.map(server => (
-            <ServerCard
-              key={server.id}
-              server={server}
+          {services.map((service) => (
+            <ServiceCard
+              key={service.id}
+              service={service}
               onRefresh={refresh}
               onEdit={handleEdit}
               onDelete={handleDelete}
             />
           ))}
           {addingNew && (
-            <AddServerCard
+            <AddServiceCard
               onAdd={handleAdd}
               onCancel={() => setAddingNew(false)}
             />

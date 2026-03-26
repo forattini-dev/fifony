@@ -1,8 +1,8 @@
-# FSM Server
+# FSM Service
 
 ## Responsabilidade
 
-O FSM de server em [src/persistence/plugins/fsm-server.ts](/home/cyber/Work/FF/fifony/src/persistence/plugins/fsm-server.ts) modela servidores auxiliares de desenvolvimento.
+O FSM em [src/persistence/plugins/fsm-service.ts](/home/cyber/Work/FF/fifony/src/persistence/plugins/fsm-service.ts) modela services auxiliares do workspace.
 
 Ele deve concentrar:
 
@@ -12,7 +12,7 @@ Ele deve concentrar:
 - grace period de startup
 - kill timeout após `SIGTERM`
 - auto-restart com backoff
-- persistência do pid/state do servidor
+- persistência do pid/state do service
 
 ## O que já está no FSM
 
@@ -33,11 +33,11 @@ Não devem viver aqui:
 
 ## Onde ainda existem outras regras de negócio
 
-- [src/routes/dev-server.ts](/home/cyber/Work/FF/fifony/src/routes/dev-server.ts)
+- [src/routes/services.ts](/home/cyber/Work/FF/fifony/src/routes/services.ts)
   Orquestração HTTP, validação de payload e orquestração de UI; o fluxo de estado real é consumido por
-  [src/domains/dev-server.ts](/home/cyber/Work/FF/fifony/src/domains/dev-server.ts).
+  [src/domains/services.ts](/home/cyber/Work/FF/fifony/src/domains/services.ts).
 
-- [app/src/components/DevServerPanel.jsx](/home/cyber/Work/FF/fifony/app/src/components/DevServerPanel.jsx)
+- [app/src/components/ServicePanel.jsx](/home/cyber/Work/FF/fifony/app/src/components/ServicePanel.jsx)
   Apresentação e UX.
 
 - [src/persistence/plugins/scheduler.ts](/home/cyber/Work/FF/fifony/src/persistence/plugins/scheduler.ts)
@@ -45,17 +45,17 @@ Não devem viver aqui:
 
 ## Contrato da fronteira (nova)
 
-- `src/domains/dev-server.ts` é a fachada de domínio para operações de servidor:
-  - listagem/status (`listDevServerStatuses`, `getDevServerRuntimeStatus`)
-  - comando (`startManagedDevServer`, `stopManagedDevServer`)
-  - reconcile e watcher (`reconcileManagedDevServerStates`, `initManagedDevServerWatcher`)
-  - utilitários de observabilidade (`getManagedDevServerLogPath`, `readDevServerLogTail`)
-- `src/boot.ts` e `src/routes/dev-server.ts` devem preferir essa fachada e não importar diretamente
-  `src/persistence/plugins/fsm-server.ts`.
+- `src/domains/services.ts` é a fachada de domínio para operações de service:
+  - listagem/status (`listServiceStatuses`, `getServiceRuntimeStatus`)
+  - comando (`startManagedService`, `stopManagedService`)
+  - reconcile e watcher (`reconcileManagedServiceStates`, `initManagedServiceWatcher`)
+  - utilitários de observabilidade (`getManagedServiceLogPath`, `readServiceLogTail`)
+- `src/boot.ts` e `src/routes/services.ts` devem preferir essa fachada e não importar diretamente
+  `src/persistence/plugins/fsm-service.ts`.
 
 ## Regra prática
 
-Uma regra deve ir para o FSM de server quando responde a qualquer destas perguntas:
+Uma regra deve ir para este FSM quando responde a qualquer destas perguntas:
 
 - O processo está vivo, a arrancar, parado ou crashado?
 - Quando podemos matar ou reiniciar automaticamente?

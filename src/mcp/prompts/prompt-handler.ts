@@ -225,7 +225,7 @@ export async function getPrompt(name: string, args: Record<string, unknown> = {}
 
     let diffData: Record<string, unknown> = {};
     try {
-      diffData = await apiGet(`/api/diff/${encodeURIComponent(issueId)}`);
+      diffData = await apiGet(`/api/issues/${encodeURIComponent(issueId)}/diff`);
     } catch (error) {
       throw new Error(`Cannot fetch diff for issue ${issueId}. Is the runtime running? ${String(error)}`);
     }

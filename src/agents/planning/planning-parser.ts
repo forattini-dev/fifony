@@ -1,4 +1,4 @@
-import type { IssuePlan } from "../../types.ts";
+import type { IssuePlan, HarnessMode } from "../../types.ts";
 import { now, toStringArray, extractJsonObjects, repairTruncatedJson } from "../../concerns/helpers.ts";
 import { logger } from "../../concerns/logger.ts";
 
@@ -37,7 +37,7 @@ const ACCEPTANCE_CATEGORIES = new Set([
   "integration",
 ]);
 
-const HARNESS_MODES = new Set(["solo", "standard", "contractual"]);
+const HARNESS_MODES = new Set<HarnessMode>(["solo", "standard", "contractual"]);
 
 export function tryBuildPlan(parsed: any): IssuePlan | null {
   if (!parsed || typeof parsed !== "object") return null;
@@ -45,7 +45,7 @@ export function tryBuildPlan(parsed: any): IssuePlan | null {
   if (!Array.isArray(parsed.steps) || parsed.steps.length === 0) return null;
   if (!Array.isArray(parsed.acceptanceCriteria) || parsed.acceptanceCriteria.length === 0) return null;
   if (!parsed.executionContract || typeof parsed.executionContract !== "object") return null;
-  if (!HARNESS_MODES.has(harnessMode)) return null;
+  if (!HARNESS_MODES.has(harnessMode as HarnessMode)) return null;
   if (isPlanPlaceholder(parsed)) {
     logger.warn("[Planner] Rejected plan — model returned template placeholders instead of real content");
     return null;

@@ -36,7 +36,6 @@ export type IssueEntry = {
   title: string;
   description: string;
   state: IssueState;
-  projectId?: string;
   milestoneId?: string;
   branchName?: string;
   baseBranch?: string;
@@ -147,6 +146,14 @@ export type IssueEntry = {
   reviewFailureHistory?: ReviewFailureRecord[];
   /** Audit trail of policy decisions that changed harness behavior */
   policyDecisions?: PolicyDecision[];
+  /** Latest context assembly report per agent role */
+  contextReportsByRole?: Partial<Record<AgentProviderRole, AgentContextAssemblyReport>>;
+  /** Last workspace memory flush performed from structured state */
+  memoryFlushAt?: string;
+  /** Total number of workspace memory flushes for this issue */
+  memoryFlushCount?: number;
+  /** Persisted execution/review blueprint runs for audit and resume */
+  blueprintRuns?: BlueprintRun[];
 };
 
 export type AttemptSummary = {
@@ -173,6 +180,124 @@ export type ValidationResult = {
   output: string;
   command: string;
   ranAt: string;
+};
+
+export type WorkspaceMemoryEntryKind =
+  | "bootstrap"
+  | "review-failure"
+  | "review-pass"
+  | "checkpoint-failure"
+  | "checkpoint-pass"
+  | "contract-negotiation"
+  | "policy-decision"
+  | "validation"
+  | "merge-summary";
+
+export type WorkspaceMemoryEntry = {
+  id: string;
+  kind: WorkspaceMemoryEntryKind;
+  issueId: string;
+  issueIdentifier: string;
+  title: string;
+  summary: string;
+  details?: string[];
+  source: "runtime" | "planning" | "review" | "merge";
+  createdAt: string;
+  planVersion?: number;
+  executeAttempt?: number;
+  reviewAttempt?: number;
+  reviewScope?: ReviewScope;
+  persistLongTerm?: boolean;
+  tags?: string[];
+};
+
+export type MemoryFlushReport = {
+  flushedAt: string;
+  reason: string;
+  changedFiles: string[];
+  entriesWritten: number;
+  promotedEntries: number;
+};
+
+export type ContextLayerName =
+  | "bootstrap"
+  | "workspace-memory"
+  | "issue-memory"
+  | "retrieval";
+
+export type ContextLayerReport = {
+  name: ContextLayerName;
+  hitCount: number;
+  selectedHitCount: number;
+  discardedHitCount: number;
+  notes?: string[];
+};
+
+export type AgentContextAssemblyReport = {
+  role: AgentProviderRole;
+  query: string;
+  generatedAt: string;
+  maxHits: number;
+  totalHits: number;
+  selectedHits: number;
+  discardedHits: number;
+  layers: ContextLayerReport[];
+  memoryFlush?: MemoryFlushReport | null;
+};
+
+export type DoctorCheckStatus = "pass" | "warn" | "fail";
+
+export type DoctorCheckResult = {
+  id: string;
+  title: string;
+  status: DoctorCheckStatus;
+  summary: string;
+  detail?: string;
+  suggestedAction?: string;
+};
+
+export type RuntimeHealthSnapshot = {
+  generatedAt: string;
+  ok: boolean;
+  workspace: {
+    root: string;
+    git: {
+      isGit: boolean;
+      hasCommits: boolean;
+      branch: string | null;
+      isClean?: boolean;
+      untrackedCount?: number;
+    };
+  };
+  providers: {
+    configuredProvider: string;
+    configuredCommand: string;
+    available: DetectedProvider[];
+  };
+  issues: {
+    total: number;
+    planning: number;
+    running: number;
+    reviewing: number;
+    blocked: number;
+    pendingDecision: number;
+  };
+  agents: {
+    active: number;
+    crashed: number;
+    idle: number;
+  };
+  services: {
+    total: number;
+    running: number;
+    starting: number;
+    stopped: number;
+    crashed: number;
+  };
+  memory: {
+    issuesWithFlushes: number;
+    totalFlushes: number;
+  };
 };
 
 export type AcceptanceCriterionCategory =
@@ -203,6 +328,9 @@ export type ExecutionContract = {
   requiredEvidence: string[];
   focusAreas: string[];
   checkpointPolicy: "final_only" | "checkpointed";
+  blueprintId?: string;
+  delegationPolicy?: DelegationPolicy;
+  budgetPolicy?: BudgetPolicy;
 };
 
 export type HarnessMode = "solo" | "standard" | "contractual";
@@ -283,6 +411,7 @@ export type IssuePlan = {
   unknowns?: { question: string; whyItMatters: string; howToResolve: string }[];
   acceptanceCriteria: AcceptanceCriterion[];
   executionContract: ExecutionContract;
+  blueprint?: HarnessBlueprint;
   risks?: IssuePlanRisk[];
   validation?: string[];
   deliverables?: string[];
@@ -301,18 +430,19 @@ export type IssuePlan = {
   createdAt: string;
 };
 
-export type DevServerState =
+export type ServiceState =
   | "stopped"    // no pid file — clean state
   | "starting"   // spawned, grace period not elapsed yet
   | "running"    // alive + grace period elapsed (or health check passed)
   | "stopping"   // SIGTERM sent, awaiting exit
   | "crashed";   // process died unexpectedly
 
-export type DevServerEntry = {
+export type ServiceEntry = {
   id: string;
   name: string;
   command: string;
   cwd?: string;
+  env?: Record<string, string>;
   autoStart?: boolean;
   /** Auto-restart on unexpected crash (default false) */
   autoRestart?: boolean;
@@ -322,12 +452,17 @@ export type DevServerEntry = {
   port?: number;
 };
 
-export type DevServerStatus = {
+export type ServiceStatus = {
   id: string;
   name: string;
   command: string;
   cwd?: string;
-  state: DevServerState;
+  env?: Record<string, string>;
+  autoStart?: boolean;
+  autoRestart?: boolean;
+  maxCrashes?: number;
+  port?: number;
+  state: ServiceState;
   /** Convenience: true when state is "starting" or "running" */
   running: boolean;
   pid: number | null;
@@ -370,7 +505,8 @@ export type RuntimeConfig = {
   beforeRunHook: string;
   afterRunHook: string;
   beforeRemoveHook: string;
-  devServers?: DevServerEntry[];
+  services?: ServiceEntry[];
+  serviceEnv?: Record<string, string>;
   /** Maximum automated review→requeue cycles before escalating to human. Default: 2 */
   maxReviewAutoRetries?: number;
   /** When true, reviewer gets Playwright MCP access for UI verification (requires @playwright/mcp) */
@@ -390,28 +526,25 @@ export type RuntimeConfig = {
 export type ProjectNameSource = "saved" | "detected" | "missing";
 export type MilestoneNameSource = ProjectNameSource;
 
-export type ProjectStatus = "planned" | "active" | "paused" | "done" | "cancelled";
-export type MilestoneStatus = ProjectStatus;
+export type MilestoneStatus = "planned" | "active" | "paused" | "done" | "cancelled";
 
-export type ProjectProgressSummary = {
+export type MilestoneProgressSummary = {
   scopeCount: number;
   completedCount: number;
   progressPercent: number;
 };
-export type MilestoneProgressSummary = ProjectProgressSummary;
 
-export type ProjectEntry = {
+export type MilestoneEntry = {
   id: string;
   slug: string;
   name: string;
   description?: string;
-  status: ProjectStatus;
+  status: MilestoneStatus;
   createdAt: string;
   updatedAt: string;
-  progress: ProjectProgressSummary;
+  progress: MilestoneProgressSummary;
   issueCount: number;
 };
-export type MilestoneEntry = ProjectEntry;
 
 export type RuntimeMetrics = {
   total: number;
@@ -442,13 +575,107 @@ export type RuntimeState = {
   dashboardPort?: string;
   booting?: boolean;
   config: RuntimeConfig;
-  /** @deprecated Use milestones instead */
-  projects?: ProjectEntry[];
   milestones: MilestoneEntry[];
   issues: IssueEntry[];
   events: RuntimeEvent[];
   metrics: RuntimeMetrics;
   notes: string[];
+};
+
+export type BlueprintNodeType =
+  | "deterministic"
+  | "agent"
+  | "review"
+  | "handoff";
+
+export type BlueprintNodeStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "skipped";
+
+export type BlueprintRunStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed";
+
+export type BlueprintNodeExecutionMode =
+  | "serial"
+  | "parallel";
+
+export type DelegationPolicy = {
+  mode: "serial" | "governed" | "aggressive";
+  maxFanout: number;
+  requireExplicitWriteScope: boolean;
+  allowPlanningDelegation: boolean;
+  allowExecutionDelegation: boolean;
+  allowReviewDelegation: boolean;
+};
+
+export type BudgetPolicy = {
+  maxLocalRetries: number;
+  maxRemoteRounds: number;
+  maxDelegationFanout: number;
+  maxWallClockMinutes: number;
+  maxTokenBudgetUsd?: number;
+};
+
+export type BlueprintArtifact = {
+  id: string;
+  nodeId: string;
+  kind: "brief" | "inputs" | "result" | "evidence" | "resume" | "summary";
+  path: string;
+  createdAt: string;
+};
+
+export type BlueprintNode = {
+  id: string;
+  label: string;
+  type: BlueprintNodeType;
+  mode?: BlueprintNodeExecutionMode;
+  role?: AgentProviderRole;
+  dependsOn?: string[];
+  required?: boolean;
+  fanoutGroup?: string;
+  outputs?: string[];
+};
+
+export type HarnessBlueprint = {
+  id: string;
+  version: number;
+  summary: string;
+  mode: "copilot" | "unattended";
+  checkpointPolicy: "final_only" | "checkpointed";
+  delegationPolicy: DelegationPolicy;
+  budgetPolicy: BudgetPolicy;
+  nodes: BlueprintNode[];
+};
+
+export type BlueprintNodeRun = {
+  nodeId: string;
+  label: string;
+  type: BlueprintNodeType;
+  status: BlueprintNodeStatus;
+  startedAt?: string;
+  completedAt?: string;
+  skippedReason?: string;
+  error?: string;
+  artifacts: BlueprintArtifact[];
+};
+
+export type BlueprintRun = {
+  id: string;
+  blueprintId: string;
+  issueId: string;
+  planVersion: number;
+  executeAttempt: number;
+  status: BlueprintRunStatus;
+  startedAt: string;
+  completedAt?: string;
+  scope: "plan" | "execute" | "review";
+  nodes: BlueprintNodeRun[];
 };
 
 export type RuntimeStateRecord = {
@@ -529,6 +756,7 @@ export type ContractNegotiationRunStatus = "running" | "completed" | "crashed";
 
 export type ReviewRun = {
   id: string;
+  nodeId?: string;
   scope: ReviewScope;
   planVersion: number;
   attempt: number;
@@ -555,6 +783,7 @@ export type ReviewRun = {
 
 export type ContractNegotiationRun = {
   id: string;
+  nodeId?: string;
   planVersion: number;
   attempt: number;
   status: ContractNegotiationRunStatus;
@@ -599,6 +828,7 @@ export type ReviewFailureRecord = {
 
 export type PolicyDecisionKind =
   | "harness-mode"
+  | "checkpoint-policy"
   | "review-recovery";
 
 export type PolicyDecisionScope =
@@ -668,6 +898,7 @@ export type AgentContextHit = {
 
 export type AgentContextPack = {
   role: AgentProviderRole;
+  consumerNodeType?: BlueprintNodeType;
   query: string;
   generatedAt: string;
   hits: AgentContextHit[];
@@ -675,6 +906,7 @@ export type AgentContextPack = {
   semanticHitCount: number;
   memoryHitCount: number;
   explicitHitCount: number;
+  report?: AgentContextAssemblyReport;
 };
 
 export type AgentTraceStepType =
@@ -725,6 +957,7 @@ export type AgentSessionResult = {
   code: number | null;
   output: string;
   turns: number;
+  artifacts?: BlueprintArtifact[];
 };
 
 export type AgentSessionTurn = {
@@ -807,6 +1040,27 @@ export type RuntimeSettingRecord = {
   value: unknown;
   source: RuntimeSettingSource;
   updatedAt: string;
+};
+
+export type RuntimeExecutionRequest = {
+  issue: Pick<IssueEntry, "id" | "identifier" | "title" | "description" | "planVersion" | "executeAttempt">;
+  blueprint: HarnessBlueprint;
+  node: BlueprintNode;
+  workspacePath: string;
+  provider: AgentProviderDefinition;
+  prompt: string;
+  promptFile: string;
+  role: AgentProviderRole;
+};
+
+export type RuntimeExecutionResult = {
+  success: boolean;
+  blocked: boolean;
+  continueRequested: boolean;
+  code: number | null;
+  output: string;
+  turns: number;
+  artifacts: BlueprintArtifact[];
 };
 
 

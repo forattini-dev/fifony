@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { deriveMilestoneProgressSummary } from "../src/domains/projects.ts";
+import { deriveMilestoneProgressSummary } from "../src/domains/milestones.ts";
 import { createIssueFromPayload, buildRuntimeState } from "../src/domains/issues.ts";
 import { deriveConfig } from "../src/domains/config.ts";
 

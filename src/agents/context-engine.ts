@@ -16,6 +16,7 @@ import { now } from "../concerns/helpers.ts";
 import { logger } from "../concerns/logger.ts";
 import { getContextFragmentResource, getIssueStateResource } from "../persistence/store.ts";
 import { getEmbeddingProvider } from "./embedding-provider.ts";
+import { getMemoryEngine } from "./memory-engine.ts";
 
 type QueryInputs = {
   role: AgentProviderRole;
@@ -74,8 +75,8 @@ const SKIP_SEGMENTS = new Set([
 
 const STOP_WORDS = new Set([
   "the", "and", "for", "with", "from", "that", "this", "into", "then", "when", "will", "have", "your",
-  "issue", "agent", "plan", "review", "code", "work", "task", "into", "need", "make", "uses", "using",
-  "what", "where", "which", "should", "must", "does", "dont", "cannot", "cannot", "just",
+  "issue", "agent", "plan", "review", "code", "work", "task", "need", "make", "uses", "using",
+  "what", "where", "which", "should", "must", "does", "dont", "cannot", "just",
 ]);
 
 const DEFAULT_DOC_FILES = [
@@ -87,9 +88,7 @@ const DEFAULT_DOC_FILES = [
   "tsconfig.json",
 ];
 
-function buildProjectKey(): string {
-  return createHash("sha1").update(TARGET_ROOT).digest("hex").slice(0, 12);
-}
+const PROJECT_KEY = createHash("sha1").update(TARGET_ROOT).digest("hex").slice(0, 12);
 
 function stableId(prefix: string, value: string): string {
   return `${prefix}-${createHash("sha1").update(value).digest("hex").slice(0, 12)}`;
@@ -444,7 +443,7 @@ async function upsertContextFragments(seeds: FragmentSeed[]): Promise<StoredCont
   if (!resource) return [];
 
   const provider = await getEmbeddingProvider();
-  const projectKey = buildProjectKey();
+  const projectKey = PROJECT_KEY;
   const timestamp = now();
   const fragments = seeds
     .filter((seed) => seed.text.trim())
@@ -526,7 +525,7 @@ async function searchSemantic(query: string, limit: number): Promise<AgentContex
       limit,
       pageSize: 200,
       partition: "byProject",
-      partitionValues: { projectKey: buildProjectKey() },
+      partitionValues: { projectKey: PROJECT_KEY },
     });
 
     const rows = Array.isArray(result?.results) ? result.results : [];
@@ -572,12 +571,25 @@ function renderSnippetSeeds(candidates: LexicalCandidate[]): FragmentSeed[] {
   }));
 }
 
+function renderWorkspaceSeeds(workspaceDocs: Array<{
+  kind: "doc" | "issue-memory";
+  path: string;
+  sourceId: string;
+  text: string;
+}>): FragmentSeed[] {
+  return workspaceDocs.map((document) => ({
+    kind: document.kind === "doc" ? "doc" : "issue-memory",
+    sourcePath: document.path,
+    sourceId: document.sourceId,
+    text: document.text,
+  }));
+}
+
 function buildExplicitHits(paths: string[], root: string, tokens: string[]): LexicalCandidate[] {
   const hits: LexicalCandidate[] = [];
   for (const pathValue of paths) {
     const relativePath = pathValue.replace(/\\/g, "/");
     const absolutePath = resolve(root, relativePath);
-    if (!existsSync(absolutePath)) continue;
     const text = readTextFileSafe(absolutePath);
     if (!text) continue;
     hits.push({
@@ -646,6 +658,16 @@ export function renderContextPackMarkdown(pack: AgentContextPack): string {
     `Query: ${pack.query}`,
     "",
   ];
+  if (pack.report?.layers?.length) {
+    lines.push("Layers:");
+    for (const layer of pack.report.layers) {
+      lines.push(`- ${layer.name}: ${layer.selectedHitCount}/${layer.hitCount} selected`);
+    }
+    if (pack.report.memoryFlush) {
+      lines.push(`- memory-flush: ${pack.report.memoryFlush.promotedEntries} promoted, ${pack.report.memoryFlush.changedFiles.length} file(s) updated`);
+    }
+    lines.push("");
+  }
   for (const [index, hit] of pack.hits.entries()) {
     lines.push(`${index + 1}. [${hit.source}/${hit.kind}] ${hit.path || hit.sourceId || hit.id}`);
     lines.push(`   Why: ${hit.reason}`);
@@ -694,10 +716,21 @@ export async function buildContextPack(input: QueryInputs): Promise<AgentContext
   const query = buildQueryText(input).trim();
   const tokens = extractTokens(query);
   const root = resolveSearchRoot(input);
+  const workspacePath = input.issue?.workspacePath ?? input.workspacePath;
+  const memoryEngine = getMemoryEngine();
   const issuePaths = [
     ...(input.issue?.paths || []),
     ...(input.issue?.plan?.suggestedPaths || []),
   ].filter((value, index, array) => value && array.indexOf(value) === index);
+
+  const memoryFlush = input.issue && workspacePath
+    ? memoryEngine.flushIssueMemory(input.issue, workspacePath, "context-assembly")
+    : null;
+  const workspaceDocs = workspacePath
+    ? memoryEngine.listContextDocuments(workspacePath)
+    : [];
+  const bootstrapDocs = workspaceDocs.filter((document) => document.layer === "bootstrap");
+  const workspaceMemoryDocs = workspaceDocs.filter((document) => document.layer === "workspace-memory");
 
   const allFiles = listTextFiles(root);
   const lexicalCandidates = searchLexical(tokens, root, issuePaths, allFiles);
@@ -708,7 +741,6 @@ export async function buildContextPack(input: QueryInputs): Promise<AgentContext
   const docSeeds: FragmentSeed[] = [];
   for (const docName of DEFAULT_DOC_FILES) {
     const absolutePath = join(root, docName);
-    if (!existsSync(absolutePath)) continue;
     const content = readTextFileSafe(absolutePath);
     for (const [index, chunk] of chunkText(content, 1200, 160).entries()) {
       docSeeds.push({
@@ -732,6 +764,7 @@ export async function buildContextPack(input: QueryInputs): Promise<AgentContext
 
   const storedFragments = await upsertContextFragments([
     ...docSeeds,
+    ...renderWorkspaceSeeds(workspaceDocs),
     ...renderSnippetSeeds(lexicalCandidates.slice(0, 8)),
     ...currentIssueSeeds,
     ...similarIssues,
@@ -756,42 +789,113 @@ export async function buildContextPack(input: QueryInputs): Promise<AgentContext
     reason: candidate.reason,
     excerpt: candidate.excerpt,
   }));
+  const bootstrapHits: AgentContextHit[] = bootstrapDocs.map((document, index) => ({
+    id: stableId("bootstrap", `${document.sourceId}:${index}`),
+    kind: "doc",
+    source: "explicit",
+    path: document.path,
+    sourceId: document.sourceId,
+    score: 400 - index,
+    reason: "Bootstrap workspace context",
+    excerpt: normalizeExcerpt(document.text, 420),
+  }));
+  const workspaceMemoryHits: AgentContextHit[] = workspaceMemoryDocs.map((document, index) => ({
+    id: stableId("workspace-memory", `${document.sourceId}:${index}`),
+    kind: "issue-memory",
+    source: "memory",
+    path: document.path,
+    sourceId: document.sourceId,
+    score: 280 - index,
+    reason: "Durable workspace memory",
+    excerpt: normalizeExcerpt(document.text, 420),
+  }));
 
   const semanticIds = new Set(semanticHits.map((hit) => hit.sourceId).filter(Boolean));
-  const memoryHitCount = currentIssueMemoryHits.length + semanticHits.filter((hit) => hit.source === "memory").length;
+  const historicalMemoryHits = storedFragments
+    .filter((fragment) => semanticIds.has(fragment.sourceId) && fragment.kind.includes("memory"))
+    .map((fragment) => ({
+      id: stableId("mem", fragment.sourceId),
+      kind: fragment.kind,
+      source: "memory" as const,
+      path: fragment.sourcePath,
+      sourceId: fragment.sourceId,
+      issueId: fragment.issueId,
+      score: 170,
+      reason: "Historical memory relevant to the current issue",
+      excerpt: normalizeExcerpt(fragment.text),
+    }));
+  const memoryHitCount = workspaceMemoryHits.length
+    + currentIssueMemoryHits.length
+    + semanticHits.filter((hit) => hit.source === "memory").length
+    + historicalMemoryHits.length;
   const combined = dedupeHits([
+    ...bootstrapHits,
+    ...workspaceMemoryHits,
     ...lexicalHits,
     ...structuralHits,
     ...semanticHits,
     ...currentIssueMemoryHits,
-    ...storedFragments
-      .filter((fragment) => semanticIds.has(fragment.sourceId) && fragment.kind.includes("memory"))
-      .map((fragment) => ({
-        id: stableId("mem", fragment.sourceId),
-        kind: fragment.kind,
-        source: "memory" as const,
-        path: fragment.sourcePath,
-        sourceId: fragment.sourceId,
-        issueId: fragment.issueId,
-        score: 170,
-        reason: "Historical memory relevant to the current issue",
-        excerpt: normalizeExcerpt(fragment.text),
-      })),
+    ...historicalMemoryHits,
   ]);
 
   const limit = input.role === "planner" ? 6 : 8;
+  const selectedHits = combined.slice(0, limit);
+  const selectedIds = new Set(selectedHits.map((hit) => hit.id));
+  const buildLayerReport = (
+    name: "bootstrap" | "workspace-memory" | "issue-memory" | "retrieval",
+    hits: AgentContextHit[],
+    notes?: string[],
+  ) => ({
+    name,
+    hitCount: hits.length,
+    selectedHitCount: hits.filter((hit) => selectedIds.has(hit.id)).length,
+    discardedHitCount: hits.filter((hit) => !selectedIds.has(hit.id)).length,
+    notes,
+  });
 
   return {
     role: input.role,
     query,
     generatedAt: now(),
-    hits: combined.slice(0, limit),
+    hits: selectedHits,
     lexicalHitCount: lexicalCandidates.length,
     semanticHitCount: semanticHits.length,
     memoryHitCount,
-    explicitHitCount,
+    explicitHitCount: explicitHitCount + bootstrapHits.length,
+    report: {
+      role: input.role,
+      query,
+      generatedAt: now(),
+      maxHits: limit,
+      totalHits: combined.length,
+      selectedHits: selectedHits.length,
+      discardedHits: Math.max(0, combined.length - selectedHits.length),
+      layers: [
+        buildLayerReport("bootstrap", bootstrapHits, bootstrapHits.length > 0 ? ["Canonical workspace docs"] : undefined),
+        buildLayerReport("workspace-memory", workspaceMemoryHits, workspaceMemoryHits.length > 0 ? ["Durable workspace notes and recent daily memory"] : undefined),
+        buildLayerReport("issue-memory", currentIssueMemoryHits, currentIssueMemoryHits.length > 0 ? ["Current issue failures and reviewer evidence"] : undefined),
+        buildLayerReport("retrieval", [...lexicalHits, ...structuralHits, ...semanticHits, ...historicalMemoryHits]),
+      ],
+      memoryFlush,
+    },
   };
 }
+
+export interface ContextEngine {
+  ingest(input: QueryInputs): Promise<void>;
+  assemble(input: QueryInputs): Promise<AgentContextPack>;
+  compact(input: QueryInputs): Promise<AgentContextPack>;
+}
+
+export const DEFAULT_CONTEXT_ENGINE: ContextEngine = {
+  async ingest() {},
+  async assemble(input) {
+    return await buildContextPack(input);
+  },
+  async compact(input) {
+    return await buildContextPack(input);
+  },
+};
 
 export async function buildContextMarkdown(input: QueryInputs): Promise<{ pack: AgentContextPack; markdown: string }> {
   const pack = await buildContextPack(input);

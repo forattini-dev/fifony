@@ -26,7 +26,12 @@ import { now, idToSafePath } from "../../concerns/helpers.ts";
 import { logger } from "../../concerns/logger.ts";
 import { markIssueDirty } from "../dirty-tracker.ts";
 import { getExecutionProviders, getReviewProvider } from "../../agents/providers.ts";
-import { applyHarnessModeToPlan, recommendHarnessModeForIssue } from "../../agents/harness-policy.ts";
+import {
+  applyCheckpointPolicyToPlan,
+  applyHarnessModeToPlan,
+  recommendCheckpointPolicyForIssue,
+  recommendHarnessModeForIssue,
+} from "../../agents/harness-policy.ts";
 import { addEvent, computeMetrics, getNextRetryAt } from "../../domains/issues.ts";
 import { compileReview, buildExecutionAudit, persistExecutionAudit } from "../../agents/adapters/index.ts";
 import { generatePlan } from "../../agents/planning/issue-planner.ts";
@@ -40,6 +45,13 @@ import { getWorkflowConfig, loadRuntimeSettings } from "../settings.ts";
 import { getContainer } from "../container.ts";
 import { transitionIssueCommand } from "../../commands/transition-issue.command.ts";
 import { requestReworkCommand } from "../../commands/request-rework.command.ts";
+import {
+  approveIssueAfterReviewCommand,
+  blockIssueForRetryCommand,
+  cancelIssueFromAgentCommand,
+  sendIssueToManualDecisionCommand,
+  startIssueReviewCommand,
+} from "../../commands/agent-issue-outcomes.command.ts";
 import { extractFailureInsights } from "../../agents/failure-analyzer.ts";
 import { readAgentPid, isProcessAlive } from "../../agents/pid-manager.ts";
 import {
@@ -49,6 +61,18 @@ import {
 import { needsContractNegotiationWork } from "../../domains/contract-negotiation.ts";
 import { runContractNegotiation } from "../../agents/contract-negotiation.ts";
 import { recordPolicyDecision } from "../../domains/policy-decisions.ts";
+import { recordWorkspaceMemoryEvent } from "../../agents/memory-engine.ts";
+import {
+  attachNodeArtifacts,
+  BLUEPRINT_EXECUTION_NODE_IDS,
+  buildBlueprintBrief,
+  buildHarnessBlueprint,
+  finalizeBlueprintRun,
+  startBlueprintRun,
+  updateBlueprintNodeRun,
+  writeBlueprintArtifact,
+  writeBlueprintJsonArtifact,
+} from "../../agents/blueprints.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -440,6 +464,37 @@ export async function runPlanPhase(
       );
     }
 
+    const checkpointRecommendation = state.config.adaptiveHarnessSelection === false
+      ? null
+      : recommendCheckpointPolicyForIssue(
+        state.issues.filter((entry) => entry.id !== issue.id),
+        plannedIssue,
+        plan.executionContract.checkpointPolicy,
+        state.config.adaptivePolicyMinSamples ?? 3,
+      );
+    if (checkpointRecommendation && checkpointRecommendation.checkpointPolicy !== plan.executionContract.checkpointPolicy) {
+      const previousCheckpointPolicy = plan.executionContract.checkpointPolicy;
+      applyCheckpointPolicyToPlan(plan, checkpointRecommendation.checkpointPolicy);
+      recordPolicyDecision(issue, {
+        id: `policy.plan.v${Math.max((issue.planVersion ?? 0) + 1, 1)}.checkpoint-policy`,
+        kind: "checkpoint-policy",
+        scope: "planning",
+        planVersion: Math.max((issue.planVersion ?? 0) + 1, 1),
+        basis: checkpointRecommendation.basis,
+        from: previousCheckpointPolicy,
+        to: plan.executionContract.checkpointPolicy,
+        rationale: checkpointRecommendation.rationale,
+        recordedAt: now(),
+        profile: checkpointRecommendation.profile.primary,
+      });
+      addEvent(
+        state,
+        issue.id,
+        "info",
+        `Adaptive checkpoint policy changed ${issue.identifier} from ${previousCheckpointPolicy} to ${plan.executionContract.checkpointPolicy}: ${checkpointRecommendation.rationale}`,
+      );
+    }
+
     issue.plan = plan;
     issue.planVersion = Math.max((issue.planVersion ?? 0), 1);
 
@@ -616,7 +671,7 @@ async function finalizeReviewSuccess(
   issue.mergedReason = autoReviewApproval
     ? completionNote
     : `${completionNote} Waiting for manual approval.`;
-  await transitionIssueCommand({ issue, target: "PendingDecision", note: completionNote }, container);
+  await sendIssueToManualDecisionCommand(issue, completionNote, container);
   if (!autoReviewApproval) return;
 
   const validation = await runValidationGate(issue, state.config);
@@ -631,7 +686,7 @@ async function finalizeReviewSuccess(
     addEvent(state, issue.id, "info", `Validation gate passed for ${issue.identifier}.`);
   }
 
-  await transitionIssueCommand({ issue, target: "Approved", note: completionNote }, container);
+  await approveIssueAfterReviewCommand(issue, completionNote, container);
 }
 
 const FRONTEND_EXTS = [".jsx", ".tsx", ".css", ".vue", ".svelte"];
@@ -796,6 +851,39 @@ function buildRecurringBlockingFailureSummary(
   return `${header}\n${details.map((detail) => `- ${detail}`).join("\n")}`;
 }
 
+function recordReviewMemoryEvent(
+  issue: IssueEntry,
+  workspacePath: string,
+  scope: ReviewScope,
+  verdict: "pass" | "fail",
+  summary: string,
+  gradingReport?: GradingReport | null,
+): void {
+  recordWorkspaceMemoryEvent(issue, workspacePath, {
+    id: `${scope}-${verdict}-v${issue.planVersion ?? 1}-a${resolveReviewAttemptNumber(issue, scope)}`,
+    kind: scope === "checkpoint"
+      ? verdict === "pass" ? "checkpoint-pass" : "checkpoint-failure"
+      : verdict === "pass" ? "review-pass" : "review-failure",
+    issueId: issue.id,
+    issueIdentifier: issue.identifier,
+    title: scope === "checkpoint"
+      ? verdict === "pass" ? "Checkpoint review passed" : "Checkpoint review failed"
+      : verdict === "pass" ? "Final review passed" : "Final review failed",
+    summary,
+    details: gradingReport?.criteria
+      ?.filter((criterion) => criterion.result === "FAIL")
+      .slice(0, 4)
+      .map((criterion) => `${criterion.id}: ${criterion.evidence}`),
+    source: "review",
+    createdAt: now(),
+    planVersion: issue.planVersion,
+    reviewAttempt: resolveReviewAttemptNumber(issue, scope),
+    reviewScope: scope,
+    persistLongTerm: verdict === "fail",
+    tags: [scope, verdict],
+  });
+}
+
 function computeDiffSummary(issue: IssueEntry, workspacePath: string): string {
   try {
     if (issue.baseBranch && issue.branchName) {
@@ -825,6 +913,17 @@ async function runScopedReviewEvaluation(
   scope: ReviewScope,
 ): Promise<ReviewEvaluation | null> {
   if (!reviewer) return null;
+  const blueprint = issue.plan ? buildHarnessBlueprint(issue.plan, state.config) : null;
+  const blueprintRun = blueprint ? startBlueprintRun(issue, blueprint, "review") : null;
+  if (issue.plan && blueprint) {
+    issue.plan.blueprint = blueprint;
+    issue.plan.executionContract.blueprintId = blueprint.id;
+    issue.plan.executionContract.delegationPolicy = blueprint.delegationPolicy;
+    issue.plan.executionContract.budgetPolicy = blueprint.budgetPolicy;
+  }
+  const reviewNodeId = scope === "checkpoint"
+    ? BLUEPRINT_EXECUTION_NODE_IDS.checkpointReview
+    : BLUEPRINT_EXECUTION_NODE_IDS.finalReview;
 
   const diffSummary = computeDiffSummary(issue, workspacePath);
   const playwrightConfigPath = (state.config.enablePlaywrightReview && hasFrontendChanges(issue, diffSummary))
@@ -846,6 +945,35 @@ async function runScopedReviewEvaluation(
     reviewRunStartedAt,
   ).id;
   writeFileSync(reviewPromptFile, `${compiled.prompt}\n`, "utf8");
+  if (blueprint && blueprintRun) {
+    updateBlueprintNodeRun(blueprintRun, reviewNodeId, "running");
+    const nodeArtifacts = [
+      writeBlueprintArtifact(
+        workspacePath,
+        blueprintRun.id,
+        reviewNodeId,
+        "brief",
+        buildBlueprintBrief(issue, issue.plan!, blueprint, blueprint.nodes.find((entry) => entry.id === reviewNodeId)!, effectiveReviewer),
+      ),
+      writeBlueprintJsonArtifact(
+        workspacePath,
+        blueprintRun.id,
+        reviewNodeId,
+        "inputs",
+        {
+          scope,
+          reviewer: {
+            provider: effectiveReviewer.provider,
+            model: effectiveReviewer.model,
+            reasoningEffort: effectiveReviewer.reasoningEffort,
+          },
+          diffSummary,
+          playwrightConfigPath,
+        },
+      ),
+    ];
+    attachNodeArtifacts(blueprintRun, reviewNodeId, nodeArtifacts);
+  }
 
   const reviewStartedAt = Date.now();
 
@@ -917,12 +1045,66 @@ async function runScopedReviewEvaluation(
       markIssueDirty(issue.id);
     }
 
+    if (blueprint && blueprintRun) {
+      const reviewArtifacts = [
+        writeBlueprintArtifact(
+          workspacePath,
+          blueprintRun.id,
+          reviewNodeId,
+          "result",
+          reviewResult.output || "",
+        ),
+      ];
+      if (gradingReport) {
+        reviewArtifacts.push(
+          writeBlueprintJsonArtifact(
+            workspacePath,
+            blueprintRun.id,
+            reviewNodeId,
+            "evidence",
+            gradingReport,
+          ),
+        );
+      }
+      attachNodeArtifacts(blueprintRun, reviewNodeId, reviewArtifacts);
+      updateBlueprintNodeRun(
+        blueprintRun,
+        reviewNodeId,
+        reviewResult.success && (!gradingReport || gradingReport.blockingVerdict === "PASS") ? "completed" : "failed",
+        reviewResult.success ? {} : { error: reviewResult.output.slice(-4000) },
+      );
+
+      const handoffNodeId = BLUEPRINT_EXECUTION_NODE_IDS.handoff;
+      updateBlueprintNodeRun(blueprintRun, handoffNodeId, "running");
+      const handoffArtifacts = [
+        writeBlueprintArtifact(
+          workspacePath,
+          blueprintRun.id,
+          handoffNodeId,
+          "resume",
+          `# Review Handoff\n\n${scope} review completed for ${issue.identifier}.\n`,
+        ),
+      ];
+      attachNodeArtifacts(blueprintRun, handoffNodeId, handoffArtifacts);
+      updateBlueprintNodeRun(blueprintRun, handoffNodeId, "completed");
+      finalizeBlueprintRun(
+        blueprintRun,
+        reviewResult.success && (!gradingReport || gradingReport.blockingVerdict === "PASS") ? "completed" : "failed",
+      );
+    }
+
     return {
       reviewer: effectiveReviewer,
       reviewResult,
       gradingReport,
     };
   } catch (error) {
+    if (blueprintRun) {
+      updateBlueprintNodeRun(blueprintRun, reviewNodeId, "failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      finalizeBlueprintRun(blueprintRun, "failed");
+    }
     completeReviewRun(
       issue,
       reviewRunId,
@@ -983,6 +1165,7 @@ async function runCheckpointReviewOnce(
     issue.lastError = recurringFailureSummary ?? failureSummary;
     issue.lastFailedPhase = "review";
     markIssueDirty(issue.id);
+    recordReviewMemoryEvent(issue, workspacePath, "checkpoint", "fail", recurringFailureSummary ?? failureSummary, gradingReport);
 
     if (recurringFailureSummary && (issue.planVersion ?? 1) < 4) {
       recordPolicyDecision(issue, {
@@ -1044,6 +1227,7 @@ async function runCheckpointReviewOnce(
   issue.lastError = undefined;
   issue.lastFailedPhase = undefined;
   markIssueDirty(issue.id);
+  recordReviewMemoryEvent(issue, workspacePath, "checkpoint", "pass", "Checkpoint review cleared the blocking gate.", gradingReport);
   addEvent(state, issue.id, "info", `Checkpoint review passed for ${issue.identifier}.`);
   return "passed";
 }
@@ -1076,7 +1260,7 @@ async function runReviewOnce(
   if (!reviewer) {
     if (harnessMode === "contractual") {
       issue.mergedReason = "Contractual harness requires review evidence; manual review required.";
-      await transitionIssueCommand({ issue, target: "PendingDecision", note: `No reviewer configured; contractual mode requires manual review for ${issue.identifier}.` }, container);
+      await sendIssueToManualDecisionCommand(issue, `No reviewer configured; contractual mode requires manual review for ${issue.identifier}.`, container);
       return;
     }
     await finalizeReviewSuccess(
@@ -1099,7 +1283,7 @@ async function runReviewOnce(
   if (!evaluation) {
     if (harnessMode === "contractual") {
       issue.mergedReason = "Contractual harness requires review evidence; manual review required.";
-      await transitionIssueCommand({ issue, target: "PendingDecision", note: `No reviewer configured; contractual mode requires manual review for ${issue.identifier}.` }, container);
+      await sendIssueToManualDecisionCommand(issue, `No reviewer configured; contractual mode requires manual review for ${issue.identifier}.`, container);
       return;
     }
     await finalizeReviewSuccess(
@@ -1156,6 +1340,7 @@ async function runReviewOnce(
   // Auto-requeue path: structured FAIL verdict within retry budget
   if (gradingReport?.blockingVerdict === "FAIL" && (issue.reviewAttempt ?? 1) <= maxAutoRetries) {
     const failureSummary = buildGradingFailureSummary(gradingReport, "blocking");
+    recordReviewMemoryEvent(issue, workspacePath, "final", "fail", failureSummary, gradingReport);
     addEvent(state, issue.id, "runner", `Review graded FAIL for ${issue.identifier} (attempt ${issue.reviewAttempt}/${maxAutoRetries}). Auto-requeueing.`);
     logger.info({ issueId: issue.id, attempt: issue.reviewAttempt, maxAutoRetries }, "[AgentFSM] FAIL grade — auto-requeueing for rework");
     await requestReworkCommand(
@@ -1167,11 +1352,12 @@ async function runReviewOnce(
 
   // Budget exhausted with FAIL: escalate to human with context
   if (gradingReport?.blockingVerdict === "FAIL") {
+    recordReviewMemoryEvent(issue, workspacePath, "final", "fail", buildGradingFailureSummary(gradingReport, "blocking"), gradingReport);
     addEvent(state, issue.id, "runner", `Review graded FAIL for ${issue.identifier} — auto-retry budget exhausted. Escalating to human.`);
     logger.warn({ issueId: issue.id, maxAutoRetries }, "[AgentFSM] FAIL grade — budget exhausted, escalating to human");
     issue.lastError = buildGradingFailureSummary(gradingReport, "blocking");
     issue.lastFailedPhase = "review";
-    await transitionIssueCommand({ issue, target: "PendingDecision", note: `Reviewer graded FAIL after ${issue.reviewAttempt} attempt(s). Human review required.` }, container);
+    await sendIssueToManualDecisionCommand(issue, `Reviewer graded FAIL after ${issue.reviewAttempt} attempt(s). Human review required.`, container);
     return;
   }
 
@@ -1180,6 +1366,7 @@ async function runReviewOnce(
   }
 
   if (gradingReport?.blockingVerdict === "PASS") {
+    recordReviewMemoryEvent(issue, workspacePath, "final", "pass", `Reviewer cleared the blocking gate for ${issue.identifier}.`, gradingReport);
     await finalizeReviewSuccess(
       state,
       issue,
@@ -1204,10 +1391,10 @@ async function runReviewOnce(
     issue.attempts += 1;
     if (issue.attempts >= issue.maxAttempts) {
       issue.cancelledReason = `Max attempts reached (${issue.attempts}/${issue.maxAttempts}): reviewer failed or blocked.`;
-      await transitionIssueCommand({ issue, target: "Cancelled", note: `Review failed, max attempts reached for ${issue.identifier}.` }, container);
+      await cancelIssueFromAgentCommand(issue, `Review failed, max attempts reached for ${issue.identifier}.`, container);
     } else {
       issue.nextRetryAt = getNextRetryAt(issue, state.config.retryDelayMs);
-      await transitionIssueCommand({ issue, target: "Blocked", note: `Review failed for ${issue.identifier}. Retry at ${issue.nextRetryAt}.` }, container);
+      await blockIssueForRetryCommand(issue, `Review failed for ${issue.identifier}. Retry at ${issue.nextRetryAt}.`, container);
     }
   }
 }
@@ -1290,16 +1477,16 @@ async function runExecuteOnce(
         issue.attempts += 1;
         if (issue.attempts >= issue.maxAttempts) {
           issue.cancelledReason = `Max attempts reached: pre-review gate failed repeatedly.`;
-          await transitionIssueCommand({ issue, target: "Cancelled", note: `Max attempts reached (${issue.attempts}/${issue.maxAttempts}): pre-review gate failed.` }, container);
+          await cancelIssueFromAgentCommand(issue, `Max attempts reached (${issue.attempts}/${issue.maxAttempts}): pre-review gate failed.`, container);
         } else {
           issue.nextRetryAt = getNextRetryAt(issue, state.config.retryDelayMs);
-          await transitionIssueCommand({ issue, target: "Blocked", note: `Pre-review validation gate failed on attempt ${issue.attempts}/${issue.maxAttempts}. Retry scheduled at ${issue.nextRetryAt}.` }, container);
+          await blockIssueForRetryCommand(issue, `Pre-review validation gate failed on attempt ${issue.attempts}/${issue.maxAttempts}. Retry scheduled at ${issue.nextRetryAt}.`, container);
         }
         return;
       }
     }
 
-    await transitionIssueCommand({ issue, target: "Reviewing", note: `Agent execution finished in ${runResult.turns} turn(s) for ${issue.identifier}. Awaiting review.` }, container);
+    await startIssueReviewCommand(issue, `Agent execution finished in ${runResult.turns} turn(s) for ${issue.identifier}. Awaiting review.`, container);
   } else if (runResult.continueRequested) {
     issue.updatedAt = now();
     issue.commandExitCode = runResult.code;
@@ -1339,10 +1526,10 @@ async function runExecuteOnce(
     if (issue.attempts >= issue.maxAttempts) {
       issue.commandExitCode = runResult.code;
       issue.cancelledReason = `Max attempts reached (${issue.attempts}/${issue.maxAttempts}): execution failed repeatedly.`;
-      await transitionIssueCommand({ issue, target: "Cancelled", note: `Max attempts reached (${issue.attempts}/${issue.maxAttempts}).` }, container);
+      await cancelIssueFromAgentCommand(issue, `Max attempts reached (${issue.attempts}/${issue.maxAttempts}).`, container);
     } else {
       issue.nextRetryAt = getNextRetryAt(issue, state.config.retryDelayMs);
-      await transitionIssueCommand({ issue, target: "Blocked", note: `${runResult.blocked ? "Agent requested manual intervention" : "Failure"} on attempt ${issue.attempts}/${issue.maxAttempts}; retry scheduled at ${issue.nextRetryAt}.` }, container);
+      await blockIssueForRetryCommand(issue, `${runResult.blocked ? "Agent requested manual intervention" : "Failure"} on attempt ${issue.attempts}/${issue.maxAttempts}; retry scheduled at ${issue.nextRetryAt}.`, container);
     }
   }
 }
@@ -1398,23 +1585,20 @@ export async function runReviewPhase(
 
     const reviewer = getReviewProvider(state, issue, workflowConfig);
 
-    // Warn if Playwright review is enabled but no dev server is configured
+    // Warn if Playwright review is enabled but no service is configured
     if (state.config.enablePlaywrightReview && hasFrontendChanges(issue, "")) {
-      const devServers = state.config.devServers ?? [];
-      if (devServers.length === 0) {
+      const services = state.config.services ?? [];
+      if (services.length === 0) {
         container.eventStore.addEvent(issue.id, "info",
-          `Playwright review is enabled but no dev servers are configured. ` +
-          `Go to Settings → Dev Servers and add one so the reviewer can navigate to localhost:5173.`);
+          `Playwright review is enabled but no services are configured. ` +
+          `Go to Settings → Services and add one so the reviewer can navigate to localhost:5173.`);
       }
     }
 
     if (requiresCheckpointReview(issue)) {
       issue.lastError = "Contractual checkpoint review must pass before final review can start.";
       issue.lastFailedPhase = "review";
-      await transitionIssueCommand(
-        { issue, target: "Blocked", note: `Checkpoint review missing for ${issue.identifier}. Re-run execution before final review.` },
-        container,
-      );
+      await blockIssueForRetryCommand(issue, `Checkpoint review missing for ${issue.identifier}. Re-run execution before final review.`, container);
       return;
     }
     await runReviewOnce(state, issue, workspacePath, reviewer);
@@ -1425,10 +1609,10 @@ export async function runReviewPhase(
 
     if (issue.attempts >= issue.maxAttempts) {
       issue.cancelledReason = `Max attempts reached (${issue.attempts}/${issue.maxAttempts}): unexpected failure — ${issue.lastError?.slice(0, 120) ?? "unknown error"}.`;
-      await transitionIssueCommand({ issue, target: "Cancelled", note: `Issue failed unexpectedly: ${issue.lastError}` }, container);
+      await cancelIssueFromAgentCommand(issue, `Issue failed unexpectedly: ${issue.lastError}`, container);
     } else {
       issue.nextRetryAt = getNextRetryAt(issue, state.config.retryDelayMs);
-      await transitionIssueCommand({ issue, target: "Blocked", note: `Unexpected failure. Retry scheduled at ${issue.nextRetryAt}.` }, container);
+      await blockIssueForRetryCommand(issue, `Unexpected failure. Retry scheduled at ${issue.nextRetryAt}.`, container);
     }
   } finally {
     const elapsedMs = Date.now() - startTs;
@@ -1541,10 +1725,10 @@ export async function runExecutePhase(
 
     if (target.attempts >= target.maxAttempts) {
       target.cancelledReason = `Max attempts reached (${target.attempts}/${target.maxAttempts}): unexpected failure — ${target.lastError?.slice(0, 120) ?? "unknown error"}.`;
-      await transitionIssueCommand({ issue: target, target: "Cancelled", note: `Issue failed unexpectedly: ${target.lastError}` }, container);
+      await cancelIssueFromAgentCommand(target, `Issue failed unexpectedly: ${target.lastError}`, container);
     } else {
       target.nextRetryAt = getNextRetryAt(target, state.config.retryDelayMs);
-      await transitionIssueCommand({ issue: target, target: "Blocked", note: `Unexpected failure. Retry scheduled at ${target.nextRetryAt}.` }, container);
+      await blockIssueForRetryCommand(target, `Unexpected failure. Retry scheduled at ${target.nextRetryAt}.`, container);
     }
   } finally {
     const finalIssue = getCurrentIssue(issue.id) ?? issue;

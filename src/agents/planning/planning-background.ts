@@ -9,7 +9,12 @@ import { addTokenUsage } from "../directive-parser.ts";
 import { markIssueDirty } from "../../persistence/dirty-tracker.ts";
 import { persistState, savePlanForIssue } from "../../persistence/store.ts";
 import { getWorkflowConfig, loadRuntimeSettings } from "../../persistence/settings.ts";
-import { applyHarnessModeToPlan, recommendHarnessModeForIssue } from "../harness-policy.ts";
+import {
+  applyCheckpointPolicyToPlan,
+  applyHarnessModeToPlan,
+  recommendCheckpointPolicyForIssue,
+  recommendHarnessModeForIssue,
+} from "../harness-policy.ts";
 import { recordPolicyDecision } from "../../domains/policy-decisions.ts";
 import { runContractNegotiation } from "../contract-negotiation.ts";
 import { generatePlan } from "./plan-generator.ts";
@@ -52,29 +57,62 @@ function applyAdaptiveHarnessSelection(state: RuntimeState, issue: IssueEntry, p
       state.config.adaptivePolicyMinSamples ?? 3,
     );
 
-  if (!recommendation || recommendation.mode === plan.harnessMode) return;
+  if (recommendation && recommendation.mode !== plan.harnessMode) {
+    const previousMode = plan.harnessMode;
+    applyHarnessModeToPlan(plan, recommendation.mode);
 
-  const previousMode = plan.harnessMode;
-  applyHarnessModeToPlan(plan, recommendation.mode);
+    recordPolicyDecision(issue, {
+      id: `policy.plan.v${issue.planVersion ?? 1}.harness-mode`,
+      kind: "harness-mode",
+      scope: "planning",
+      planVersion: issue.planVersion ?? 1,
+      basis: recommendation.basis,
+      from: previousMode,
+      to: plan.harnessMode,
+      rationale: recommendation.rationale,
+      recordedAt: now(),
+      profile: recommendation.profile.primary,
+    });
 
+    addEvent(
+      state,
+      issue.id,
+      "info",
+      `Adaptive harness policy changed ${issue.identifier} from ${previousMode} to ${plan.harnessMode}: ${recommendation.rationale}`,
+    );
+  }
+
+  const checkpointRecommendation = state.config.adaptiveHarnessSelection === false
+    ? null
+    : recommendCheckpointPolicyForIssue(
+      state.issues.filter((entry) => entry.id !== issue.id),
+      plannedIssue,
+      plan.executionContract.checkpointPolicy,
+      state.config.adaptivePolicyMinSamples ?? 3,
+    );
+
+  if (!checkpointRecommendation || checkpointRecommendation.checkpointPolicy === plan.executionContract.checkpointPolicy) return;
+
+  const previousCheckpointPolicy = plan.executionContract.checkpointPolicy;
+  applyCheckpointPolicyToPlan(plan, checkpointRecommendation.checkpointPolicy);
   recordPolicyDecision(issue, {
-    id: `policy.plan.v${issue.planVersion ?? 1}.harness-mode`,
-    kind: "harness-mode",
+    id: `policy.plan.v${issue.planVersion ?? 1}.checkpoint-policy`,
+    kind: "checkpoint-policy",
     scope: "planning",
     planVersion: issue.planVersion ?? 1,
-    basis: recommendation.basis,
-    from: previousMode,
-    to: plan.harnessMode,
-    rationale: recommendation.rationale,
+    basis: checkpointRecommendation.basis,
+    from: previousCheckpointPolicy,
+    to: plan.executionContract.checkpointPolicy,
+    rationale: checkpointRecommendation.rationale,
     recordedAt: now(),
-    profile: recommendation.profile.primary,
+    profile: checkpointRecommendation.profile.primary,
   });
 
   addEvent(
     state,
     issue.id,
     "info",
-    `Adaptive harness policy changed ${issue.identifier} from ${previousMode} to ${plan.harnessMode}: ${recommendation.rationale}`,
+    `Adaptive checkpoint policy changed ${issue.identifier} from ${previousCheckpointPolicy} to ${plan.executionContract.checkpointPolicy}: ${checkpointRecommendation.rationale}`,
   );
 }
 

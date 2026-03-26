@@ -1,13 +1,10 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useQueryClient } from "@tanstack/react-query";
 import { lazy, Suspense } from "react";
-import { SETTINGS_QUERY_KEY } from "../hooks";
 
 const OnboardingWizard = lazy(() => import("../components/OnboardingWizard"));
 
 function OnboardingPage() {
   const navigate = useNavigate();
-  const qc = useQueryClient();
 
   return (
     <Suspense
@@ -19,7 +16,6 @@ function OnboardingPage() {
     >
       <OnboardingWizard
         onComplete={() => {
-          qc.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
           navigate({ to: "/" });
         }}
       />

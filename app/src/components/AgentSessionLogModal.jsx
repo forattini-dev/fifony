@@ -118,7 +118,7 @@ export function AgentSessionLogModal({ issue, onClose }) {
   const fetchLive = useCallback(async () => {
     if (!issue?.id) return;
     try {
-      const res = await api.get(`/live/${encodeURIComponent(issue.id)}`);
+      const res = await api.get(`/issues/${encodeURIComponent(issue.id)}/live`);
       setLiveTail(res);
     } catch { /* ignore */ }
   }, [issue?.id]);

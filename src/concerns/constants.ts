@@ -69,6 +69,7 @@ export const WORKSPACE_ROOT = `${STATE_ROOT}/workspaces`;
 export const SOURCE_MARKER = `${SOURCE_ROOT}/.fifony-local-source-ready`;
 
 export const ATTACHMENTS_ROOT = `${STATE_ROOT}/attachments`;
+export const BLUEPRINT_ARTIFACTS_DIRNAME = ".fifony-blueprint";
 
 export const S3DB_DATABASE_PATH = `${STATE_ROOT}/fifony.sqlite`;
 
@@ -80,7 +81,7 @@ export const S3DB_EVENT_RESOURCE = "events";
 export const S3DB_SETTINGS_RESOURCE = "settings";
 export const S3DB_AGENT_SESSION_RESOURCE = "agent_sessions";
 export const S3DB_AGENT_PIPELINE_RESOURCE = "agent_pipelines";
-export const S3DB_DEV_SERVERS_RESOURCE = "dev_servers";
+export const S3DB_SERVICES_RESOURCE = "workspace_services";
 export const S3DB_CONTEXT_FRAGMENT_RESOURCE = "context_fragments";
 export const S3DB_RUNTIME_RECORD_ID = "current";
 export const S3DB_RUNTIME_SCHEMA_VERSION = 1;
@@ -146,6 +147,15 @@ export const DEFAULT_AUTO_REPLAN_STALL_THRESHOLD = 2;
 
 /** Default number of planner↔reviewer negotiation rounds before failing the contract gate */
 export const DEFAULT_MAX_CONTRACT_NEGOTIATION_ROUNDS = 2;
+
+/** Default minimum samples before adaptive policy makes routing decisions */
+export const DEFAULT_ADAPTIVE_POLICY_MIN_SAMPLES = 3;
+export const DEFAULT_BLUEPRINT_ID = "fifony.unattended.v1";
+export const DEFAULT_BLUEPRINT_VERSION = 1;
+export const DEFAULT_BLUEPRINT_MAX_LOCAL_RETRIES = 2;
+export const DEFAULT_BLUEPRINT_MAX_REMOTE_ROUNDS = 1;
+export const DEFAULT_BLUEPRINT_MAX_FANOUT = 3;
+export const DEFAULT_BLUEPRINT_MAX_WALL_CLOCK_MINUTES = 120;
 
 // ── CLI skip flags ──────────────────────────────────────────────────────────
 const FAST_BOOT = CLI_ARGS.includes("--fast-boot");

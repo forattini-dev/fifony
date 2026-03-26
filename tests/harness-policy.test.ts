@@ -2,11 +2,12 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   buildReviewRouteKey,
+  recommendCheckpointPolicyForIssue,
   recommendHarnessModeForIssue,
   recommendReviewRouteForIssue,
   serializeReviewRouteSnapshot,
 } from "../src/agents/harness-policy.ts";
-import type { AgentProviderDefinition, IssueEntry, IssuePlan, ReviewRun } from "../src/types.ts";
+import type { AgentProviderDefinition, ContractNegotiationRun, IssueEntry, IssuePlan, ReviewRun } from "../src/types.ts";
 
 function makePlan(overrides: Partial<IssuePlan> = {}): IssuePlan {
   return {
@@ -84,6 +85,47 @@ function makeReviewRun(overrides: Partial<ReviewRun> = {}): ReviewRun {
   };
 }
 
+function makeContractNegotiationRun(overrides: Partial<ContractNegotiationRun> = {}): ContractNegotiationRun {
+  return {
+    id: "contract.v1a1",
+    planVersion: 1,
+    attempt: 1,
+    status: "completed",
+    reviewProfile: {
+      primary: "general-quality",
+      secondary: [],
+      rationale: [],
+      focusAreas: [],
+      failureModes: [],
+      evidencePriorities: [],
+      severityBias: "",
+    },
+    routing: {
+      provider: "claude",
+      model: "opus",
+      reasoningEffort: "medium",
+      overlays: [],
+    },
+    promptFile: "/tmp/contract-prompt.md",
+    startedAt: "2026-03-26T00:00:00.000Z",
+    completedAt: "2026-03-26T00:00:30.000Z",
+    sessionSuccess: true,
+    continueRequested: false,
+    blocked: false,
+    exitCode: 0,
+    turns: 2,
+    decisionStatus: "approved",
+    summary: "Contract approved",
+    rationale: "Ready to execute",
+    concerns: [],
+    concernsCount: 0,
+    blockingConcernsCount: 0,
+    advisoryConcernsCount: 0,
+    appliedRefinement: false,
+    ...overrides,
+  };
+}
+
 function makeIssue(overrides: Partial<IssueEntry> = {}): IssueEntry {
   return {
     id: "issue-1",
@@ -108,18 +150,21 @@ function makeIssue(overrides: Partial<IssueEntry> = {}): IssueEntry {
 }
 
 function makeCompletedIssue(overrides: Partial<IssueEntry> = {}): IssueEntry {
-  const reviewRun = overrides.reviewRuns?.[0] ?? makeReviewRun();
+  const providedReviewRuns = overrides.reviewRuns;
+  const reviewRun = Array.isArray(providedReviewRuns) ? providedReviewRuns[0] : makeReviewRun();
   return makeIssue({
     state: "Merged",
-    reviewProfile: reviewRun.reviewProfile,
-    gradingReport: {
-      scope: "final",
-      overallVerdict: reviewRun.overallVerdict ?? "PASS",
-      blockingVerdict: reviewRun.blockingVerdict ?? "PASS",
-      reviewAttempt: reviewRun.attempt,
-      criteria: [],
-    },
-    reviewRuns: [reviewRun],
+    reviewProfile: reviewRun?.reviewProfile,
+    gradingReport: reviewRun
+      ? {
+        scope: "final",
+        overallVerdict: reviewRun.overallVerdict ?? "PASS",
+        blockingVerdict: reviewRun.blockingVerdict ?? "PASS",
+        reviewAttempt: reviewRun.attempt,
+        criteria: [],
+      }
+      : undefined,
+    reviewRuns: Array.isArray(providedReviewRuns) ? providedReviewRuns : [reviewRun],
     ...overrides,
   });
 }
@@ -193,6 +238,379 @@ describe("recommendHarnessModeForIssue", () => {
     assert.ok(recommendation);
     assert.equal(recommendation?.mode, "contractual");
     assert.equal(recommendation?.basis, "heuristic");
+  });
+
+  it("upgrades to contractual when negotiation history repeatedly finds contract gaps", () => {
+    const currentIssue = makeIssue({
+      title: "Polish onboarding drawer",
+      labels: ["frontend", "ux"],
+      plan: makePlan({
+        estimatedComplexity: "medium",
+        harnessMode: "standard",
+        suggestedPaths: ["app/src/components/OnboardingDrawer.tsx"],
+        acceptanceCriteria: [
+          {
+            id: "AC-1",
+            description: "Drawer feels polished and consistent",
+            category: "design",
+            verificationMethod: "ui_walkthrough",
+            evidenceExpected: "Interaction flow is clear",
+            blocking: true,
+            weight: 3,
+          },
+        ],
+        executionContract: {
+          summary: "Ship a polished onboarding drawer",
+          deliverables: ["working drawer"],
+          requiredChecks: [],
+          requiredEvidence: [],
+          focusAreas: ["app/src/components/OnboardingDrawer.tsx"],
+          checkpointPolicy: "final_only",
+        },
+      }),
+    });
+
+    const uiProfile = { ...makeReviewRun().reviewProfile, primary: "ui-polish" as const };
+    const historicalIssues = [
+      makeCompletedIssue({
+        id: "neg-1",
+        identifier: "#N1",
+        plan: makePlan({
+          harnessMode: "contractual",
+          estimatedComplexity: "medium",
+          suggestedPaths: ["app/src/components/OnboardingDrawer.tsx"],
+          acceptanceCriteria: currentIssue.plan!.acceptanceCriteria,
+        }),
+        contractNegotiationRuns: [
+          makeContractNegotiationRun({
+            reviewProfile: uiProfile,
+            decisionStatus: "revise",
+            summary: "Contract missed responsive states",
+            blockingConcernsCount: 2,
+            concernsCount: 3,
+            appliedRefinement: true,
+          }),
+          makeContractNegotiationRun({
+            id: "contract.v1a2",
+            attempt: 2,
+            reviewProfile: uiProfile,
+            decisionStatus: "approved",
+            summary: "Contract approved after refinement",
+          }),
+        ],
+        reviewRuns: [makeReviewRun({ reviewProfile: uiProfile, blockingVerdict: "PASS" })],
+      }),
+      makeCompletedIssue({
+        id: "neg-2",
+        identifier: "#N2",
+        plan: makePlan({
+          harnessMode: "contractual",
+          estimatedComplexity: "medium",
+          suggestedPaths: ["app/src/components/OnboardingDrawer.tsx"],
+          acceptanceCriteria: currentIssue.plan!.acceptanceCriteria,
+        }),
+        contractNegotiationRuns: [
+          makeContractNegotiationRun({
+            reviewProfile: uiProfile,
+            decisionStatus: "revise",
+            summary: "Contract missed mobile verification",
+            blockingConcernsCount: 1,
+            concernsCount: 2,
+            appliedRefinement: true,
+          }),
+          makeContractNegotiationRun({
+            id: "contract.v1a2",
+            attempt: 2,
+            reviewProfile: uiProfile,
+            decisionStatus: "approved",
+            summary: "Contract approved after refinement",
+          }),
+        ],
+        reviewRuns: [makeReviewRun({ reviewProfile: uiProfile, blockingVerdict: "PASS" })],
+      }),
+      makeCompletedIssue({
+        id: "neg-3",
+        identifier: "#N3",
+        plan: makePlan({
+          harnessMode: "contractual",
+          estimatedComplexity: "medium",
+          suggestedPaths: ["app/src/components/OnboardingDrawer.tsx"],
+          acceptanceCriteria: currentIssue.plan!.acceptanceCriteria,
+        }),
+        contractNegotiationRuns: [
+          makeContractNegotiationRun({
+            reviewProfile: uiProfile,
+            decisionStatus: "revise",
+            summary: "Contract lacked accessibility evidence",
+            blockingConcernsCount: 2,
+            concernsCount: 2,
+            appliedRefinement: true,
+          }),
+          makeContractNegotiationRun({
+            id: "contract.v1a2",
+            attempt: 2,
+            reviewProfile: uiProfile,
+            decisionStatus: "approved",
+            summary: "Contract approved after refinement",
+          }),
+        ],
+        reviewRuns: [makeReviewRun({ reviewProfile: uiProfile, blockingVerdict: "PASS" })],
+      }),
+    ];
+
+    const recommendation = recommendHarnessModeForIssue(historicalIssues, currentIssue, "standard", 3);
+
+    assert.ok(recommendation);
+    assert.equal(recommendation?.mode, "contractual");
+    assert.equal(recommendation?.basis, "historical");
+    assert.match(recommendation?.rationale || "", /contract negotiation found blocking concerns/i);
+  });
+
+  it("downgrades to standard when contractual negotiations are consistently no-op and review parity holds", () => {
+    const currentIssue = makeIssue({
+      title: "Refine internal notes rendering",
+      plan: makePlan({
+        estimatedComplexity: "medium",
+        harnessMode: "contractual",
+        suggestedPaths: ["src/domains/notes.ts"],
+      }),
+    });
+
+    const generalProfile = makeReviewRun().reviewProfile;
+    const historicalIssues = [
+      makeCompletedIssue({
+        id: "ctr-1",
+        identifier: "#C1",
+        plan: makePlan({ harnessMode: "contractual", suggestedPaths: ["src/domains/notes.ts"] }),
+        contractNegotiationRuns: [makeContractNegotiationRun({ reviewProfile: generalProfile })],
+        reviewRuns: [makeReviewRun({ reviewProfile: generalProfile, blockingVerdict: "PASS" })],
+      }),
+      makeCompletedIssue({
+        id: "ctr-2",
+        identifier: "#C2",
+        plan: makePlan({ harnessMode: "contractual", suggestedPaths: ["src/domains/notes.ts"] }),
+        contractNegotiationRuns: [makeContractNegotiationRun({ reviewProfile: generalProfile })],
+        reviewRuns: [makeReviewRun({ reviewProfile: generalProfile, blockingVerdict: "PASS" })],
+      }),
+      makeCompletedIssue({
+        id: "ctr-3",
+        identifier: "#C3",
+        plan: makePlan({ harnessMode: "contractual", suggestedPaths: ["src/domains/notes.ts"] }),
+        contractNegotiationRuns: [makeContractNegotiationRun({ reviewProfile: generalProfile })],
+        reviewRuns: [makeReviewRun({ reviewProfile: generalProfile, blockingVerdict: "PASS" })],
+      }),
+      makeCompletedIssue({
+        id: "std-1",
+        identifier: "#S1",
+        plan: makePlan({ harnessMode: "standard", suggestedPaths: ["src/domains/notes.ts"] }),
+        reviewRuns: [makeReviewRun({ reviewProfile: generalProfile, blockingVerdict: "PASS" })],
+      }),
+      makeCompletedIssue({
+        id: "std-2",
+        identifier: "#S2",
+        plan: makePlan({ harnessMode: "standard", suggestedPaths: ["src/domains/notes.ts"] }),
+        reviewRuns: [makeReviewRun({ reviewProfile: generalProfile, blockingVerdict: "PASS" })],
+      }),
+      makeCompletedIssue({
+        id: "std-3",
+        identifier: "#S3",
+        plan: makePlan({ harnessMode: "standard", suggestedPaths: ["src/domains/notes.ts"] }),
+        reviewRuns: [makeReviewRun({ reviewProfile: generalProfile, blockingVerdict: "PASS" })],
+      }),
+    ];
+
+    const recommendation = recommendHarnessModeForIssue(historicalIssues, currentIssue, "contractual", 3);
+
+    assert.ok(recommendation);
+    assert.equal(recommendation?.mode, "standard");
+    assert.equal(recommendation?.basis, "historical");
+    assert.match(recommendation?.rationale || "", /approved on first pass/i);
+  });
+});
+
+describe("recommendCheckpointPolicyForIssue", () => {
+  it("enables checkpointed review heuristically for high-risk contractual work", () => {
+    const currentIssue = makeIssue({
+      title: "Tighten workflow lifecycle invariants",
+      labels: ["workflow", "fsm"],
+      plan: makePlan({
+        estimatedComplexity: "high",
+        harnessMode: "contractual",
+        suggestedPaths: ["src/persistence/plugins/fsm-agent.ts"],
+        executionContract: {
+          ...makePlan().executionContract,
+          focusAreas: ["src/persistence/plugins/fsm-agent.ts"],
+          checkpointPolicy: "final_only",
+        },
+      }),
+    });
+
+    const recommendation = recommendCheckpointPolicyForIssue([], currentIssue, "final_only", 3);
+
+    assert.ok(recommendation);
+    assert.equal(recommendation?.checkpointPolicy, "checkpointed");
+    assert.equal(recommendation?.basis, "heuristic");
+  });
+
+  it("upgrades to checkpointed when checkpoint history catches issues before final review", () => {
+    const currentIssue = makeIssue({
+      title: "Improve integration safety for sync pipeline",
+      plan: makePlan({
+        estimatedComplexity: "medium",
+        harnessMode: "contractual",
+        suggestedPaths: ["src/domains/workspace.ts"],
+        executionContract: {
+          ...makePlan().executionContract,
+          focusAreas: ["src/domains/workspace.ts"],
+          checkpointPolicy: "final_only",
+        },
+      }),
+    });
+
+    const integrationProfile = { ...makeReviewRun().reviewProfile, primary: "integration-safety" as const };
+    const checkpointedHistory = ["cp-1", "cp-2", "cp-3"].map((id, index) => makeCompletedIssue({
+      id,
+      identifier: `#${id.toUpperCase()}`,
+      plan: makePlan({
+        harnessMode: "contractual",
+        suggestedPaths: ["src/domains/workspace.ts"],
+        executionContract: {
+          ...makePlan().executionContract,
+          focusAreas: ["src/domains/workspace.ts"],
+          checkpointPolicy: "checkpointed",
+        },
+      }),
+      reviewRuns: [
+        makeReviewRun({
+          id: `review.checkpoint.${id}`,
+          scope: "checkpoint",
+          attempt: 1,
+          cycle: 101,
+          reviewProfile: integrationProfile,
+          blockingVerdict: index === 0 ? "FAIL" : "PASS",
+          overallVerdict: index === 0 ? "FAIL" : "PASS",
+        }),
+        makeReviewRun({
+          id: `review.final.${id}`,
+          scope: "final",
+          attempt: 1,
+          cycle: 1,
+          reviewProfile: integrationProfile,
+          blockingVerdict: "PASS",
+        }),
+      ],
+    }));
+    const finalOnlyHistory = ["fo-1", "fo-2", "fo-3"].map((id) => makeCompletedIssue({
+      id,
+      identifier: `#${id.toUpperCase()}`,
+      plan: makePlan({
+        harnessMode: "contractual",
+        suggestedPaths: ["src/domains/workspace.ts"],
+        executionContract: {
+          ...makePlan().executionContract,
+          focusAreas: ["src/domains/workspace.ts"],
+          checkpointPolicy: "final_only",
+        },
+      }),
+      reviewRuns: [makeReviewRun({
+        id: `review.final.${id}`,
+        scope: "final",
+        reviewProfile: integrationProfile,
+        blockingVerdict: "PASS",
+      })],
+    }));
+
+    const recommendation = recommendCheckpointPolicyForIssue(
+      [...checkpointedHistory, ...finalOnlyHistory],
+      currentIssue,
+      "final_only",
+      3,
+    );
+
+    assert.ok(recommendation);
+    assert.equal(recommendation?.checkpointPolicy, "checkpointed");
+    assert.equal(recommendation?.basis, "historical");
+    assert.match(recommendation?.rationale || "", /checkpointed runs caught blocking issues/i);
+  });
+
+  it("downgrades to final_only when checkpoints add little value", () => {
+    const currentIssue = makeIssue({
+      title: "Polish internal notes rendering",
+      plan: makePlan({
+        estimatedComplexity: "medium",
+        harnessMode: "contractual",
+        suggestedPaths: ["src/domains/notes.ts"],
+        executionContract: {
+          ...makePlan().executionContract,
+          focusAreas: ["src/domains/notes.ts"],
+          checkpointPolicy: "checkpointed",
+        },
+      }),
+    });
+
+    const generalProfile = makeReviewRun().reviewProfile;
+    const checkpointedHistory = ["cp-low-1", "cp-low-2", "cp-low-3"].map((id) => makeCompletedIssue({
+      id,
+      identifier: `#${id.toUpperCase()}`,
+      plan: makePlan({
+        harnessMode: "contractual",
+        suggestedPaths: ["src/domains/notes.ts"],
+        executionContract: {
+          ...makePlan().executionContract,
+          focusAreas: ["src/domains/notes.ts"],
+          checkpointPolicy: "checkpointed",
+        },
+      }),
+      reviewRuns: [
+        makeReviewRun({
+          id: `review.checkpoint.${id}`,
+          scope: "checkpoint",
+          attempt: 1,
+          cycle: 101,
+          reviewProfile: generalProfile,
+          blockingVerdict: "PASS",
+        }),
+        makeReviewRun({
+          id: `review.final.${id}`,
+          scope: "final",
+          attempt: 1,
+          cycle: 1,
+          reviewProfile: generalProfile,
+          blockingVerdict: "PASS",
+        }),
+      ],
+    }));
+    const finalOnlyHistory = ["fo-low-1", "fo-low-2", "fo-low-3"].map((id) => makeCompletedIssue({
+      id,
+      identifier: `#${id.toUpperCase()}`,
+      plan: makePlan({
+        harnessMode: "contractual",
+        suggestedPaths: ["src/domains/notes.ts"],
+        executionContract: {
+          ...makePlan().executionContract,
+          focusAreas: ["src/domains/notes.ts"],
+          checkpointPolicy: "final_only",
+        },
+      }),
+      reviewRuns: [makeReviewRun({
+        id: `review.final.${id}`,
+        scope: "final",
+        reviewProfile: generalProfile,
+        blockingVerdict: "PASS",
+      })],
+    }));
+
+    const recommendation = recommendCheckpointPolicyForIssue(
+      [...checkpointedHistory, ...finalOnlyHistory],
+      currentIssue,
+      "checkpointed",
+      3,
+    );
+
+    assert.ok(recommendation);
+    assert.equal(recommendation?.checkpointPolicy, "final_only");
+    assert.equal(recommendation?.basis, "historical");
+    assert.match(recommendation?.rationale || "", /almost never catch issues/i);
   });
 });
 

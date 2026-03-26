@@ -13,7 +13,9 @@ import { spawn } from "node:child_process";
 import { isProcessAlive } from "../../agents/pid-manager.ts";
 import { logger } from "../../concerns/logger.ts";
 import { now } from "../../concerns/helpers.ts";
-import type { DevServerEntry, DevServerState, DevServerStatus } from "../../types.ts";
+import type { ServiceEntry, ServiceState, ServiceStatus } from "../../types.ts";
+import { buildServiceCommand } from "../../domains/service-env.ts";
+import type { ServiceEnvironment } from "../../domains/service-env.ts";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -22,17 +24,17 @@ const STARTING_GRACE_MS = 3_000;
 /** Milliseconds after SIGTERM before we force SIGKILL */
 const STOPPING_KILL_MS = 5_000;
 /** Watcher tick interval */
-export const DEV_SERVER_WATCHER_INTERVAL_MS = 5_000;
+export const SERVICE_WATCHER_INTERVAL_MS = 5_000;
 
 // ── Persisted PID file type ───────────────────────────────────────────────────
 
-export type DevServerPidInfo = {
+export type ServicePidInfo = {
   pid: number;
   command: string;
   startedAt: string;
   /** FSM state — absent in legacy pid files (migrated on first read) */
-  state: DevServerState;
-  /** How many times this server has crashed since last manual start */
+  state: ServiceState;
+  /** How many times this service has crashed since last manual start */
   crashCount: number;
   lastCrashAt?: string;
   /** ISO timestamp when SIGTERM was sent — for STOPPING_KILL_MS enforcement */
@@ -43,10 +45,10 @@ export type DevServerPidInfo = {
 
 // ── FSM transition record ─────────────────────────────────────────────────────
 
-export type DevServerTransition = {
+export type ServiceTransition = {
   id: string;
-  from: DevServerState | "none";
-  to: DevServerState;
+  from: ServiceState | "none";
+  to: ServiceState;
   pid: number | null;
   reason: string;
 };
@@ -54,18 +56,18 @@ export type DevServerTransition = {
 // ── File helpers ──────────────────────────────────────────────────────────────
 
 function pidPath(fifonyDir: string, id: string): string {
-  return join(fifonyDir, `devserver-${id}.pid`);
+  return join(fifonyDir, `service-${id}.pid`);
 }
 
-export function devServerLogPath(fifonyDir: string, id: string): string {
-  return join(fifonyDir, `devserver-${id}.log`);
+export function serviceLogPath(fifonyDir: string, id: string): string {
+  return join(fifonyDir, `service-${id}.log`);
 }
 
-function readPidInfo(fifonyDir: string, id: string): DevServerPidInfo | null {
+function readPidInfo(fifonyDir: string, id: string): ServicePidInfo | null {
   const path = pidPath(fifonyDir, id);
   if (!existsSync(path)) return null;
   try {
-    const data = JSON.parse(readFileSync(path, "utf8")) as DevServerPidInfo;
+    const data = JSON.parse(readFileSync(path, "utf8")) as ServicePidInfo;
     if (!data?.pid || typeof data.pid !== "number") return null;
     // Migrate legacy pid files that pre-date the FSM (no `state` field)
     if (!data.state) {
@@ -78,7 +80,7 @@ function readPidInfo(fifonyDir: string, id: string): DevServerPidInfo | null {
   }
 }
 
-function writePidInfo(fifonyDir: string, id: string, info: DevServerPidInfo): void {
+function writePidInfo(fifonyDir: string, id: string, info: ServicePidInfo): void {
   writeFileSync(pidPath(fifonyDir, id), JSON.stringify(info));
 }
 
@@ -88,15 +90,21 @@ function removePidInfo(fifonyDir: string, id: string): void {
 
 // ── Process spawn ─────────────────────────────────────────────────────────────
 
-function spawnProcess(entry: DevServerEntry, targetRoot: string, fifonyDir: string): number {
+function spawnProcess(
+  entry: ServiceEntry,
+  targetRoot: string,
+  fifonyDir: string,
+  globalEnv?: ServiceEnvironment,
+): { pid: number; command: string } {
   const cwd = entry.cwd ? resolve(targetRoot, entry.cwd) : targetRoot;
-  const log = devServerLogPath(fifonyDir, entry.id);
+  const log = serviceLogPath(fifonyDir, entry.id);
+  const command = buildServiceCommand(entry.command, globalEnv, entry.env);
   // Truncate log on each start so the viewer shows a clean session
   try { writeFileSync(log, ""); } catch {}
   // Use fd inheritance — OS redirects child stdout/stderr to file.
   // This works after child.unref() because the OS, not Node.js, handles the I/O.
   const logFd = openSync(log, "a");
-  const child = spawn(entry.command, [], {
+  const child = spawn(command, [], {
     shell: true,
     cwd,
     detached: true,
@@ -104,17 +112,17 @@ function spawnProcess(entry: DevServerEntry, targetRoot: string, fifonyDir: stri
   });
   try { closeSync(logFd); } catch {}
   child.unref();
-  return child.pid!;
+  return { pid: child.pid!, command };
 }
 
 // ── Status derivation ─────────────────────────────────────────────────────────
 
-export function getDevServerStatus(entry: DevServerEntry, fifonyDir: string): DevServerStatus {
+export function getServiceStatus(entry: ServiceEntry, fifonyDir: string): ServiceStatus {
   const info = readPidInfo(fifonyDir, entry.id);
   const alive = info !== null && isProcessAlive(info.pid);
 
   // Reconcile stored state with live process reality
-  let state: DevServerState;
+  let state: ServiceState;
   if (!info) {
     state = "stopped";
   } else if (info.state === "stopping") {
@@ -125,7 +133,7 @@ export function getDevServerStatus(entry: DevServerEntry, fifonyDir: string): De
     state = info.state; // "crashed" or "stopped"
   }
 
-  const logFile = devServerLogPath(fifonyDir, entry.id);
+  const logFile = serviceLogPath(fifonyDir, entry.id);
   let logSize = 0;
   if (existsSync(logFile)) {
     try { logSize = statSync(logFile).size; } catch {}
@@ -140,6 +148,11 @@ export function getDevServerStatus(entry: DevServerEntry, fifonyDir: string): De
     name: entry.name,
     command: entry.command,
     cwd: entry.cwd,
+    env: entry.env,
+    autoStart: entry.autoStart,
+    autoRestart: entry.autoRestart,
+    maxCrashes: entry.maxCrashes,
+    port: entry.port,
     state,
     running,
     pid: alive ? (info?.pid ?? null) : null,
@@ -151,11 +164,11 @@ export function getDevServerStatus(entry: DevServerEntry, fifonyDir: string): De
   };
 }
 
-export function getAllDevServerStatuses(
-  entries: DevServerEntry[],
+export function getAllServiceStatuses(
+  entries: ServiceEntry[],
   fifonyDir: string,
-): DevServerStatus[] {
-  return entries.map((e) => getDevServerStatus(e, fifonyDir));
+): ServiceStatus[] {
+  return entries.map((e) => getServiceStatus(e, fifonyDir));
 }
 
 // ── FSM Commands (user-initiated) ─────────────────────────────────────────────
@@ -167,29 +180,30 @@ export function getAllDevServerStatuses(
  * resets crash count (manual start always gets a fresh slate).
  */
 export function cmdStart(
-  entry: DevServerEntry,
+  entry: ServiceEntry,
   targetRoot: string,
   fifonyDir: string,
-): DevServerTransition {
+  globalEnv?: ServiceEnvironment,
+): ServiceTransition {
   const existing = readPidInfo(fifonyDir, entry.id);
-  const fromState: DevServerState | "none" = existing?.state ?? "none";
+  const fromState: ServiceState | "none" = existing?.state ?? "none";
 
   // Kill existing process if still alive
   if (existing && isProcessAlive(existing.pid)) {
     try { process.kill(existing.pid, "SIGTERM"); } catch {}
   }
 
-  const pid = spawnProcess(entry, targetRoot, fifonyDir);
+  const spawned = spawnProcess(entry, targetRoot, fifonyDir, globalEnv);
   writePidInfo(fifonyDir, entry.id, {
-    pid,
-    command: entry.command,
+    pid: spawned.pid,
+    command: spawned.command,
     startedAt: now(),
     state: "starting",
     crashCount: 0, // manual start always resets crash count
   });
 
-  logger.info({ id: entry.id, pid, from: fromState }, "[DevServer] FSM: → starting (manual start)");
-  return { id: entry.id, from: fromState, to: "starting", pid, reason: "manual start" };
+  logger.info({ id: entry.id, pid: spawned.pid, from: fromState }, "[Service] FSM: → starting (manual start)");
+  return { id: entry.id, from: fromState, to: "starting", pid: spawned.pid, reason: "manual start" };
 }
 
 /**
@@ -198,7 +212,7 @@ export function cmdStart(
  * Sends SIGTERM, transitions to "stopping".
  * The watcher handles SIGKILL after STOPPING_KILL_MS and cleans up the pid file.
  */
-export function cmdStop(id: string, fifonyDir: string): DevServerTransition | null {
+export function cmdStop(id: string, fifonyDir: string): ServiceTransition | null {
   const existing = readPidInfo(fifonyDir, id);
   if (!existing || existing.state === "stopped") return null;
 
@@ -214,7 +228,7 @@ export function cmdStop(id: string, fifonyDir: string): DevServerTransition | nu
     stoppingAt: now(),
   });
 
-  logger.info({ id, pid: existing.pid, from: fromState }, "[DevServer] FSM: → stopping (manual stop)");
+  logger.info({ id, pid: existing.pid, from: fromState }, "[Service] FSM: → stopping (manual stop)");
   return { id, from: fromState, to: "stopping", pid: existing.pid, reason: "manual stop" };
 }
 
@@ -228,10 +242,11 @@ function autoRestartBackoffMs(crashCount: number): number {
 // ── FSM Watcher Tick ──────────────────────────────────────────────────────────
 
 function tickOne(
-  entry: DevServerEntry,
+  entry: ServiceEntry,
+  globalEnv: ServiceEnvironment,
   fifonyDir: string,
   targetRoot: string,
-): DevServerTransition | null {
+): ServiceTransition | null {
   const info = readPidInfo(fifonyDir, entry.id);
   if (!info) return null; // "stopped" — no pid file, nothing to do
 
@@ -257,7 +272,7 @@ function tickOne(
           lastCrashAt: now(),
           nextRetryAt,
         });
-        logger.warn({ id: entry.id, crashCount, nextRetryAt }, "[DevServer] FSM: starting → crashed");
+        logger.warn({ id: entry.id, crashCount, nextRetryAt }, "[Service] FSM: starting → crashed");
         return {
           id: entry.id, from: "starting", to: "crashed",
           pid: null, reason: `died during startup (crash #${crashCount})`,
@@ -267,7 +282,7 @@ function tickOne(
       const ageMs = nowMs - Date.parse(info.startedAt);
       if (ageMs >= STARTING_GRACE_MS) {
         writePidInfo(fifonyDir, entry.id, { ...info, state: "running" });
-        logger.info({ id: entry.id, pid: info.pid }, "[DevServer] FSM: starting → running");
+        logger.info({ id: entry.id, pid: info.pid }, "[Service] FSM: starting → running");
         return {
           id: entry.id, from: "starting", to: "running",
           pid: info.pid, reason: "startup grace period elapsed",
@@ -293,7 +308,7 @@ function tickOne(
           lastCrashAt: now(),
           nextRetryAt,
         });
-        logger.warn({ id: entry.id, crashCount, nextRetryAt }, "[DevServer] FSM: running → crashed");
+        logger.warn({ id: entry.id, crashCount, nextRetryAt }, "[Service] FSM: running → crashed");
         return {
           id: entry.id, from: "running", to: "crashed",
           pid: null, reason: `process died unexpectedly (crash #${crashCount})`,
@@ -305,7 +320,7 @@ function tickOne(
     case "stopping": {
       if (!alive) {
         removePidInfo(fifonyDir, entry.id);
-        logger.info({ id: entry.id }, "[DevServer] FSM: stopping → stopped (process exited)");
+        logger.info({ id: entry.id }, "[Service] FSM: stopping → stopped (process exited)");
         return {
           id: entry.id, from: "stopping", to: "stopped",
           pid: null, reason: "process exited gracefully",
@@ -319,7 +334,7 @@ function tickOne(
       if (stoppingAgeMs >= STOPPING_KILL_MS) {
         try { process.kill(info.pid, "SIGKILL"); } catch {}
         removePidInfo(fifonyDir, entry.id);
-        logger.info({ id: entry.id, pid: info.pid }, "[DevServer] FSM: stopping → stopped (SIGKILL)");
+        logger.info({ id: entry.id, pid: info.pid }, "[Service] FSM: stopping → stopped (SIGKILL)");
         return {
           id: entry.id, from: "stopping", to: "stopped",
           pid: null, reason: "SIGKILL after stop timeout",
@@ -336,21 +351,21 @@ function tickOne(
       if (nowMs < nextRetryMs) return null; // backoff not elapsed
 
       // Auto-restart
-      const pid = spawnProcess(entry, targetRoot, fifonyDir);
+      const spawned = spawnProcess(entry, targetRoot, fifonyDir, globalEnv);
       writePidInfo(fifonyDir, entry.id, {
-        pid,
-        command: entry.command,
+        pid: spawned.pid,
+        command: spawned.command,
         startedAt: now(),
         state: "starting",
         crashCount: info.crashCount, // preserve crash count on auto-restart
       });
       logger.info(
-        { id: entry.id, pid, crashCount: info.crashCount },
-        "[DevServer] FSM: crashed → starting (auto-restart)",
+        { id: entry.id, pid: spawned.pid, crashCount: info.crashCount },
+        "[Service] FSM: crashed → starting (auto-restart)",
       );
       return {
         id: entry.id, from: "crashed", to: "starting",
-        pid, reason: `auto-restart after backoff (crash #${info.crashCount})`,
+        pid: spawned.pid, reason: `auto-restart after backoff (crash #${info.crashCount})`,
       };
     }
 
@@ -362,18 +377,19 @@ function tickOne(
   }
 }
 
-export function tickDevServerWatcher(
-  entries: DevServerEntry[],
+export function tickServiceWatcher(
+  entries: ServiceEntry[],
+  globalEnv: ServiceEnvironment,
   fifonyDir: string,
   targetRoot: string,
-): DevServerTransition[] {
-  const transitions: DevServerTransition[] = [];
+): ServiceTransition[] {
+  const transitions: ServiceTransition[] = [];
   for (const entry of entries) {
     try {
-      const t = tickOne(entry, fifonyDir, targetRoot);
+      const t = tickOne(entry, globalEnv, fifonyDir, targetRoot);
       if (t) transitions.push(t);
     } catch (err) {
-      logger.warn({ err, id: entry.id }, "[DevServer] Watcher tick error");
+      logger.warn({ err, id: entry.id }, "[Service] Watcher tick error");
     }
   }
   return transitions;
@@ -381,26 +397,27 @@ export function tickDevServerWatcher(
 
 // ── Watcher lifecycle ─────────────────────────────────────────────────────────
 
-export function initDevServerWatcher(
-  getEntries: () => DevServerEntry[],
+export function initServiceWatcher(
+  getEntries: () => ServiceEntry[],
+  getGlobalEnv: () => ServiceEnvironment,
   fifonyDir: string,
   targetRoot: string,
-  onTransition: (t: DevServerTransition) => void,
+  onTransition: (t: ServiceTransition) => void,
 ): { stop: () => void } {
   const intervalId = setInterval(() => {
     const entries = getEntries();
     if (entries.length === 0) return;
-    const transitions = tickDevServerWatcher(entries, fifonyDir, targetRoot);
+    const transitions = tickServiceWatcher(entries, getGlobalEnv(), fifonyDir, targetRoot);
     for (const t of transitions) onTransition(t);
-  }, DEV_SERVER_WATCHER_INTERVAL_MS);
+  }, SERVICE_WATCHER_INTERVAL_MS);
 
   return { stop: () => clearInterval(intervalId) };
 }
 
 // ── Log reader ────────────────────────────────────────────────────────────────
 
-export function readDevServerLogTail(id: string, fifonyDir: string, bytes = 8192): string {
-  const log = devServerLogPath(fifonyDir, id);
+export function readServiceLogTail(id: string, fifonyDir: string, bytes = 8192): string {
+  const log = serviceLogPath(fifonyDir, id);
   if (!existsSync(log)) return "";
   try {
     const size = statSync(log).size;
@@ -421,7 +438,7 @@ export function readDevServerLogTail(id: string, fifonyDir: string, bytes = 8192
  * Called at boot: reconcile live process state with persisted pid files.
  * Dead processes are marked as "crashed" so the UI can show them correctly.
  */
-export function reconcileDevServerStates(entries: DevServerEntry[], fifonyDir: string): void {
+export function reconcileServiceStates(entries: ServiceEntry[], fifonyDir: string): void {
   for (const entry of entries) {
     const info = readPidInfo(fifonyDir, entry.id);
     if (!info) continue;
@@ -434,8 +451,7 @@ export function reconcileDevServerStates(entries: DevServerEntry[], fifonyDir: s
         crashCount,
         lastCrashAt: now(),
       });
-      logger.info({ id: entry.id, crashCount }, "[DevServer] Boot: process dead → crashed");
+      logger.info({ id: entry.id, crashCount }, "[Service] Boot: process dead → crashed");
     }
   }
 }
-

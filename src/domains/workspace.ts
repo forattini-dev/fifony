@@ -24,6 +24,7 @@ import {
 import { logger } from "../concerns/logger.ts";
 import { runHook } from "../agents/command-executor.ts";
 import { buildPrompt } from "../agents/prompt-builder.ts";
+import { ensureWorkspaceMemoryFiles, recordWorkspaceMemoryEvent } from "../agents/memory-engine.ts";
 
 // ── Source bootstrap ────────────────────────────────────────────────────────
 
@@ -465,6 +466,22 @@ export async function prepareWorkspace(
   const metaPath = join(workspaceRoot, "issue.json");
   const promptText = await buildPrompt(issue, null);
   const promptFile = join(workspaceRoot, "prompt.md");
+  ensureWorkspaceMemoryFiles(issue, workspaceRoot);
+  if (createdNow) {
+    recordWorkspaceMemoryEvent(issue, workspaceRoot, {
+      id: `bootstrap-v${issue.planVersion ?? 0}`,
+      kind: "bootstrap",
+      issueId: issue.id,
+      issueIdentifier: issue.identifier,
+      title: "Workspace bootstrap",
+      summary: "Issue workspace prepared with worktree, prompt scaffold, and durable memory files.",
+      source: "runtime",
+      createdAt: now(),
+      planVersion: issue.planVersion,
+      persistLongTerm: false,
+      tags: ["workspace", "bootstrap"],
+    });
+  }
   writeFileSync(metaPath, JSON.stringify({ ...issue, runtimeSource: SOURCE_ROOT, bootstrapAt: now() }, null, 2), "utf8");
   writeFileSync(promptFile, `${promptText}\n`, "utf8");
 

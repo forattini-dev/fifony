@@ -32,7 +32,7 @@ import {
 import { logger } from "../concerns/logger.ts";
 import { parseEffortConfig } from "./config.ts";
 import { computeMetrics as _computeMetrics } from "./metrics.ts";
-import { normalizeMilestone, refreshMilestoneSummaries } from "./projects.ts";
+import { normalizeMilestone, refreshMilestoneSummaries } from "./milestones.ts";
 
 export { computeMetrics } from "./metrics.ts";
 export { deriveConfig, applyWorkflowConfig, validateConfig } from "./config.ts";
@@ -53,6 +53,7 @@ export function getIssueTransitionExecutor(): IssueTransitionExecutor | null {
   return issueTransitionExecutor;
 }
 
+
 export function normalizeIssue(
   raw: JsonRecord,
 ): IssueEntry | null {
@@ -61,13 +62,14 @@ export function normalizeIssue(
 
   const createdAt = toStringValue(raw.createdAt, now());
   const updatedAt = toStringValue(raw.updatedAt, createdAt);
+  const milestoneId = toStringValue(raw.milestoneId) || toStringValue(raw["projectId"]) || undefined;
   const issue: IssueEntry = {
     id,
     identifier: toStringValue(raw.identifier, id),
     title: toStringValue(raw.title, `Issue ${id}`),
     description: toStringValue(raw.description, ""),
     state: normalizeState(raw.state, raw.plan && typeof raw.plan === "object" ? "PendingApproval" : "Planning"),
-    milestoneId: toStringValue(raw.milestoneId || raw.projectId) || undefined,
+    milestoneId,
     branchName: toStringValue(raw.branchName),
     url: toStringValue(raw.url),
     assigneeId: toStringValue(raw.assigneeId),
@@ -91,6 +93,8 @@ export function normalizeIssue(
     reviewRuns: [],
     reviewFailureHistory: [],
     policyDecisions: [],
+    contextReportsByRole: {},
+    memoryFlushCount: 0,
   };
 
   return issue;
@@ -127,7 +131,7 @@ export function createIssueFromPayload(
     title: toStringValue(payload.title, `Issue ${identifier}`),
     description: toStringValue(payload.description, ""),
     state: initialState,
-    milestoneId: toStringValue(payload.milestoneId || payload.projectId) || undefined,
+    milestoneId: toStringValue(payload.milestoneId) || undefined,
     branchName: toStringValue(payload.branchName),
     baseBranch: toStringValue(payload.baseBranch) || defaultBranch,
     url: toStringValue(payload.url),
@@ -156,6 +160,8 @@ export function createIssueFromPayload(
     reviewRuns: [],
     reviewFailureHistory: [],
     policyDecisions: [],
+    contextReportsByRole: {},
+    memoryFlushCount: 0,
   };
 
   // If plan provides suggestions, apply them
@@ -193,6 +199,7 @@ export function buildRuntimeState(
       if (!rawIssue || typeof rawIssue !== "object") return issues;
 
       const existing = rawIssue as IssueEntry;
+      const existingRecord = rawIssue as JsonRecord;
       issues.push({
         ...existing,
         id: toStringValue(existing.id, ""),
@@ -200,7 +207,7 @@ export function buildRuntimeState(
         title: toStringValue(existing.title, `Issue ${toStringValue(existing.identifier, existing.id)}`),
         description: toStringValue(existing.description, ""),
         state: normalizeState(existing.state, existing.plan ? "PendingApproval" : "Planning"),
-        milestoneId: toStringValue(existing.milestoneId || existing.projectId) || undefined,
+        milestoneId: toStringValue(existing.milestoneId) || toStringValue(existingRecord["projectId"]) || undefined,
         paths: toStringArray(existing.paths),
         labels: toStringArray(existing.labels),
         blockedBy: toStringArray(existing.blockedBy),
@@ -223,6 +230,11 @@ export function buildRuntimeState(
         reviewRuns: Array.isArray(existing.reviewRuns) ? existing.reviewRuns : [],
         reviewFailureHistory: Array.isArray(existing.reviewFailureHistory) ? existing.reviewFailureHistory : [],
         policyDecisions: Array.isArray(existing.policyDecisions) ? existing.policyDecisions : [],
+        contextReportsByRole: existing.contextReportsByRole && typeof existing.contextReportsByRole === "object"
+          ? existing.contextReportsByRole
+          : {},
+        memoryFlushAt: toStringValue(existing.memoryFlushAt) || undefined,
+        memoryFlushCount: toNumberValue(existing.memoryFlushCount, 0),
       });
       return issues;
     }, [])

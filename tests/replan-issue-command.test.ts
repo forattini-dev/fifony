@@ -1,6 +1,8 @@
+import { after, before } from "node:test";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { IssueEntry } from "../src/types.ts";
+import { setEnqueueFn } from "../src/persistence/plugins/fsm-issue.ts";
 
 function makeIssue(overrides: Partial<IssueEntry> = {}): IssueEntry {
   const createdAt = "2026-03-26T00:00:00.000Z";
@@ -68,6 +70,14 @@ function makeDeps() {
 }
 
 describe("replanIssueCommand", () => {
+  before(() => {
+    setEnqueueFn(async () => {});
+  });
+
+  after(() => {
+    setEnqueueFn(null);
+  });
+
   it("can replan an actively running issue and resets execution counters", async () => {
     const { replanIssueCommand } = await import("../src/commands/replan-issue.command.ts");
     const issue = makeIssue();

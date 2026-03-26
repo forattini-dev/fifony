@@ -6,7 +6,7 @@ import eventsResource from "./events.resource.ts";
 import settingsResource from "./settings.resource.ts";
 import agentSessionsResource from "./agent-sessions.resource.ts";
 import agentPipelinesResource from "./agent-pipelines.resource.ts";
-import devServersResource from "./dev-servers.resource.ts";
+import servicesResource from "./services.resource.ts";
 import contextFragmentsResource from "./context-fragments.resource.ts";
 
 export const NATIVE_RESOURCE_CONFIGS = [
@@ -18,7 +18,7 @@ export const NATIVE_RESOURCE_CONFIGS = [
   settingsResource,
   agentSessionsResource,
   agentPipelinesResource,
-  devServersResource,
+  servicesResource,
   contextFragmentsResource,
 ] as const;
 

@@ -1,6 +1,6 @@
 import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { buildContextPack } from "../src/agents/context-engine.ts";
@@ -179,5 +179,36 @@ describe("buildContextPack", () => {
     });
 
     assert.equal(pack.hits.length, 6);
+  });
+
+  it("records layer-aware context assembly reports and seeds workspace memory files", async () => {
+    const { workspacePath, worktreePath } = createWorkspace();
+    writeFile(worktreePath, "README.md", "# Workspace memory");
+    writeFile(worktreePath, "src/context.ts", "export const summary = 'workspace memory context';");
+
+    const issue = makeIssue({
+      worktreePath,
+      workspacePath,
+    });
+
+    const pack = await buildContextPack({
+      role: "executor",
+      title: issue.title,
+      description: issue.description,
+      issue,
+      workspacePath,
+    });
+
+    assert.ok(pack.report);
+    assert.ok(pack.report?.memoryFlush);
+    assert.deepEqual(
+      pack.report?.layers.map((layer) => layer.name),
+      ["bootstrap", "workspace-memory", "issue-memory", "retrieval"],
+    );
+    assert.ok((pack.report?.layers.find((layer) => layer.name === "bootstrap")?.hitCount ?? 0) >= 2);
+    assert.ok((pack.report?.layers.find((layer) => layer.name === "workspace-memory")?.hitCount ?? 0) >= 1);
+    assert.equal(existsSync(join(workspacePath, "WORKFLOW.md")), true);
+    assert.equal(existsSync(join(workspacePath, "MEMORY.md")), true);
+    assert.equal(existsSync(join(workspacePath, "HEARTBEAT.md")), true);
   });
 });

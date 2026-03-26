@@ -55,7 +55,7 @@ export function ReviewTab({ issue, issueId, onStateChange, onRetry }) {
   const fetchDiff = useCallback(async () => {
     setDiffLoading(true);
     try {
-      const res = await api.get(`/diff/${encodeURIComponent(issueId)}`);
+      const res = await api.get(`/issues/${encodeURIComponent(issueId)}/diff`);
       setDiffData(res);
     } catch {
       setDiffData(null);

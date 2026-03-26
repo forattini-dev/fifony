@@ -11,7 +11,7 @@
  *   prompt-builder.ts     — prompt construction for sessions, turns, and providers
  *   command-executor.ts   — runCommandWithTimeout and runHook
  *   workspace-setup.ts    — workspace creation, git worktree, and cleanWorkspace
- *   persistence/plugins/fsm-agent.ts          — runPlanPhase, runExecutePhase, runReviewPhase, canDispatchAgent
+ *   domains/agents.ts                         — public agent FSM facade for dispatch and phase execution
  */
 
 // ── Re-exports from directive-parser ──────────────────────────────────────
@@ -47,8 +47,13 @@ export { cleanWorkspace, prepareWorkspace, createGitWorktree } from "../domains/
 // ── Re-exports from agent-pipeline ────────────────────────────────────────
 export { runAgentPipeline, runAgentSession } from "./agent-pipeline.ts";
 
-// ── Re-exports from agent-fsm ─────────────────────────────────────────────
-export { runPlanPhase as runPlanningJob, runExecutePhase, runReviewPhase, canDispatchAgent } from "../persistence/plugins/fsm-agent.ts";
+// ── Re-exports from agent-fsm facade ──────────────────────────────────────
+export {
+  runPlanningJob,
+  runManagedExecuteJob as runExecutePhase,
+  runManagedReviewJob as runReviewPhase,
+  canDispatchManagedAgent as canDispatchAgent,
+} from "../domains/agents.ts";
 
 // ── Public functions consumed by queue-workers.ts / api-server.ts ────────
 

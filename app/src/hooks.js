@@ -111,6 +111,30 @@ export function useRuntimeState({ pollInterval = 3000, showAll = false } = {}) {
   });
 }
 
+export function useRuntimeStatus({ pollInterval = 10000 } = {}) {
+  return useQuery({
+    queryKey: ["runtime-status"],
+    queryFn: () => api.get("/runtime/status"),
+    refetchInterval: pollInterval,
+  });
+}
+
+export function useRuntimeProbe({ pollInterval = 10000 } = {}) {
+  return useQuery({
+    queryKey: ["runtime-probe"],
+    queryFn: () => api.get("/runtime/probe"),
+    refetchInterval: pollInterval,
+  });
+}
+
+export function useRuntimeDoctor({ pollInterval = 15000 } = {}) {
+  return useQuery({
+    queryKey: ["runtime-doctor"],
+    queryFn: () => api.get("/runtime/doctor"),
+    refetchInterval: pollInterval,
+  });
+}
+
 /** Fetch filtered event feed. */
 export function useRuntimeEvents(kind, issueId, pollInterval = 2500) {
   const params = new URLSearchParams();

@@ -233,7 +233,7 @@ export async function runAgentSession(
       ? "Context overflow signal detected in output"
       : `Context at ~${contextPct}% (${cumulativeTokens.toLocaleString()} / ${contextWindow?.toLocaleString()} tokens)`;
     logger.warn({ issueId: issue.id, identifier: issue.identifier, turn: turnIndex, contextPct, reason }, "[Agent] Context pressure — steering next turn toward checkpoint");
-    addEvent(state, issue.id, "warn", `Context pressure on turn ${turnIndex}: ${reason}. Next turn will prioritize checkpointing.`);
+    addEvent(state, issue.id, "info", `Context pressure on turn ${turnIndex}: ${reason}. Next turn will prioritize checkpointing.`);
     // Override nextPrompt to steer the agent toward compacting its work
     nextPrompt = [
       nextPrompt,

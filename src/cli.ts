@@ -9,11 +9,36 @@ import {
   getReferenceRepositoriesRoot,
   importReferenceArtifacts,
   listReferenceRepositories,
+  resolveProjectMetadata,
   syncReferenceRepositories,
   type ReferenceImportSummary,
   type ReferenceImportKind,
   type ReferenceSyncResult,
 } from "./domains/project.ts";
+import { now } from "./concerns/helpers.ts";
+import { deriveConfig, applyWorkflowConfig, buildRuntimeState } from "./domains/issues.ts";
+import {
+  loadRuntimeSettings,
+  applyPersistedSettings,
+} from "./persistence/settings.ts";
+import {
+  initStateStore,
+  loadPersistedState,
+  loadPersistedServices,
+  loadPersistedMilestones,
+  closeStateStore,
+} from "./persistence/store.ts";
+import {
+  buildProbeResult,
+  collectRuntimeHealthSnapshot,
+  runDoctorChecks,
+} from "./domains/runtime-diagnostics.ts";
+import { resolvePersistenceRoot } from "./concerns/constants.ts";
+import {
+  bootstrapDevProfile,
+  getDevProfileStatus,
+  resetDevProfile,
+} from "./domains/dev-profile.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -104,6 +129,136 @@ function parseReferenceKind(value: unknown): ReferenceImportKind {
 function getWorkspaceRoot(result: CommandParseResult): string {
   const workspace = getStringOption(result, "workspace");
   return resolve(workspace ?? env.FIFONY_WORKSPACE_ROOT ?? cwd());
+}
+
+function getStateRoot(result: CommandParseResult): string {
+  const persistence = getStringOption(result, "persistence");
+  return resolvePersistenceRoot(
+    persistence
+      ?? env.FIFONY_PERSISTENCE
+      ?? getWorkspaceRoot(result),
+  );
+}
+
+function printJson(value: unknown): void {
+  console.log(JSON.stringify(value, null, 2));
+}
+
+function printKeyValue(label: string, value: string | number | boolean | undefined): void {
+  console.log(`${label}: ${value ?? "n/a"}`);
+}
+
+async function loadRuntimeStateSnapshot(result: CommandParseResult) {
+  const workspaceRoot = getWorkspaceRoot(result);
+  const port = getNumberOption(result, "port");
+  await initStateStore();
+
+  try {
+    let config = applyWorkflowConfig(deriveConfig(buildRuntimeArgs(result)), port);
+    const [previous, settings, services, milestones] = await Promise.all([
+      loadPersistedState(),
+      loadRuntimeSettings(),
+      loadPersistedServices(),
+      loadPersistedMilestones(),
+    ]);
+
+    config = applyPersistedSettings(config, settings);
+    if (services.length > 0) {
+      config = { ...config, services };
+    }
+
+    return buildRuntimeState(
+      previous,
+      config,
+      resolveProjectMetadata(settings, workspaceRoot),
+      milestones,
+    );
+  } finally {
+    await closeStateStore();
+  }
+}
+
+async function runStatus(result: CommandParseResult): Promise<void> {
+  const json = getBooleanOption(result, "json");
+  const includeAll = getBooleanOption(result, "all");
+  const state = await loadRuntimeStateSnapshot(result);
+  const snapshot = collectRuntimeHealthSnapshot(state);
+
+  if (json) {
+    printJson(includeAll
+      ? {
+        generatedAt: now(),
+        snapshot,
+        probe: buildProbeResult(state),
+        doctor: runDoctorChecks(state),
+      }
+      : snapshot);
+    return;
+  }
+
+  console.log("Fifony Runtime Status");
+  printKeyValue("Generated", snapshot.generatedAt);
+  printKeyValue("Workspace", snapshot.workspace.root);
+  printKeyValue("Healthy", snapshot.ok);
+  printKeyValue("Configured provider", snapshot.providers.configuredProvider);
+  printKeyValue("Issues", snapshot.issues.total);
+  printKeyValue("Running issues", snapshot.issues.running);
+  printKeyValue("Reviewing issues", snapshot.issues.reviewing);
+  printKeyValue("Services running", `${snapshot.services.running}/${snapshot.services.total}`);
+  printKeyValue("Active agents", snapshot.agents.active);
+  printKeyValue("Memory flushes", snapshot.memory.totalFlushes);
+
+  if (!includeAll) return;
+
+  console.log("");
+  console.log("Doctor");
+  for (const check of runDoctorChecks(state)) {
+    console.log(`- [${check.status}] ${check.title}: ${check.summary}`);
+  }
+}
+
+async function runProbe(result: CommandParseResult): Promise<void> {
+  const json = getBooleanOption(result, "json");
+  const state = await loadRuntimeStateSnapshot(result);
+  const probe = buildProbeResult(state);
+
+  if (json) {
+    printJson(probe);
+    return;
+  }
+
+  console.log(`Probe: ${probe.ok ? "ok" : "degraded"}`);
+  for (const check of probe.checks) {
+    console.log(`- [${check.ok ? "ok" : "fail"}] ${check.id}: ${check.detail}`);
+  }
+}
+
+async function runDoctor(result: CommandParseResult): Promise<void> {
+  const json = getBooleanOption(result, "json");
+  const state = await loadRuntimeStateSnapshot(result);
+  const checks = runDoctorChecks(state);
+  const payload = {
+    ok: checks.every((check) => check.status !== "fail"),
+    generatedAt: now(),
+    checks,
+  };
+
+  if (json) {
+    printJson(payload);
+    return;
+  }
+
+  console.log("Fifony Doctor");
+  for (const check of checks) {
+    console.log(`- [${check.status}] ${check.title}`);
+    console.log(`  ${check.summary}`);
+    if (check.detail) {
+      console.log(`  detail: ${check.detail}`);
+    }
+    if (check.suggestedAction) {
+      console.log(`  action: ${check.suggestedAction}`);
+    }
+  }
 }
 
 async function runOnboardingList(): Promise<void> {
@@ -242,10 +397,21 @@ async function runOnboardingImport(result: CommandParseResult): Promise<void> {
 }
 
 function buildRuntimeArgs(result: CommandParseResult): string[] {
+  return buildRuntimeArgsWithOverrides(result);
+}
+
+function buildRuntimeArgsWithOverrides(
+  result: CommandParseResult,
+  overrides: {
+    workspace?: string;
+    persistence?: string;
+    port?: number;
+  } = {},
+): string[] {
   const runtimeArgs: string[] = [];
-  const workspace = getStringOption(result, "workspace");
-  const persistence = getStringOption(result, "persistence");
-  const port = getNumberOption(result, "port");
+  const workspace = overrides.workspace ?? getStringOption(result, "workspace");
+  const persistence = overrides.persistence ?? getStringOption(result, "persistence");
+  const port = overrides.port ?? getNumberOption(result, "port");
   const concurrency = getNumberOption(result, "concurrency");
   const attempts = getNumberOption(result, "attempts");
   const poll = getNumberOption(result, "poll");
@@ -278,21 +444,18 @@ function buildRuntimeArgs(result: CommandParseResult): string[] {
   return runtimeArgs;
 }
 
-async function runRuntime(mode: "cli" | "mcp", result: CommandParseResult): Promise<void> {
-  const workspace = getStringOption(result, "workspace");
-  const workspaceRoot = resolve(workspace ?? env.FIFONY_WORKSPACE_ROOT ?? cwd());
-  const runtimeArgs = buildRuntimeArgs(result);
-
+async function runNodeEntry(
+  script: string,
+  args: string[],
+  runtimeCwd: string,
+  runtimeEnv: Record<string, string>,
+): Promise<void> {
   const outcome = await new Promise<{ code?: number | null; signal?: NodeJS.Signals | null }>((resolvePromise, rejectPromise) => {
-    const args = useCompiled ? [runtimeScript, ...runtimeArgs] : [tsxCli!, runtimeScript, ...runtimeArgs];
-    const child = spawn(execPath, args, {
-      cwd: workspaceRoot,
+    const childArgs = useCompiled ? [script, ...args] : [tsxCli!, script, ...args];
+    const child = spawn(execPath, childArgs, {
+      cwd: runtimeCwd,
       stdio: "inherit",
-      env: {
-        ...env,
-        FIFONY_INTERFACE: mode,
-        FIFONY_WORKSPACE_ROOT: workspaceRoot,
-      },
+      env: runtimeEnv,
     });
 
     child.on("exit", (code, signal) => {
@@ -314,41 +477,116 @@ async function runRuntime(mode: "cli" | "mcp", result: CommandParseResult): Prom
   }
 }
 
+async function runRuntimeProcess(
+  mode: "cli" | "mcp",
+  workspaceRoot: string,
+  persistenceRoot: string,
+  runtimeArgs: string[],
+): Promise<void> {
+  await runNodeEntry(runtimeScript, runtimeArgs, workspaceRoot, {
+    ...env,
+    FIFONY_INTERFACE: mode,
+    FIFONY_WORKSPACE_ROOT: workspaceRoot,
+    FIFONY_PERSISTENCE: persistenceRoot,
+  });
+}
+
+async function runRuntime(mode: "cli" | "mcp", result: CommandParseResult): Promise<void> {
+  const workspace = getStringOption(result, "workspace");
+  const persistence = getStringOption(result, "persistence");
+  const workspaceRoot = resolve(workspace ?? env.FIFONY_WORKSPACE_ROOT ?? cwd());
+  const persistenceRoot = resolvePersistenceRoot(persistence ?? env.FIFONY_PERSISTENCE ?? workspaceRoot);
+  const runtimeArgs = buildRuntimeArgs(result);
+  await runRuntimeProcess(mode, workspaceRoot, persistenceRoot, runtimeArgs);
+}
+
 async function runMcpServer(result: CommandParseResult): Promise<void> {
   const workspace = getStringOption(result, "workspace");
   const persistence = getStringOption(result, "persistence");
   const workspaceRoot = resolve(workspace ?? env.FIFONY_WORKSPACE_ROOT ?? cwd());
-  const persistenceRoot = resolve(persistence ?? env.FIFONY_PERSISTENCE ?? workspaceRoot);
+  const persistenceRoot = resolvePersistenceRoot(persistence ?? env.FIFONY_PERSISTENCE ?? workspaceRoot);
 
-  const outcome = await new Promise<{ code?: number | null; signal?: NodeJS.Signals | null }>((resolvePromise, rejectPromise) => {
-    const mcpArgs = useCompiled ? [mcpScript] : [tsxCli!, mcpScript];
-    const child = spawn(execPath, mcpArgs, {
-      cwd: workspaceRoot,
-      stdio: "inherit",
-      env: {
-        ...env,
-        FIFONY_WORKSPACE_ROOT: workspaceRoot,
-        FIFONY_PERSISTENCE: persistenceRoot,
-      },
-    });
-
-    child.on("exit", (code, signal) => {
-      resolvePromise({ code, signal });
-    });
-
-    child.on("error", (error) => {
-      rejectPromise(error);
-    });
+  await runNodeEntry(mcpScript, [], workspaceRoot, {
+    ...env,
+    FIFONY_WORKSPACE_ROOT: workspaceRoot,
+    FIFONY_PERSISTENCE: persistenceRoot,
   });
+}
 
-  if (outcome.signal) {
-    kill(pid, outcome.signal);
+function printDevProfileStatus(profile: ReturnType<typeof getDevProfileStatus>): void {
+  console.log("Fifony Dev Profile");
+  printKeyValue("Profile", profile.profileName);
+  printKeyValue("Workspace", profile.workspaceRoot);
+  printKeyValue("Persistence", profile.persistenceRoot);
+  printKeyValue("Branch", profile.branchName);
+  printKeyValue("Bootstrapped", profile.bootstrapped);
+  printKeyValue("Worktree attached", profile.worktreeAttached);
+  printKeyValue("Dashboard port", profile.dashboardPort);
+  printKeyValue("Trash entries", profile.trashEntries.length);
+  if (profile.lastBootstrappedAt) {
+    printKeyValue("Last bootstrap", profile.lastBootstrappedAt);
+  }
+  if (profile.lastResetAt) {
+    printKeyValue("Last reset", profile.lastResetAt);
+  }
+  console.log("");
+  console.log("Launch");
+  console.log(profile.launchCommand);
+}
+
+async function runDevStatus(result: CommandParseResult): Promise<void> {
+  const workspaceRoot = getWorkspaceRoot(result);
+  const json = getBooleanOption(result, "json");
+  const profile = getDevProfileStatus(workspaceRoot, getStateRoot(result));
+  if (json) {
+    printJson({ ok: true, profile });
     return;
   }
+  printDevProfileStatus(profile);
+}
 
-  if (typeof outcome.code === "number" && outcome.code !== 0) {
-    exit(outcome.code);
+async function runDevBootstrap(result: CommandParseResult): Promise<void> {
+  const workspaceRoot = getWorkspaceRoot(result);
+  const json = getBooleanOption(result, "json");
+  const profile = bootstrapDevProfile(workspaceRoot, getStateRoot(result));
+  if (json) {
+    printJson({ ok: true, profile });
+    return;
   }
+  printDevProfileStatus(profile);
+}
+
+async function runDevReset(result: CommandParseResult): Promise<void> {
+  const workspaceRoot = getWorkspaceRoot(result);
+  const stateRoot = getStateRoot(result);
+  const json = getBooleanOption(result, "json");
+  const resultPayload = resetDevProfile(workspaceRoot, stateRoot);
+  const profile = getDevProfileStatus(workspaceRoot, stateRoot);
+  if (json) {
+    printJson({ ok: true, result: resultPayload, profile });
+    return;
+  }
+  console.log("Dev profile reset");
+  printKeyValue("Removed worktree", resultPayload.removedWorktree);
+  printKeyValue("Trashed profile", resultPayload.trashedProfile);
+  if (resultPayload.trashPath) {
+    printKeyValue("Trash path", resultPayload.trashPath);
+  }
+  console.log("");
+  printDevProfileStatus(profile);
+}
+
+async function runDevRuntime(result: CommandParseResult): Promise<void> {
+  const targetWorkspaceRoot = getWorkspaceRoot(result);
+  const stateRoot = getStateRoot(result);
+  const profile = bootstrapDevProfile(targetWorkspaceRoot, stateRoot);
+  const port = getNumberOption(result, "port") ?? profile.dashboardPort;
+  const runtimeArgs = buildRuntimeArgsWithOverrides(result, {
+    workspace: profile.workspaceRoot,
+    persistence: profile.persistenceRoot,
+    port,
+  });
+  await runRuntimeProcess("cli", profile.workspaceRoot, profile.persistenceRoot, runtimeArgs);
 }
 
 const cli = createCLI({
@@ -365,6 +603,101 @@ const cli = createCLI({
       description: "Run a Fifony MCP server over stdio with resources, tools, and prompts backed by the local durable store.",
       options: commonOptions,
       handler: (result) => runMcpServer(result),
+    },
+    dev: {
+      description: "Manage and run the isolated Fifony development profile.",
+      commands: {
+        status: {
+          description: "Show the current dev profile status and launch command.",
+          options: {
+            workspace: commonOptions.workspace,
+            persistence: commonOptions.persistence,
+            json: {
+              type: "boolean",
+              description: "Emit JSON instead of human-readable text.",
+            },
+          },
+          handler: (result) => runDevStatus(result),
+        },
+        bootstrap: {
+          description: "Create or refresh the isolated dev profile worktree and bootstrap files.",
+          options: {
+            workspace: commonOptions.workspace,
+            persistence: commonOptions.persistence,
+            json: {
+              type: "boolean",
+              description: "Emit JSON instead of human-readable text.",
+            },
+          },
+          handler: (result) => runDevBootstrap(result),
+        },
+        reset: {
+          description: "Safely move the dev profile to trash and remove its worktree branch.",
+          options: {
+            workspace: commonOptions.workspace,
+            persistence: commonOptions.persistence,
+            json: {
+              type: "boolean",
+              description: "Emit JSON instead of human-readable text.",
+            },
+          },
+          handler: (result) => runDevReset(result),
+        },
+        run: {
+          description: "Launch the runtime against the isolated dev profile.",
+          options: {
+            ...commonOptions,
+            port: {
+              ...commonOptions.port,
+              default: 4100,
+            },
+          },
+          handler: (result) => runDevRuntime(result),
+        },
+      },
+    },
+    status: {
+      description: "Show an operational snapshot of the local Fifony runtime state.",
+      options: {
+        workspace: commonOptions.workspace,
+        persistence: commonOptions.persistence,
+        port: commonOptions.port,
+        json: {
+          type: "boolean",
+          description: "Emit JSON instead of human-readable text.",
+        },
+        all: {
+          type: "boolean",
+          description: "Include doctor details alongside the status snapshot.",
+        },
+      },
+      handler: (result) => runStatus(result),
+    },
+    probe: {
+      description: "Run a fast readiness probe over workspace, providers, services, agents, and memory.",
+      options: {
+        workspace: commonOptions.workspace,
+        persistence: commonOptions.persistence,
+        port: commonOptions.port,
+        json: {
+          type: "boolean",
+          description: "Emit JSON instead of human-readable text.",
+        },
+      },
+      handler: (result) => runProbe(result),
+    },
+    doctor: {
+      description: "Run detailed operational diagnostics for the local Fifony runtime.",
+      options: {
+        workspace: commonOptions.workspace,
+        persistence: commonOptions.persistence,
+        port: commonOptions.port,
+        json: {
+          type: "boolean",
+          description: "Emit JSON instead of human-readable text.",
+        },
+      },
+      handler: (result) => runDoctor(result),
     },
     onboarding: {
       description: "Manage reference repositories and import agents/skills from them.",

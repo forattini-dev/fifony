@@ -121,7 +121,7 @@ export async function readResource(uri: string): Promise<Array<Record<string, un
     if (diffMatch) {
       const issueId = decodeURIComponent(diffMatch[1]);
       try {
-        const result = await apiGet(`/api/diff/${encodeURIComponent(issueId)}`);
+        const result = await apiGet(`/api/issues/${encodeURIComponent(issueId)}/diff`);
         return [{ uri, mimeType: "application/json", text: JSON.stringify(result, null, 2) }];
       } catch (error) {
         return [{ uri, mimeType: "application/json", text: JSON.stringify({ error: String(error) }, null, 2) }];

@@ -4,7 +4,7 @@ const ASSET_CACHE = `fifony-assets-${CACHE_VERSION}`;
 const APP_SHELL_ROUTES = [
   "/onboarding",
   "/kanban",
-  "/projects",
+  "/milestones",
   "/workspace",
   "/issues",
   "/analytics",

@@ -7,6 +7,7 @@ import type {
   ReviewProfile,
   ReviewProfileName,
   ReviewRoutingSnapshot,
+  ReviewScope,
   ReviewRun,
 } from "../types.ts";
 import { deriveReviewProfile } from "./review-profile.ts";
@@ -46,8 +47,34 @@ type ContractNegotiationStats = {
   avgRoundsPerIssue: number | null;
 };
 
+type CheckpointPolicy = IssuePlan["executionContract"]["checkpointPolicy"];
+
+type CheckpointPolicyStats = {
+  reviewedIssues: number;
+  completedReviewedIssues: number;
+  gatePasses: number;
+  firstPassPasses: number;
+  reworkIssues: number;
+  checkpointFailures: number;
+  checkpointPasses: number;
+  checkpointRuns: number;
+  gatePassRate: number | null;
+  firstPassPassRate: number | null;
+  reviewReworkRate: number | null;
+  checkpointFailureRate: number | null;
+  checkpointPassRate: number | null;
+  avgCheckpointRunsPerIssue: number | null;
+};
+
 export type AdaptiveHarnessModeRecommendation = {
   mode: HarnessMode;
+  rationale: string;
+  profile: ReviewProfile;
+  basis: "historical" | "heuristic";
+};
+
+export type AdaptiveCheckpointPolicyRecommendation = {
+  checkpointPolicy: CheckpointPolicy;
   rationale: string;
   profile: ReviewProfile;
   basis: "historical" | "heuristic";
@@ -64,6 +91,12 @@ const HIGH_RISK_PROFILES = new Set<ReviewProfileName>([
   "workflow-fsm",
   "integration-safety",
   "api-contract",
+  "security-hardening",
+]);
+
+const HIGH_CHECKPOINT_PROFILES = new Set<ReviewProfileName>([
+  "workflow-fsm",
+  "integration-safety",
   "security-hardening",
 ]);
 
@@ -115,8 +148,19 @@ export function applyHarnessModeToPlan(
   mode: HarnessMode,
 ): void {
   plan.harnessMode = mode;
-  plan.executionContract.checkpointPolicy = mode === "contractual"
-    ? "checkpointed"
+  if (mode !== "contractual") {
+    plan.executionContract.checkpointPolicy = "final_only";
+  } else if (plan.executionContract.checkpointPolicy !== "checkpointed") {
+    plan.executionContract.checkpointPolicy = "final_only";
+  }
+}
+
+export function applyCheckpointPolicyToPlan(
+  plan: Pick<IssuePlan, "harnessMode" | "executionContract">,
+  checkpointPolicy: CheckpointPolicy,
+): void {
+  plan.executionContract.checkpointPolicy = plan.harnessMode === "contractual"
+    ? checkpointPolicy
     : "final_only";
 }
 
@@ -140,6 +184,22 @@ function resolveLatestCompletedContractNegotiationRuns(issue: IssueEntry): Contr
   const completed = runs.filter((entry) => entry.status === "completed");
   if (completed.length === 0) return [];
 
+  const latestPlanVersion = completed.reduce((maxPlanVersion, entry) => Math.max(maxPlanVersion, entry.planVersion ?? 0), 0);
+  return completed
+    .filter((entry) => (entry.planVersion ?? 0) === latestPlanVersion)
+    .sort((left, right) => {
+      if ((left.attempt ?? 0) !== (right.attempt ?? 0)) return (left.attempt ?? 0) - (right.attempt ?? 0);
+      const leftAt = Date.parse(left.completedAt ?? left.startedAt);
+      const rightAt = Date.parse(right.completedAt ?? right.startedAt);
+      if (!Number.isNaN(leftAt) && !Number.isNaN(rightAt) && leftAt !== rightAt) return leftAt - rightAt;
+      return left.id.localeCompare(right.id);
+    });
+}
+
+function resolveLatestCompletedScopedReviewRuns(issue: IssueEntry, scope: ReviewScope): ReviewRun[] {
+  const reviewRuns = Array.isArray(issue.reviewRuns) ? issue.reviewRuns : [];
+  const completed = reviewRuns.filter((entry) => entry.status === "completed" && entry.scope === scope);
+  if (completed.length === 0) return [];
   const latestPlanVersion = completed.reduce((maxPlanVersion, entry) => Math.max(maxPlanVersion, entry.planVersion ?? 0), 0);
   return completed
     .filter((entry) => (entry.planVersion ?? 0) === latestPlanVersion)
@@ -195,6 +255,81 @@ export function computeHarnessModeStats(issues: IssueEntry[], profileName: Revie
   };
 }
 
+export function computeCheckpointPolicyStats(
+  issues: IssueEntry[],
+  profileName: ReviewProfileName,
+): Record<CheckpointPolicy, CheckpointPolicyStats> {
+  const buckets: Record<CheckpointPolicy, Omit<CheckpointPolicyStats, "gatePassRate" | "firstPassPassRate" | "reviewReworkRate" | "checkpointFailureRate" | "checkpointPassRate" | "avgCheckpointRunsPerIssue">> = {
+    final_only: {
+      reviewedIssues: 0,
+      completedReviewedIssues: 0,
+      gatePasses: 0,
+      firstPassPasses: 0,
+      reworkIssues: 0,
+      checkpointFailures: 0,
+      checkpointPasses: 0,
+      checkpointRuns: 0,
+    },
+    checkpointed: {
+      reviewedIssues: 0,
+      completedReviewedIssues: 0,
+      gatePasses: 0,
+      firstPassPasses: 0,
+      reworkIssues: 0,
+      checkpointFailures: 0,
+      checkpointPasses: 0,
+      checkpointRuns: 0,
+    },
+  };
+
+  for (const issue of issues) {
+    if ((issue.plan?.harnessMode ?? "standard") !== "contractual") continue;
+    const finalReviewRun = resolveLatestCompletedReviewRun(issue, "final");
+    if (!finalReviewRun) continue;
+
+    const effectiveProfile = finalReviewRun.reviewProfile ?? resolveEffectiveReviewProfile(issue);
+    if (effectiveProfile.primary !== profileName) continue;
+
+    const checkpointPolicy = issue.plan?.executionContract?.checkpointPolicy === "checkpointed"
+      ? "checkpointed"
+      : "final_only";
+    const bucket = buckets[checkpointPolicy];
+    bucket.reviewedIssues += 1;
+    if (isCompletedIssue(issue)) bucket.completedReviewedIssues += 1;
+    if (finalReviewRun.blockingVerdict === "PASS") bucket.gatePasses += 1;
+    if ((issue.reviewAttempt ?? 0) <= 1 && !hadReviewRework(issue) && isCompletedIssue(issue)) bucket.firstPassPasses += 1;
+    if (hadReviewRework(issue)) bucket.reworkIssues += 1;
+
+    if (checkpointPolicy === "checkpointed") {
+      const checkpointRuns = resolveLatestCompletedScopedReviewRuns(issue, "checkpoint");
+      bucket.checkpointRuns += checkpointRuns.length;
+      if (checkpointRuns.some((entry) => entry.blockingVerdict === "FAIL")) bucket.checkpointFailures += 1;
+      if (checkpointRuns.some((entry) => entry.blockingVerdict === "PASS")) bucket.checkpointPasses += 1;
+    }
+  }
+
+  return {
+    final_only: {
+      ...buckets.final_only,
+      gatePassRate: rate(buckets.final_only.gatePasses, buckets.final_only.reviewedIssues),
+      firstPassPassRate: rate(buckets.final_only.firstPassPasses, buckets.final_only.completedReviewedIssues),
+      reviewReworkRate: rate(buckets.final_only.reworkIssues, buckets.final_only.reviewedIssues),
+      checkpointFailureRate: rate(buckets.final_only.checkpointFailures, buckets.final_only.reviewedIssues),
+      checkpointPassRate: rate(buckets.final_only.checkpointPasses, buckets.final_only.reviewedIssues),
+      avgCheckpointRunsPerIssue: rate(buckets.final_only.checkpointRuns, buckets.final_only.reviewedIssues),
+    },
+    checkpointed: {
+      ...buckets.checkpointed,
+      gatePassRate: rate(buckets.checkpointed.gatePasses, buckets.checkpointed.reviewedIssues),
+      firstPassPassRate: rate(buckets.checkpointed.firstPassPasses, buckets.checkpointed.completedReviewedIssues),
+      reviewReworkRate: rate(buckets.checkpointed.reworkIssues, buckets.checkpointed.reviewedIssues),
+      checkpointFailureRate: rate(buckets.checkpointed.checkpointFailures, buckets.checkpointed.reviewedIssues),
+      checkpointPassRate: rate(buckets.checkpointed.checkpointPasses, buckets.checkpointed.reviewedIssues),
+      avgCheckpointRunsPerIssue: rate(buckets.checkpointed.checkpointRuns, buckets.checkpointed.reviewedIssues),
+    },
+  };
+}
+
 export function computeContractNegotiationStats(
   issues: IssueEntry[],
   profileName: ReviewProfileName,
@@ -232,6 +367,99 @@ export function computeContractNegotiationStats(
     blockingConcernRate: rate(bucket.blockingConcernIssues, bucket.negotiatedIssues),
     avgRoundsPerIssue: rate(bucket.totalRounds, bucket.negotiatedIssues),
   };
+}
+
+export function recommendCheckpointPolicyForIssue(
+  issues: IssueEntry[],
+  issue: IssueEntry,
+  currentCheckpointPolicy: CheckpointPolicy,
+  minSamples = 3,
+): AdaptiveCheckpointPolicyRecommendation | null {
+  if (issue.plan?.harnessMode !== "contractual") {
+    if (currentCheckpointPolicy !== "final_only") {
+      const profile = resolveEffectiveReviewProfile(issue);
+      return {
+        checkpointPolicy: "final_only",
+        profile,
+        basis: "heuristic",
+        rationale: "Non-contractual plans must not request checkpoint review.",
+      };
+    }
+    return null;
+  }
+
+  const profile = resolveEffectiveReviewProfile(issue);
+  const complexity = issue.plan?.estimatedComplexity ?? "medium";
+  const lowScope = complexity === "trivial" || complexity === "low";
+  const highCheckpointRisk = HIGH_CHECKPOINT_PROFILES.has(profile.primary) && !lowScope;
+  const stats = computeCheckpointPolicyStats(issues, profile.primary);
+  const finalOnly = stats.final_only;
+  const checkpointed = stats.checkpointed;
+  const checkpointedSamplesReady = checkpointed.reviewedIssues >= minSamples;
+  const finalOnlySamplesReady = finalOnly.reviewedIssues >= minSamples;
+
+  if (currentCheckpointPolicy !== "checkpointed" && highCheckpointRisk) {
+    if (checkpointedSamplesReady && (checkpointed.checkpointFailureRate ?? 0) >= 0.15) {
+      return {
+        checkpointPolicy: "checkpointed",
+        profile,
+        basis: "historical",
+        rationale: `Enabled checkpoint review for ${profile.primary}: checkpointed runs caught blocking issues before final review in ${Math.round((checkpointed.checkpointFailureRate ?? 0) * 100)}% of ${checkpointed.reviewedIssues} comparable issue(s).`,
+      };
+    }
+    if (!checkpointedSamplesReady) {
+      return {
+        checkpointPolicy: "checkpointed",
+        profile,
+        basis: "heuristic",
+        rationale: `Enabled checkpoint review because ${profile.primary} changes are high-risk enough to benefit from an intermediate gate before final review.`,
+      };
+    }
+  }
+
+  if (checkpointedSamplesReady && finalOnlySamplesReady) {
+    const gateLift = (checkpointed.gatePassRate ?? 0) - (finalOnly.gatePassRate ?? 0);
+    const firstPassLift = (checkpointed.firstPassPassRate ?? 0) - (finalOnly.firstPassPassRate ?? 0);
+    const checkpointCatchRate = checkpointed.checkpointFailureRate ?? 0;
+
+    if (
+      currentCheckpointPolicy !== "checkpointed"
+      && (checkpointCatchRate >= 0.18 || gateLift >= 0.08 || firstPassLift >= 0.1)
+    ) {
+      return {
+        checkpointPolicy: "checkpointed",
+        profile,
+        basis: "historical",
+        rationale: `Enabled checkpoint review for ${profile.primary}: checkpointed runs show ${Math.round(checkpointCatchRate * 100)}% checkpoint catch rate, ${Math.round(gateLift * 100)}pp final gate lift, and ${Math.round(firstPassLift * 100)}pp first-pass lift over final-only contractual runs.`,
+      };
+    }
+
+    if (
+      currentCheckpointPolicy === "checkpointed"
+      && !highCheckpointRisk
+      && checkpointCatchRate <= 0.05
+      && (finalOnly.gatePassRate ?? 0) >= ((checkpointed.gatePassRate ?? 0) - 0.05)
+      && (finalOnly.firstPassPassRate ?? 0) >= ((checkpointed.firstPassPassRate ?? 0) - 0.05)
+    ) {
+      return {
+        checkpointPolicy: "final_only",
+        profile,
+        basis: "historical",
+        rationale: `Disabled checkpoint review for ${profile.primary}: checkpointed runs almost never catch issues before final review (${Math.round(checkpointCatchRate * 100)}%), while final-only contractual runs stay within 5pp on final gate and first-pass outcomes.`,
+      };
+    }
+  }
+
+  if (currentCheckpointPolicy === "checkpointed" && lowScope) {
+    return {
+      checkpointPolicy: "final_only",
+      profile,
+      basis: "heuristic",
+      rationale: `Disabled checkpoint review because ${complexity} contractual work should keep the contract gate but avoid an intermediate review pass.`,
+    };
+  }
+
+  return null;
 }
 
 export function recommendHarnessModeForIssue(
@@ -283,7 +511,7 @@ export function recommendHarnessModeForIssue(
       mode: "contractual",
       profile,
       basis: "heuristic",
-      rationale: `Switched to contractual because ${profile.primary} is a high-risk profile and needs checkpointed review semantics.`,
+      rationale: `Switched to contractual because ${profile.primary} is a high-risk profile and needs stronger contract negotiation plus skeptical review semantics.`,
     };
   }
 

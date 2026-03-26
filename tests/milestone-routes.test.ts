@@ -1,30 +1,15 @@
-import { describe, it } from "node:test";
+import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { registerMilestoneRoutes } from "../src/routes/projects.ts";
 import { buildRuntimeState, createIssueFromPayload } from "../src/domains/issues.ts";
 import { deriveConfig } from "../src/domains/config.ts";
-import type { ApiRouteContext, RouteHandler, RouteRegistrar } from "../src/routes/http.ts";
-
-function createRouteCollector(): RouteRegistrar & { routes: Map<string, RouteHandler> } {
-  const routes = new Map<string, RouteHandler>();
-  const register = (method: string) => (path: string, handler: RouteHandler) => {
-    routes.set(`${method} ${path}`, handler);
-  };
-
-  return {
-    routes,
-    get: register("GET"),
-    post: register("POST"),
-    put: register("PUT"),
-    patch: register("PATCH"),
-    delete: register("DELETE"),
-  };
-}
+import { setApiRuntimeContext, clearApiRuntimeContext } from "../src/persistence/plugins/api-runtime-context.ts";
+import { createMilestone, deleteMilestone } from "../src/persistence/resources/milestones.resource.ts";
+import { assignIssueMilestoneForState } from "../src/persistence/resources/issue-milestone.api.ts";
 
 function createJsonContext(
   params: Record<string, string> = {},
   body: unknown = {},
-): ApiRouteContext {
+) {
   return {
     req: {
       param(name: string) {
@@ -37,41 +22,38 @@ function createJsonContext(
         return body;
       },
     },
-    json(payload: unknown, status = 200) {
-      return new Response(JSON.stringify(payload), {
-        status,
-        headers: { "content-type": "application/json" },
-      });
-    },
-    body(payload: unknown, status = 200, headers = {}) {
-      return new Response(payload as BodyInit | null, { status, headers });
-    },
   };
 }
 
-async function readJson(response: Response): Promise<any> {
-  return await response.json();
-}
+afterEach(() => {
+  clearApiRuntimeContext();
+});
 
-describe("milestone routes", () => {
+const NOOP_MILESTONE_DEPS = {
+  persistState: async () => {},
+  deleteMilestoneRecord: async () => {},
+};
+
+const NOOP_ISSUE_DEPS = {
+  persistState: async () => {},
+};
+
+describe("milestone resource api", () => {
   it("creates a milestone and exposes the generated summary fields", async () => {
     const state = buildRuntimeState(null, deriveConfig([]));
-    const app = createRouteCollector();
-    registerMilestoneRoutes(app, state);
+    setApiRuntimeContext(state);
 
-    const handler = app.routes.get("POST /api/milestones");
-    assert.ok(handler, "milestone creation route should be registered");
-
-    const response = await handler!(
+    const result = await createMilestone(
       createJsonContext({}, {
         name: "Core Platform",
         description: "Track core delivery work",
         status: "active",
       }),
+      NOOP_MILESTONE_DEPS,
     );
-    const payload = await readJson(response);
 
-    assert.equal(response.status, 201);
+    const payload = result.body as { ok: boolean };
+    assert.equal(result.status, 201);
     assert.equal(payload.ok, true);
     assert.equal(state.milestones.length, 1);
     assert.equal(state.milestones[0].name, "Core Platform");
@@ -117,18 +99,16 @@ describe("milestone routes", () => {
         milestoneId: "milestone-a",
       }, []),
     ];
+    setApiRuntimeContext(state);
 
-    const app = createRouteCollector();
-    registerMilestoneRoutes(app, state);
-    const handler = app.routes.get("POST /api/issues/:id/milestone");
-    assert.ok(handler, "issue milestone assignment route should be registered");
-
-    const response = await handler!(
+    const result = await assignIssueMilestoneForState(
+      state,
       createJsonContext({ id: "issue-1" }, { milestoneId: "milestone-b" }),
+      NOOP_ISSUE_DEPS,
     );
-    const payload = await readJson(response);
 
-    assert.equal(response.status, 200);
+    const payload = result.body as { ok: boolean };
+    assert.equal(result.status, undefined);
     assert.equal(payload.ok, true);
     assert.equal(state.issues[0].milestoneId, "milestone-b");
     assert.equal(state.milestones.find((m) => m.id === "milestone-a")?.issueCount, 0);
@@ -159,16 +139,12 @@ describe("milestone routes", () => {
         milestoneId: "milestone-core",
       }, []),
     ];
+    setApiRuntimeContext(state);
 
-    const app = createRouteCollector();
-    registerMilestoneRoutes(app, state);
-    const handler = app.routes.get("DELETE /api/milestones/:id");
-    assert.ok(handler, "milestone delete route should be registered");
+    const result = await deleteMilestone(createJsonContext({ id: "milestone-core" }), NOOP_MILESTONE_DEPS);
+    const payload = result.body as { ok: boolean; error: string };
 
-    const response = await handler!(createJsonContext({ id: "milestone-core" }));
-    const payload = await readJson(response);
-
-    assert.equal(response.status, 409);
+    assert.equal(result.status, 409);
     assert.equal(payload.ok, false);
     assert.match(payload.error, /linked issues/i);
     assert.equal(state.milestones.length, 1);

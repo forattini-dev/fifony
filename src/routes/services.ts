@@ -1,22 +1,22 @@
-import type { RuntimeState, DevServerEntry } from "../types.ts";
+import type { RuntimeState } from "../types.ts";
 import type { RouteRegistrar } from "./http.ts";
 import { STATE_ROOT, TARGET_ROOT } from "../concerns/constants.ts";
 import { logger } from "../concerns/logger.ts";
 import {
-  replaceAllDevServers,
-  replacePersistedDevServer,
-  deletePersistedDevServer,
-} from "../persistence/store.ts";
-import {
-  getDevServerRuntimeStatus,
-  listDevServerStatuses,
-  startManagedDevServer,
-  stopManagedDevServer,
-  readDevServerLogTail,
-  getManagedDevServerLogPath,
-  type DevServerTransition,
-} from "../domains/dev-server.ts";
+  getServiceRuntimeStatus,
+  listServiceStatuses,
+  startManagedService,
+  stopManagedService,
+  readServiceLogTail,
+  getManagedServiceLogPath,
+  type ServiceTransition,
+} from "../domains/services.ts";
 import { broadcastToWebSocketClients } from "./websocket.ts";
+import {
+  replaceServiceConfigs,
+  upsertServiceConfig,
+  deleteServiceConfig,
+} from "../persistence/resources/services.resource.ts";
 import {
   closeSync,
   existsSync,
@@ -30,15 +30,15 @@ import { join } from "node:path";
 
 // ── Detection helpers ─────────────────────────────────────────────────────────
 
-type DetectedServer = {
+type DetectedService = {
   label: string;
   command: string;
   cwd?: string;
   isRoot: boolean;
 };
 
-function detectDevServers(targetRoot: string): DetectedServer[] {
-  const suggestions: DetectedServer[] = [];
+function detectServices(targetRoot: string): DetectedService[] {
+  const suggestions: DetectedService[] = [];
 
   // 1. turbo.json → suggest pnpm turbo dev
   if (existsSync(join(targetRoot, "turbo.json"))) {
@@ -144,9 +144,9 @@ function detectDevServers(targetRoot: string): DetectedServer[] {
 
 // ── Broadcast helper ──────────────────────────────────────────────────────────
 
-function broadcastTransition(t: DevServerTransition): void {
+function broadcastTransition(t: ServiceTransition): void {
   broadcastToWebSocketClients({
-    type: "dev-server",
+    type: "service",
     id: t.id,
     state: t.to,
     running: t.to === "starting" || t.to === "running",
@@ -156,67 +156,67 @@ function broadcastTransition(t: DevServerTransition): void {
 
 // ── Route registration ────────────────────────────────────────────────────────
 
-export function registerDevServerRoutes(
+export function registerServiceRoutes(
   app: RouteRegistrar,
   state: RuntimeState,
 ): void {
-  // GET /api/dev-server — list all entries with status
-  app.get("/api/dev-server", (c) => {
-    const entries = state.config.devServers ?? [];
-    const servers = listDevServerStatuses(entries, STATE_ROOT);
-    return c.json({ ok: true, servers });
+  // GET /api/services — list all entries with status
+  app.get("/api/services", (c) => {
+    const entries = state.config.services ?? [];
+    const services = listServiceStatuses(entries, STATE_ROOT);
+    return c.json({ ok: true, services });
   });
 
-  // GET /api/dev-server/detect — scan project for runnable commands
-  app.get("/api/dev-server/detect", (c) => {
+  // GET /api/services/detect — scan project for runnable commands
+  app.get("/api/services/detect", (c) => {
     try {
-      const suggestions = detectDevServers(TARGET_ROOT);
+      const suggestions = detectServices(TARGET_ROOT);
       return c.json({ ok: true, suggestions });
     } catch (err) {
-      logger.error({ err }, "[DevServer] Detection failed");
+      logger.error({ err }, "[Service] Detection failed");
       return c.json({ ok: false, error: String(err) }, 500);
     }
   });
 
-  // GET /api/dev-server/:id/status
-  app.get("/api/dev-server/:id/status", (c) => {
+  // GET /api/services/:id/status
+  app.get("/api/services/:id/status", (c) => {
     const id = c.req.param("id");
-    const entry = (state.config.devServers ?? []).find((e) => e.id === id);
-    if (!entry) return c.json({ ok: false, error: "Dev server not found." }, 404);
-    return c.json({ ok: true, ...getDevServerRuntimeStatus(entry, STATE_ROOT) });
+    const entry = (state.config.services ?? []).find((e) => e.id === id);
+    if (!entry) return c.json({ ok: false, error: "Service not found." }, 404);
+    return c.json({ ok: true, ...getServiceRuntimeStatus(entry, STATE_ROOT) });
   });
 
-  // POST /api/dev-server/:id/start
-  app.post("/api/dev-server/:id/start", (c) => {
+  // POST /api/services/:id/start
+  app.post("/api/services/:id/start", (c) => {
     const id = c.req.param("id");
-    const entry = (state.config.devServers ?? []).find((e) => e.id === id);
-    if (!entry) return c.json({ ok: false, error: "Dev server not found." }, 404);
+    const entry = (state.config.services ?? []).find((e) => e.id === id);
+    if (!entry) return c.json({ ok: false, error: "Service not found." }, 404);
     try {
-      const t = startManagedDevServer(entry, TARGET_ROOT, STATE_ROOT);
+      const t = startManagedService(entry, TARGET_ROOT, STATE_ROOT, state.config.serviceEnv);
       broadcastTransition(t);
       return c.json({ ok: true, pid: t.pid, state: t.to });
     } catch (err) {
-      logger.error({ err }, `[DevServer] Failed to start ${id}`);
+      logger.error({ err }, `[Service] Failed to start ${id}`);
       return c.json({ ok: false, error: String(err) }, 500);
     }
   });
 
-  // POST /api/dev-server/:id/stop
-  app.post("/api/dev-server/:id/stop", (c) => {
+  // POST /api/services/:id/stop
+  app.post("/api/services/:id/stop", (c) => {
     const id = c.req.param("id");
-    const entry = (state.config.devServers ?? []).find((e) => e.id === id);
-    if (!entry) return c.json({ ok: false, error: "Dev server not found." }, 404);
-    const t = stopManagedDevServer(id, STATE_ROOT);
+    const entry = (state.config.services ?? []).find((e) => e.id === id);
+    if (!entry) return c.json({ ok: false, error: "Service not found." }, 404);
+    const t = stopManagedService(id, STATE_ROOT);
     if (t) broadcastTransition(t);
     return c.json({ ok: true, state: t?.to ?? "stopped" });
   });
 
-  // GET /api/dev-server/:id/log — tail (last 16KB) or new bytes since ?after=N
-  app.get("/api/dev-server/:id/log", (c) => {
+  // GET /api/services/:id/log — tail (last 16KB) or new bytes since ?after=N
+  app.get("/api/services/:id/log", (c) => {
     const id = c.req.param("id");
-    const entry = (state.config.devServers ?? []).find((e) => e.id === id);
-    if (!entry) return c.json({ ok: false, error: "Dev server not found." }, 404);
-    const logFile = getManagedDevServerLogPath(id, STATE_ROOT);
+    const entry = (state.config.services ?? []).find((e) => e.id === id);
+    if (!entry) return c.json({ ok: false, error: "Service not found." }, 404);
+    const logFile = getManagedServiceLogPath(id, STATE_ROOT);
     let logSize = 0;
     if (existsSync(logFile)) {
       try { logSize = statSync(logFile).size; } catch {}
@@ -237,18 +237,18 @@ export function registerDevServerRoutes(
       }
     }
     // Full tail: last 16KB
-    const logTail = readDevServerLogTail(id, STATE_ROOT, 16_384);
+    const logTail = readServiceLogTail(id, STATE_ROOT, 16_384);
     const truncated = logSize > 16_384;
     return c.json({ ok: true, logTail, logSize, truncated });
   });
 
-  // GET /api/dev-server/:id/stream — SSE live log
-  app.get("/api/dev-server/:id/stream", (c) => {
+  // GET /api/services/:id/stream — SSE live log
+  app.get("/api/services/:id/stream", (c) => {
     const id = c.req.param("id");
-    const entry = (state.config.devServers ?? []).find((e) => e.id === id);
-    if (!entry) return c.json({ ok: false, error: "Dev server not found." }, 404);
+    const entry = (state.config.services ?? []).find((e) => e.id === id);
+    if (!entry) return c.json({ ok: false, error: "Service not found." }, 404);
 
-    const logFile = getManagedDevServerLogPath(id, STATE_ROOT);
+    const logFile = getManagedServiceLogPath(id, STATE_ROOT);
 
     const enc = new TextEncoder();
     const sseMsg = (data: unknown) => enc.encode(`data: ${JSON.stringify(data)}\n\n`);
@@ -284,7 +284,7 @@ export function registerDevServerRoutes(
           try {
             const stat = statSync(logFile);
             if (stat.size < lastSize) {
-              // File was truncated (server restarted) — re-init from beginning
+              // File was truncated (service restarted) — re-init from beginning
               lastSize = 0;
               const readSize = Math.min(stat.size, 16_384);
               let text = "";
@@ -311,9 +311,9 @@ export function registerDevServerRoutes(
 
         // Notify client if process dies
         statusCheckId = setInterval(() => {
-          const currentEntry = (state.config.devServers ?? []).find((e) => e.id === id);
+          const currentEntry = (state.config.services ?? []).find((e) => e.id === id);
           if (!currentEntry) return;
-          const status = getDevServerRuntimeStatus(currentEntry, STATE_ROOT);
+          const status = getServiceRuntimeStatus(currentEntry, STATE_ROOT);
           if (!status.running) {
             try { ctrl.enqueue(sseMsg({ type: "status", running: false })); } catch {}
           }
@@ -338,54 +338,47 @@ export function registerDevServerRoutes(
     });
   });
 
-  // POST /api/dev-server/config — save the devServers array
-  app.post("/api/dev-server/config", async (c) => {
-    try {
-      const body = await c.req.json() as { servers: unknown };
-      if (!Array.isArray(body.servers)) {
-        return c.json({ ok: false, error: "Invalid servers array" }, 400);
-      }
-      const entries = body.servers as DevServerEntry[];
-      await replaceAllDevServers(entries);
-      state.config.devServers = entries;
-      return c.json({ ok: true });
-    } catch (err) {
-      return c.json({ ok: false, error: String(err) }, 500);
-    }
+  // POST /api/services/config — save the services array
+  app.post("/api/services/config", async (c) => {
+    const result = await replaceServiceConfigs(c, {
+      replaceAllServices: async (entries) => {
+        const { replaceAllServices } = await import("../persistence/store.ts");
+        await replaceAllServices(entries);
+      },
+      replacePersistedService: async () => {},
+      deletePersistedService: async () => {},
+    });
+    return c.json(result.body, result.status ?? 200);
   });
 
-  // DELETE /api/dev-server/:id — stop + remove a single entry
-  app.delete("/api/dev-server/:id", async (c) => {
+  // DELETE /api/services/:id — stop + remove a single entry
+  app.delete("/api/services/:id", async (c) => {
     const id = c.req.param("id");
     try {
-      const t = stopManagedDevServer(id, STATE_ROOT);
+      const t = stopManagedService(id, STATE_ROOT);
       if (t) broadcastTransition(t);
     } catch { /* ignore if not running */ }
-    await deletePersistedDevServer(id);
-    state.config.devServers = (state.config.devServers ?? []).filter((e) => e.id !== id);
-    return c.json({ ok: true });
+    const result = await deleteServiceConfig(c, {
+      deletePersistedService: async (serviceId) => {
+        const { deletePersistedService } = await import("../persistence/store.ts");
+        await deletePersistedService(serviceId);
+      },
+      replacePersistedService: async () => {},
+      replaceAllServices: async () => {},
+    });
+    return c.json(result.body, result.status ?? 200);
   });
 
-  // PUT /api/dev-server/:id — update a single entry
-  app.put("/api/dev-server/:id", async (c) => {
-    const id = c.req.param("id");
-    try {
-      const entry = await c.req.json() as DevServerEntry;
-      if (!entry.id || !entry.name || !entry.command) {
-        return c.json({ ok: false, error: "id, name, and command are required" }, 400);
-      }
-      await replacePersistedDevServer(entry);
-      const existing = state.config.devServers ?? [];
-      const idx = existing.findIndex((e) => e.id === id);
-      if (idx >= 0) {
-        existing[idx] = entry;
-      } else {
-        existing.push(entry);
-      }
-      state.config.devServers = existing;
-      return c.json({ ok: true });
-    } catch (err) {
-      return c.json({ ok: false, error: String(err) }, 500);
-    }
+  // PUT /api/services/:id — update a single entry
+  app.put("/api/services/:id", async (c) => {
+    const result = await upsertServiceConfig(c, {
+      replacePersistedService: async (entry) => {
+        const { replacePersistedService } = await import("../persistence/store.ts");
+        await replacePersistedService(entry);
+      },
+      deletePersistedService: async () => {},
+      replaceAllServices: async () => {},
+    });
+    return c.json(result.body, result.status ?? 200);
   });
 }

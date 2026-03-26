@@ -1,6 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { IssueEntry, AgentProviderDefinition, RuntimeConfig, ReviewScope } from "../../types.ts";
+import type { IssueEntry, AgentProviderDefinition, RuntimeConfig, ReviewProfile, ReviewScope } from "../../types.ts";
 import type { CompiledContractNegotiation, CompiledExecution, CompiledReview, ExecutionAudit } from "./types.ts";
 import { buildExecutionPayload, buildFullPlanPrompt, deriveExecutionContract, normalizeAcceptanceCriteria } from "./shared.ts";
 import { ADAPTERS } from "./registry.ts";
@@ -63,6 +63,24 @@ export async function compileExecution(
   return compiled;
 }
 
+// ── Shared reviewer template vars ────────────────────────────────────────────
+
+function buildReviewerTemplateVars(reviewer: AgentProviderDefinition, reviewProfile: ReviewProfile) {
+  return {
+    reviewerProvider: reviewer.provider,
+    reviewerModel: reviewer.model || "",
+    reviewerEffort: reviewer.reasoningEffort || "",
+    reviewerSelectionReason: reviewer.selectionReason || "",
+    reviewerOverlays: (reviewer.overlays ?? []).map((value) => ({ value })),
+    reviewProfile,
+    reviewProfileSecondary: reviewProfile.secondary.map((value) => ({ value })),
+    reviewProfileRationale: reviewProfile.rationale.map((value) => ({ value })),
+    reviewProfileFocusAreas: reviewProfile.focusAreas.map((value) => ({ value })),
+    reviewProfileFailureModes: reviewProfile.failureModes.map((value) => ({ value })),
+    reviewProfileEvidencePriorities: reviewProfile.evidencePriorities.map((value) => ({ value })),
+  };
+}
+
 // ── Compile review ───────────────────────────────────────────────────────────
 
 export async function compileReview(
@@ -88,15 +106,7 @@ export async function compileReview(
     description: issue.description || "(none)",
     workspacePath,
     planPrompt: plan ? buildFullPlanPrompt(plan) : "",
-    acceptanceCriteria: acceptanceCriteria.map((criterion) => ({
-      id: criterion.id,
-      description: criterion.description,
-      category: criterion.category,
-      verificationMethod: criterion.verificationMethod,
-      evidenceExpected: criterion.evidenceExpected,
-      blocking: criterion.blocking,
-      weight: criterion.weight,
-    })),
+    acceptanceCriteria,
     deliverables: (executionContract?.deliverables ?? []).map((value) => ({ value })),
     requiredChecks: (executionContract?.requiredChecks ?? []).map((value) => ({ value })),
     requiredEvidence: (executionContract?.requiredEvidence ?? []).map((value) => ({ value })),
@@ -106,17 +116,7 @@ export async function compileReview(
     reviewScopeGoal: scopeConfig.goal,
     reviewScopeVerdictRule: scopeConfig.verdictRule,
     reviewScopeInstructions: scopeConfig.instructions.map((value) => ({ value })),
-    reviewerProvider: reviewer.provider,
-    reviewerModel: reviewer.model || "",
-    reviewerEffort: reviewer.reasoningEffort || "",
-    reviewerSelectionReason: reviewer.selectionReason || "",
-    reviewerOverlays: (reviewer.overlays ?? []).map((value) => ({ value })),
-    reviewProfile,
-    reviewProfileSecondary: reviewProfile.secondary.map((value) => ({ value })),
-    reviewProfileRationale: reviewProfile.rationale.map((value) => ({ value })),
-    reviewProfileFocusAreas: reviewProfile.focusAreas.map((value) => ({ value })),
-    reviewProfileFailureModes: reviewProfile.failureModes.map((value) => ({ value })),
-    reviewProfileEvidencePriorities: reviewProfile.evidencePriorities.map((value) => ({ value })),
+    ...buildReviewerTemplateVars(reviewer, reviewProfile),
     diffSummary,
     hasFrontendChanges,
     images: issue.images?.length ? issue.images : undefined,
@@ -167,30 +167,12 @@ export async function compileContractNegotiation(
     round,
     maxRounds,
     planPrompt: plan ? buildFullPlanPrompt(plan) : "",
-    acceptanceCriteria: acceptanceCriteria.map((criterion) => ({
-      id: criterion.id,
-      description: criterion.description,
-      category: criterion.category,
-      verificationMethod: criterion.verificationMethod,
-      evidenceExpected: criterion.evidenceExpected,
-      blocking: criterion.blocking,
-      weight: criterion.weight,
-    })),
+    acceptanceCriteria,
     deliverables: (executionContract?.deliverables ?? []).map((value) => ({ value })),
     requiredChecks: (executionContract?.requiredChecks ?? []).map((value) => ({ value })),
     requiredEvidence: (executionContract?.requiredEvidence ?? []).map((value) => ({ value })),
     executionContract,
-    reviewerProvider: reviewer.provider,
-    reviewerModel: reviewer.model || "",
-    reviewerEffort: reviewer.reasoningEffort || "",
-    reviewerSelectionReason: reviewer.selectionReason || "",
-    reviewerOverlays: (reviewer.overlays ?? []).map((value) => ({ value })),
-    reviewProfile,
-    reviewProfileSecondary: reviewProfile.secondary.map((value) => ({ value })),
-    reviewProfileRationale: reviewProfile.rationale.map((value) => ({ value })),
-    reviewProfileFocusAreas: reviewProfile.focusAreas.map((value) => ({ value })),
-    reviewProfileFailureModes: reviewProfile.failureModes.map((value) => ({ value })),
-    reviewProfileEvidencePriorities: reviewProfile.evidencePriorities.map((value) => ({ value })),
+    ...buildReviewerTemplateVars(reviewer, reviewProfile),
     currentNegotiationStatus: issue.contractNegotiationStatus || "",
     priorNegotiationSummary: previousRun?.summary
       ? `${previousRun.summary}\n${previousRun.rationale ? `Reason: ${previousRun.rationale}` : ""}`.trim()

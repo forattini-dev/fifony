@@ -1,7 +1,7 @@
 import { createLazyFileRoute } from "@tanstack/react-router";
 import { useTokenAnalytics, useCodeChurnAnalytics, useKpiAnalytics } from "../hooks.js";
 import { fillDailyGaps } from "../utils.js";
-import { Zap, TrendingUp, Layers, Cpu, Clock, Activity, GitMerge, Timer, GitPullRequestArrow } from "lucide-react";
+import { Zap, TrendingUp, Layers, Cpu, Clock, Activity, GitMerge, Timer, GitPullRequestArrow, ClipboardCheck, ShieldAlert } from "lucide-react";
 import { useRef, useEffect, useState } from "react";
 
 // ── Format helpers ───────────────────────────────────────────────────────
@@ -534,6 +534,16 @@ function fmtLines(n) {
   return Math.round(n).toString();
 }
 
+function fmtPercent(n) {
+  if (n == null || !Number.isFinite(n)) return "–";
+  return `${Math.round(n * 100)}%`;
+}
+
+function fmtFloat(n) {
+  if (n == null || !Number.isFinite(n)) return "–";
+  return n.toFixed(1);
+}
+
 function KpiCard({ icon: Icon, iconClass, title, avg, median, n, formatValue, unit }) {
   return (
     <div className="stat bg-base-200 rounded-box">
@@ -549,6 +559,175 @@ function KpiCard({ icon: Icon, iconClass, title, avg, median, n, formatValue, un
         {median != null ? `median ${formatValue(median)}` : "–"}
         {n != null && <span className="opacity-40"> · n={n}</span>}
       </div>
+    </div>
+  );
+}
+
+function QualityStatCard({ icon: Icon, iconClass, title, value, desc }) {
+  return (
+    <div className="stat bg-base-200 rounded-box">
+      <div className={`stat-figure ${iconClass}`}>
+        <Icon className="size-5" />
+      </div>
+      <div className="stat-title">{title}</div>
+      <div className={`stat-value text-2xl ${iconClass}`}>{value}</div>
+      <div className="stat-desc">{desc}</div>
+    </div>
+  );
+}
+
+function ReviewHarnessModeTable({ byHarnessMode }) {
+  const entries = Object.entries(byHarnessMode || {})
+    .map(([mode, bucket]) => ({ mode, ...(bucket || {}) }))
+    .filter((entry) => (entry.reviewedIssues || 0) > 0)
+    .sort((left, right) => (right.reviewedIssues || 0) - (left.reviewedIssues || 0));
+
+  if (entries.length === 0) {
+    return <div className="text-sm opacity-45">No reviewed issues yet.</div>;
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="table table-sm">
+        <thead>
+          <tr>
+            <th>Harness</th>
+            <th className="text-right">Reviewed</th>
+            <th className="text-right">First Pass</th>
+            <th className="text-right">Rework</th>
+            <th className="text-right">Criteria Fail</th>
+          </tr>
+        </thead>
+        <tbody>
+          {entries.map((entry) => (
+            <tr key={entry.mode}>
+              <td className="font-medium capitalize">{entry.mode}</td>
+              <td className="text-right font-mono">{entry.reviewedIssues || 0}</td>
+              <td className="text-right font-mono">{fmtPercent(entry.firstPassReviewPassRate)}</td>
+              <td className="text-right font-mono">{fmtPercent(entry.reviewReworkRate)}</td>
+              <td className="text-right font-mono">{fmtPercent(entry.criteriaFailureRate)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ContractNegotiationProfileTable({ contractNegotiation }) {
+  const entries = Object.entries(contractNegotiation?.byReviewProfile || {})
+    .map(([profile, bucket]) => ({ profile, ...(bucket || {}) }))
+    .filter((entry) => (entry.negotiatedIssues || 0) > 0)
+    .sort((left, right) => (right.negotiatedIssues || 0) - (left.negotiatedIssues || 0));
+
+  if (entries.length === 0) {
+    return <div className="text-sm opacity-45">No contractual negotiation history yet.</div>;
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="table table-sm">
+        <thead>
+          <tr>
+            <th>Profile</th>
+            <th className="text-right">Negotiated</th>
+            <th className="text-right">First Pass</th>
+            <th className="text-right">Revisions</th>
+            <th className="text-right">Blocking</th>
+            <th className="text-right">Avg Rounds</th>
+          </tr>
+        </thead>
+        <tbody>
+          {entries.map((entry) => (
+            <tr key={entry.profile}>
+              <td className="font-medium">{entry.profile}</td>
+              <td className="text-right font-mono">{entry.negotiatedIssues || 0}</td>
+              <td className="text-right font-mono">{fmtPercent(entry.firstPassApprovalRate)}</td>
+              <td className="text-right font-mono">{fmtPercent(entry.revisionRate)}</td>
+              <td className="text-right font-mono">{fmtPercent(entry.blockingConcernRate)}</td>
+              <td className="text-right font-mono">{fmtFloat(entry.avgRoundsPerIssue)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function CheckpointPolicyTable({ checkpointPolicy }) {
+  const entries = Object.entries(checkpointPolicy || {})
+    .map(([policy, bucket]) => ({ policy, ...(bucket || {}) }))
+    .filter((entry) => (entry.reviewedIssues || 0) > 0)
+    .sort((left, right) => (right.reviewedIssues || 0) - (left.reviewedIssues || 0));
+
+  if (entries.length === 0) {
+    return <div className="text-sm opacity-45">No contractual review history yet.</div>;
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="table table-sm">
+        <thead>
+          <tr>
+            <th>Policy</th>
+            <th className="text-right">Reviewed</th>
+            <th className="text-right">Final Gate</th>
+            <th className="text-right">First Pass</th>
+            <th className="text-right">Rework</th>
+            <th className="text-right">Catch</th>
+            <th className="text-right">Avg CP Runs</th>
+          </tr>
+        </thead>
+        <tbody>
+          {entries.map((entry) => (
+            <tr key={entry.policy}>
+              <td className="font-medium">{entry.policy}</td>
+              <td className="text-right font-mono">{entry.reviewedIssues || 0}</td>
+              <td className="text-right font-mono">{fmtPercent(entry.gatePassRate)}</td>
+              <td className="text-right font-mono">{fmtPercent(entry.firstPassReviewPassRate)}</td>
+              <td className="text-right font-mono">{fmtPercent(entry.reviewReworkRate)}</td>
+              <td className="text-right font-mono">{fmtPercent(entry.checkpointCatchRate)}</td>
+              <td className="text-right font-mono">{fmtFloat(entry.avgCheckpointRunsPerIssue)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ContextLayerTable({ memoryPipeline }) {
+  const entries = Object.entries(memoryPipeline?.byLayer || {})
+    .map(([layer, bucket]) => ({ layer, ...(bucket || {}) }))
+    .filter((entry) => (entry.hitCount || 0) > 0)
+    .sort((left, right) => (right.hitCount || 0) - (left.hitCount || 0));
+
+  if (entries.length === 0) {
+    return <div className="text-sm opacity-45">No context assembly reports yet.</div>;
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="table table-sm">
+        <thead>
+          <tr>
+            <th>Layer</th>
+            <th className="text-right">Hits</th>
+            <th className="text-right">Selected</th>
+            <th className="text-right">Discarded</th>
+          </tr>
+        </thead>
+        <tbody>
+          {entries.map((entry) => (
+            <tr key={entry.layer}>
+              <td className="font-medium">{entry.layer}</td>
+              <td className="text-right font-mono">{entry.hitCount || 0}</td>
+              <td className="text-right font-mono">{entry.selectedHitCount || 0}</td>
+              <td className="text-right font-mono">{entry.discardedHitCount || 0}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -747,6 +926,96 @@ function KpiSection() {
   );
 }
 
+function QualityGateSection() {
+  const { data: kpiData } = useKpiAnalytics();
+  const kpis = kpiData?.ok ? kpiData : null;
+  const quality = kpis?.qualityGate || null;
+  const contract = quality?.contractNegotiation || null;
+  const checkpoint = quality?.checkpointPolicy || null;
+  const memoryPipeline = quality?.memoryPipeline || null;
+
+  if (!kpiData) return <SectionSkeleton h="h-72" />;
+  if (!quality) return null;
+
+  return (
+    <section className="bg-base-200 rounded-box p-5">
+      <h2 className="text-sm font-semibold flex items-center gap-2 mb-4">
+        <ClipboardCheck className="size-4 text-success" />
+        Harness Quality
+      </h2>
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-7 gap-4">
+        <QualityStatCard
+          icon={ClipboardCheck}
+          iconClass="text-success"
+          title="Review First Pass"
+          value={fmtPercent(quality.firstPassReviewPassRate)}
+          desc={`${quality.completedReviewedIssues || 0} completed reviewed issues`}
+        />
+        <QualityStatCard
+          icon={ShieldAlert}
+          iconClass="text-warning"
+          title="Review Rework"
+          value={fmtPercent(quality.reviewReworkRate)}
+          desc={`${quality.reviewedIssues || 0} reviewed issues`}
+        />
+        <QualityStatCard
+          icon={Layers}
+          iconClass="text-info"
+          title="Contract First Pass"
+          value={fmtPercent(contract?.firstPassApprovalRate)}
+          desc={`${contract?.negotiatedIssues || 0} negotiated issues`}
+        />
+        <QualityStatCard
+          icon={Activity}
+          iconClass="text-error"
+          title="Blocking Concerns"
+          value={fmtPercent(contract?.blockingConcernRate)}
+          desc={contract?.negotiatedIssues ? `${fmtFloat(contract?.avgRoundsPerIssue)} avg rounds / issue` : "No negotiation history yet"}
+        />
+        <QualityStatCard
+          icon={Layers}
+          iconClass="text-info"
+          title="Checkpoint Catch"
+          value={fmtPercent(checkpoint?.checkpointed?.checkpointCatchRate)}
+          desc={checkpoint?.checkpointed?.reviewedIssues ? `${checkpoint.checkpointed.reviewedIssues} checkpointed contractual issue${checkpoint.checkpointed.reviewedIssues !== 1 ? "s" : ""}` : "No checkpointed contractual history yet"}
+        />
+        <QualityStatCard
+          icon={Cpu}
+          iconClass="text-primary"
+          title="Memory Coverage"
+          value={fmtPercent(memoryPipeline?.memoryFlushCoverageRate)}
+          desc={memoryPipeline?.issuesWithMemoryFlushes ? `${memoryPipeline.issuesWithMemoryFlushes} issue workspaces flushed` : "No workspace memory flushes yet"}
+        />
+        <QualityStatCard
+          icon={Activity}
+          iconClass="text-secondary"
+          title="Context Coverage"
+          value={fmtPercent(memoryPipeline?.contextReportCoverageRate)}
+          desc={memoryPipeline?.issuesWithContextReports ? `${memoryPipeline.issuesWithContextReports} issue(s) emitted context reports` : "No context assembly reports yet"}
+        />
+      </div>
+      <div className="grid grid-cols-1 xl:grid-cols-4 gap-5 mt-5">
+        <div className="space-y-3">
+          <div className="text-xs uppercase tracking-[0.18em] opacity-45">Review by harness mode</div>
+          <ReviewHarnessModeTable byHarnessMode={quality.byHarnessMode} />
+        </div>
+        <div className="space-y-3">
+          <div className="text-xs uppercase tracking-[0.18em] opacity-45">Contract negotiation by review profile</div>
+          <ContractNegotiationProfileTable contractNegotiation={contract} />
+        </div>
+        <div className="space-y-3">
+          <div className="text-xs uppercase tracking-[0.18em] opacity-45">Checkpoint policy lift</div>
+          <CheckpointPolicyTable checkpointPolicy={checkpoint} />
+        </div>
+        <div className="space-y-3">
+          <div className="text-xs uppercase tracking-[0.18em] opacity-45">Context layer hit mix</div>
+          <ContextLayerTable memoryPipeline={memoryPipeline} />
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function TopIssuesSection() {
   const { data: analytics } = useTokenAnalytics();
   const topIssues = analytics?.topIssues || [];
@@ -806,6 +1075,7 @@ function AnalyticsPage() {
         <OverviewSection />
         <DailyActivitySection />
         <KpiSection />
+        <QualityGateSection />
         <TopIssuesSection />
         <ModelBreakdownSection />
       </div>

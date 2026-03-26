@@ -60,7 +60,7 @@ export function DiffTab({ issueId }) {
     setLoading(true);
     setError(null);
     try {
-      const res = await api.get(`/diff/${encodeURIComponent(issueId)}`);
+      const res = await api.get(`/issues/${encodeURIComponent(issueId)}/diff`);
       setData(res);
     } catch (err) {
       setError(err.message);

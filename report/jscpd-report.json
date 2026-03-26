@@ -1,0 +1,2037 @@
+{
+  "statistics": {
+    "detectionDate": "2026-03-26T13:49:49.677Z",
+    "formats": {
+      "javascript": {
+        "sources": {
+          "app/src/components/OnboardingWizard/steps/WorkersThemeStep.jsx": {
+            "lines": 95,
+            "tokens": 943,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/OnboardingWizard/steps/WizardNavFooter.jsx": {
+            "lines": 18,
+            "tokens": 120,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/OnboardingWizard/steps/WelcomeStep.jsx": {
+            "lines": 22,
+            "tokens": 185,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/OnboardingWizard/steps/StepIndicator.jsx": {
+            "lines": 3,
+            "tokens": 49,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/OnboardingWizard/steps/StepContent.jsx": {
+            "lines": 0,
+            "tokens": 24,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/OnboardingWizard/steps/SetupStep.jsx": {
+            "lines": 319,
+            "tokens": 3335,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/OnboardingWizard/steps/PipelineStep.jsx": {
+            "lines": 111,
+            "tokens": 1138,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/OnboardingWizard/steps/EffortStep.jsx": {
+            "lines": 104,
+            "tokens": 1115,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/OnboardingWizard/steps/BranchStep.jsx": {
+            "lines": 96,
+            "tokens": 1072,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/OnboardingWizard/steps/AgentsSkillsStep.jsx": {
+            "lines": 89,
+            "tokens": 858,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/IssueDetailDrawer/tabs/SessionsTab.jsx": {
+            "lines": 282,
+            "tokens": 3168,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/IssueDetailDrawer/tabs/RoutingTab.jsx": {
+            "lines": 33,
+            "tokens": 411,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/IssueDetailDrawer/tabs/ReviewTab.jsx": {
+            "lines": 638,
+            "tokens": 6664,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/IssueDetailDrawer/tabs/PlanningTab.jsx": {
+            "lines": 415,
+            "tokens": 4447,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/IssueDetailDrawer/tabs/OverviewTab.jsx": {
+            "lines": 122,
+            "tokens": 1868,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/IssueDetailDrawer/tabs/HistoryTab.jsx": {
+            "lines": 6,
+            "tokens": 112,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/IssueDetailDrawer/tabs/ExecutionTab.jsx": {
+            "lines": 55,
+            "tokens": 606,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/IssueDetailDrawer/tabs/EventsTab.jsx": {
+            "lines": 124,
+            "tokens": 1504,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/IssueDetailDrawer/tabs/DiffTab.jsx": {
+            "lines": 123,
+            "tokens": 1372,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/settings/workflow.jsx": {
+            "lines": 667,
+            "tokens": 7449,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/settings/providers.jsx": {
+            "lines": 111,
+            "tokens": 1084,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/settings/project.jsx": {
+            "lines": 207,
+            "tokens": 2114,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/settings/notifications.jsx": {
+            "lines": 30,
+            "tokens": 225,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/settings/hotkeys.jsx": {
+            "lines": 19,
+            "tokens": 300,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/settings/general.jsx": {
+            "lines": 8,
+            "tokens": 95,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/settings/agents.jsx": {
+            "lines": 424,
+            "tokens": 4705,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/OnboardingWizard/index.jsx": {
+            "lines": 89,
+            "tokens": 613,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/IssueDetailDrawer/shared.jsx": {
+            "lines": 82,
+            "tokens": 1066,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/IssueDetailDrawer/index.jsx": {
+            "lines": 371,
+            "tokens": 4197,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/IssueDetailDrawer/StateActionMenu.jsx": {
+            "lines": 44,
+            "tokens": 441,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/IssueDetailDrawer/PipelineStepper.jsx": {
+            "lines": 55,
+            "tokens": 542,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/workspace.jsx": {
+            "lines": 394,
+            "tokens": 4318,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/settings.jsx": {
+            "lines": 6,
+            "tokens": 82,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/projects.jsx": {
+            "lines": 81,
+            "tokens": 766,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/onboarding.jsx": {
+            "lines": 4,
+            "tokens": 28,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/kanban.jsx": {
+            "lines": 150,
+            "tokens": 1263,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/issues.jsx": {
+            "lines": 239,
+            "tokens": 2207,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/analytics.lazy.jsx": {
+            "lines": 860,
+            "tokens": 10340,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/agents.jsx": {
+            "lines": 15,
+            "tokens": 130,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/__root.jsx": {
+            "lines": 536,
+            "tokens": 6466,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/context/DashboardContext.jsx": {
+            "lines": 0,
+            "tokens": 3,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/VoiceWaveform.jsx": {
+            "lines": 0,
+            "tokens": 3,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/TasksMiniPanel.jsx": {
+            "lines": 68,
+            "tokens": 665,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/StatusIndicator.jsx": {
+            "lines": 44,
+            "tokens": 385,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/StatsBar.jsx": {
+            "lines": 258,
+            "tokens": 3328,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/SettingsView.jsx": {
+            "lines": 339,
+            "tokens": 3029,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/RuntimeView.jsx": {
+            "lines": 608,
+            "tokens": 6735,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/PwaBanner.jsx": {
+            "lines": 0,
+            "tokens": 11,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/ProvidersView.jsx": {
+            "lines": 268,
+            "tokens": 2602,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/OnboardingParticles.jsx": {
+            "lines": 2,
+            "tokens": 21,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/NotificationCenter.jsx": {
+            "lines": 242,
+            "tokens": 1817,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/MobileDock.jsx": {
+            "lines": 4,
+            "tokens": 44,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/ListView.jsx": {
+            "lines": 117,
+            "tokens": 1559,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/KeyboardShortcutsHelp.jsx": {
+            "lines": 45,
+            "tokens": 422,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/IssueCard.jsx": {
+            "lines": 246,
+            "tokens": 2543,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/Header.jsx": {
+            "lines": 126,
+            "tokens": 1256,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/GlobalActivityBar.jsx": {
+            "lines": 25,
+            "tokens": 314,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/Fab.jsx": {
+            "lines": 2,
+            "tokens": 32,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/EventsDrawer.jsx": {
+            "lines": 322,
+            "tokens": 3180,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/EmptyState.jsx": {
+            "lines": 0,
+            "tokens": 3,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/DevServerPanel.jsx": {
+            "lines": 166,
+            "tokens": 1660,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/CreateIssueForm.jsx": {
+            "lines": 179,
+            "tokens": 1898,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/Confetti.jsx": {
+            "lines": 3,
+            "tokens": 59,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/CommandPalette.jsx": {
+            "lines": 34,
+            "tokens": 308,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/BoardView.jsx": {
+            "lines": 674,
+            "tokens": 7078,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/AgentSessionLogModal.jsx": {
+            "lines": 185,
+            "tokens": 2004,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/main.jsx": {
+            "lines": 1,
+            "tokens": 14,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          }
+        },
+        "total": {
+          "lines": 11005,
+          "tokens": 118395,
+          "sources": 67,
+          "clones": 0,
+          "duplicatedLines": 0,
+          "duplicatedTokens": 0,
+          "percentage": 0,
+          "percentageTokens": 0,
+          "newDuplicatedLines": 0,
+          "newClones": 0
+        }
+      },
+      "jsx": {
+        "sources": {
+          "app/src/components/OnboardingWizard/steps/WorkersThemeStep.jsx": {
+            "lines": 123,
+            "tokens": 1212,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/OnboardingWizard/steps/WizardNavFooter.jsx": {
+            "lines": 43,
+            "tokens": 318,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/OnboardingWizard/steps/WelcomeStep.jsx": {
+            "lines": 37,
+            "tokens": 290,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/OnboardingWizard/steps/StepIndicator.jsx": {
+            "lines": 26,
+            "tokens": 216,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/OnboardingWizard/steps/StepContent.jsx": {
+            "lines": 9,
+            "tokens": 103,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/OnboardingWizard/steps/SetupStep.jsx": {
+            "lines": 477,
+            "tokens": 5138,
+            "sources": 1,
+            "clones": 2,
+            "duplicatedLines": 53,
+            "duplicatedTokens": 524,
+            "percentage": 11.11,
+            "percentageTokens": 10.2,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/OnboardingWizard/steps/ProjectStep.jsx": {
+            "lines": 109,
+            "tokens": 954,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 34,
+            "duplicatedTokens": 304,
+            "percentage": 31.19,
+            "percentageTokens": 31.87,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/OnboardingWizard/steps/PipelineStep.jsx": {
+            "lines": 249,
+            "tokens": 2783,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/OnboardingWizard/steps/EffortStep.jsx": {
+            "lines": 138,
+            "tokens": 1461,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/OnboardingWizard/steps/CompleteStep.jsx": {
+            "lines": 81,
+            "tokens": 934,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/OnboardingWizard/steps/BranchStep.jsx": {
+            "lines": 159,
+            "tokens": 1737,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 19,
+            "duplicatedTokens": 220,
+            "percentage": 11.95,
+            "percentageTokens": 12.67,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/OnboardingWizard/steps/AgentsSkillsStep.jsx": {
+            "lines": 267,
+            "tokens": 2944,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/IssueDetailDrawer/tabs/SessionsTab.jsx": {
+            "lines": 355,
+            "tokens": 4069,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/IssueDetailDrawer/tabs/RoutingTab.jsx": {
+            "lines": 62,
+            "tokens": 676,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/IssueDetailDrawer/tabs/ReviewTab.jsx": {
+            "lines": 896,
+            "tokens": 9598,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/IssueDetailDrawer/tabs/PlanningTab.jsx": {
+            "lines": 579,
+            "tokens": 6369,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/IssueDetailDrawer/tabs/OverviewTab.jsx": {
+            "lines": 197,
+            "tokens": 2866,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/IssueDetailDrawer/tabs/HistoryTab.jsx": {
+            "lines": 93,
+            "tokens": 1358,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/IssueDetailDrawer/tabs/ExecutionTab.jsx": {
+            "lines": 143,
+            "tokens": 1656,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/IssueDetailDrawer/tabs/EventsTab.jsx": {
+            "lines": 165,
+            "tokens": 1939,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 18,
+            "duplicatedTokens": 218,
+            "percentage": 10.91,
+            "percentageTokens": 11.24,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/IssueDetailDrawer/tabs/DiffTab.jsx": {
+            "lines": 149,
+            "tokens": 1548,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/settings/workflow.jsx": {
+            "lines": 744,
+            "tokens": 8103,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/settings/providers.jsx": {
+            "lines": 227,
+            "tokens": 2531,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/settings/project.jsx": {
+            "lines": 505,
+            "tokens": 5137,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/settings/notifications.jsx": {
+            "lines": 62,
+            "tokens": 513,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/settings/hotkeys.jsx": {
+            "lines": 108,
+            "tokens": 1415,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 17,
+            "duplicatedTokens": 240,
+            "percentage": 15.74,
+            "percentageTokens": 16.96,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/settings/general.jsx": {
+            "lines": 30,
+            "tokens": 280,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/settings/agents.jsx": {
+            "lines": 511,
+            "tokens": 5803,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/OnboardingWizard/index.jsx": {
+            "lines": 470,
+            "tokens": 4989,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/IssueDetailDrawer/shared.jsx": {
+            "lines": 116,
+            "tokens": 1410,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/IssueDetailDrawer/index.jsx": {
+            "lines": 442,
+            "tokens": 5014,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/IssueDetailDrawer/StateActionMenu.jsx": {
+            "lines": 168,
+            "tokens": 2040,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/IssueDetailDrawer/PipelineStepper.jsx": {
+            "lines": 139,
+            "tokens": 1497,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/workspace.jsx": {
+            "lines": 521,
+            "tokens": 6151,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 22,
+            "duplicatedTokens": 198,
+            "percentage": 4.22,
+            "percentageTokens": 3.22,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/settings.jsx": {
+            "lines": 51,
+            "tokens": 495,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/projects.jsx": {
+            "lines": 150,
+            "tokens": 1415,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/onboarding.jsx": {
+            "lines": 31,
+            "tokens": 244,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/kanban.jsx": {
+            "lines": 219,
+            "tokens": 1941,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/issues.jsx": {
+            "lines": 454,
+            "tokens": 5359,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/analytics.lazy.jsx": {
+            "lines": 938,
+            "tokens": 11107,
+            "sources": 1,
+            "clones": 5,
+            "duplicatedLines": 82,
+            "duplicatedTokens": 1165,
+            "percentage": 8.74,
+            "percentageTokens": 10.49,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/agents.jsx": {
+            "lines": 39,
+            "tokens": 325,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/routes/__root.jsx": {
+            "lines": 610,
+            "tokens": 7238,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/context/DashboardContext.jsx": {
+            "lines": 321,
+            "tokens": 3992,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/VoiceWaveform.jsx": {
+            "lines": 49,
+            "tokens": 397,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/TasksMiniPanel.jsx": {
+            "lines": 100,
+            "tokens": 919,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/StatusIndicator.jsx": {
+            "lines": 164,
+            "tokens": 1722,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/StatsBar.jsx": {
+            "lines": 312,
+            "tokens": 3996,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 16,
+            "duplicatedTokens": 259,
+            "percentage": 5.13,
+            "percentageTokens": 6.48,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/SettingsView.jsx": {
+            "lines": 383,
+            "tokens": 3436,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/RuntimeView.jsx": {
+            "lines": 648,
+            "tokens": 7290,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/PwaBanner.jsx": {
+            "lines": 29,
+            "tokens": 272,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/ProvidersView.jsx": {
+            "lines": 353,
+            "tokens": 3581,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/OnboardingParticles.jsx": {
+            "lines": 183,
+            "tokens": 2014,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/NotificationCenter.jsx": {
+            "lines": 315,
+            "tokens": 2426,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/MobileDock.jsx": {
+            "lines": 26,
+            "tokens": 231,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/ListView.jsx": {
+            "lines": 155,
+            "tokens": 2031,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/KeyboardShortcutsHelp.jsx": {
+            "lines": 116,
+            "tokens": 1173,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 17,
+            "duplicatedTokens": 240,
+            "percentage": 14.66,
+            "percentageTokens": 20.46,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/IssueCard.jsx": {
+            "lines": 493,
+            "tokens": 5296,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/Header.jsx": {
+            "lines": 168,
+            "tokens": 1747,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/GlobalActivityBar.jsx": {
+            "lines": 100,
+            "tokens": 1029,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/Fab.jsx": {
+            "lines": 25,
+            "tokens": 223,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/EventsDrawer.jsx": {
+            "lines": 386,
+            "tokens": 3708,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 18,
+            "duplicatedTokens": 218,
+            "percentage": 4.66,
+            "percentageTokens": 5.88,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/EmptyState.jsx": {
+            "lines": 20,
+            "tokens": 199,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/DevServerPanel.jsx": {
+            "lines": 237,
+            "tokens": 2354,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 22,
+            "duplicatedTokens": 198,
+            "percentage": 9.28,
+            "percentageTokens": 8.41,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/CreateIssueForm.jsx": {
+            "lines": 376,
+            "tokens": 4653,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/Confetti.jsx": {
+            "lines": 89,
+            "tokens": 845,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/CommandPalette.jsx": {
+            "lines": 182,
+            "tokens": 2231,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/BoardView.jsx": {
+            "lines": 703,
+            "tokens": 7416,
+            "sources": 1,
+            "clones": 2,
+            "duplicatedLines": 34,
+            "duplicatedTokens": 370,
+            "percentage": 4.84,
+            "percentageTokens": 4.99,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/components/AgentSessionLogModal.jsx": {
+            "lines": 256,
+            "tokens": 2774,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "app/src/main.jsx": {
+            "lines": 43,
+            "tokens": 339,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          }
+        },
+        "total": {
+          "lines": 17124,
+          "tokens": 187470,
+          "sources": 69,
+          "clones": 9,
+          "duplicatedLines": 176,
+          "duplicatedTokens": 2077,
+          "percentage": 1.03,
+          "percentageTokens": 1.11,
+          "newDuplicatedLines": 0,
+          "newClones": 0
+        }
+      },
+      "css": {
+        "sources": {
+          "app/src/routes/workspace.jsx": {
+            "lines": 0,
+            "tokens": 6,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          }
+        },
+        "total": {
+          "lines": 0,
+          "tokens": 6,
+          "sources": 1,
+          "clones": 0,
+          "duplicatedLines": 0,
+          "duplicatedTokens": 0,
+          "percentage": 0,
+          "percentageTokens": 0,
+          "newDuplicatedLines": 0,
+          "newClones": 0
+        }
+      }
+    },
+    "total": {
+      "lines": 28129,
+      "tokens": 305871,
+      "sources": 137,
+      "clones": 9,
+      "duplicatedLines": 176,
+      "duplicatedTokens": 2077,
+      "percentage": 0.63,
+      "percentageTokens": 0.68,
+      "newDuplicatedLines": 0,
+      "newClones": 0
+    }
+  },
+  "duplicates": [
+    {
+      "format": "jsx",
+      "lines": 35,
+      "fragment": "\">\n          <div className=\"flex flex-wrap items-center justify-between gap-3\">\n            <div>\n              <div className=\"text-sm font-semibold\">Project name</div>\n              <div className=\"text-xs text-base-content/50\">This becomes the default queue title for future runs.</div>\n            </div>\n            {effectiveSource === \"saved\" && (\n              <span className=\"badge badge-primary badge-soft gap-1.5\">\n                <Sparkles className=\"size-3\" />\n                Saved configuration\n              </span>\n            )}\n            {effectiveSource === \"detected\" && (\n              <span className=\"badge badge-secondary badge-soft gap-1.5\">\n                <Sparkles className=\"size-3\" />\n                Detected automatically\n              </span>\n            )}\n            {effectiveSource === \"manual\" && (\n              <span className=\"badge badge-accent badge-soft gap-1.5\">\n                <PencilLine className=\"size-3\" />\n                Edited manually\n              </span>\n            )}\n            {effectiveSource === \"missing\" && (\n              <span className=\"badge badge-warning badge-soft gap-1.5\">\n                <AlertTriangle className=\"size-3\" />\n                Manual entry required\n              </span>\n            )}\n          </div>\n\n          <label className=\"form-control w-full gap-2\">\n            <span className=\"label-text text-sm font-medium\">Project</span>\n            <",
+      "tokens": 0,
+      "firstFile": {
+        "name": "app/src/components/OnboardingWizard/steps/ProjectStep.jsx",
+        "start": 36,
+        "end": 70,
+        "startLoc": {
+          "line": 36,
+          "column": 16,
+          "position": 325
+        },
+        "endLoc": {
+          "line": 70,
+          "column": 2,
+          "position": 629
+        }
+      },
+      "secondFile": {
+        "name": "app/src/components/OnboardingWizard/steps/SetupStep.jsx",
+        "start": 418,
+        "end": 440,
+        "startLoc": {
+          "line": 418,
+          "column": 48,
+          "position": 4469
+        },
+        "endLoc": {
+          "line": 440,
+          "column": 2,
+          "position": 4749
+        }
+      }
+    },
+    {
+      "format": "jsx",
+      "lines": 20,
+      "fragment": ";\n\nconst PROTECTED_BRANCHES = new Set([\"main\", \"master\"]);\n\nfunction GitignoreBanner() {\n  const [status, setStatus] = useState(null);\n  const [adding, setAdding] = useState(false);\n  const [added, setAdded] = useState(false);\n\n  useEffect(() => {\n    api.get(\"/gitignore/status\").then(setStatus).catch(() => setStatus({ exists: false, hasFifony: false }));\n  }, []);\n\n  if (status === null || status.hasFifony) return null;\n\n  if (added) {\n    return (\n      <div className=\"alert alert-success py-2.5 text-sm animate-fade-in\">\n        <ShieldCheck className=\"size-4 shrink-0\" />\n        <span><code>.fifony/</code> added",
+      "tokens": 0,
+      "firstFile": {
+        "name": "app/src/components/OnboardingWizard/steps/BranchStep.jsx",
+        "start": 3,
+        "end": 22,
+        "startLoc": {
+          "line": 3,
+          "column": 15,
+          "position": 55
+        },
+        "endLoc": {
+          "line": 22,
+          "column": 6,
+          "position": 275
+        }
+      },
+      "secondFile": {
+        "name": "app/src/components/OnboardingWizard/steps/SetupStep.jsx",
+        "start": 7,
+        "end": 28,
+        "startLoc": {
+          "line": 7,
+          "column": 27,
+          "position": 92
+        },
+        "endLoc": {
+          "line": 28,
+          "column": 11,
+          "position": 316
+        }
+      }
+    },
+    {
+      "format": "jsx",
+      "lines": 21,
+      "fragment": ".map((d, i) => {\n            const isToday = d.date === today;\n            const isHovered = hoveredIdx === i;\n            const showLabel = isToday || i === 0 || i % labelEvery === 0;\n            const shortLabel = d.date\n              ? new Date(d.date + \"T00:00:00\").toLocaleDateString(undefined, { month: \"numeric\", day: \"numeric\" })\n              : \"\";\n            return (\n              <div key={d.date} className=\"flex-1 overflow-hidden\">\n                {showLabel && (\n                  <span className={`block text-center text-[9px] truncate transition-opacity duration-100 ${\n                    isHovered ? \"opacity-80\" : isToday ? \"opacity-60 font-semibold\" : \"opacity-30\"\n                  }`}>\n                    {isToday ? \"today\" : shortLabel}\n                  </span>\n                )}\n              </div>\n            );\n          })}\n        </div>\n      </",
+      "tokens": 0,
+      "firstFile": {
+        "name": "app/src/routes/analytics.lazy.jsx",
+        "start": 495,
+        "end": 515,
+        "startLoc": {
+          "line": 495,
+          "column": 7,
+          "position": 5573
+        },
+        "endLoc": {
+          "line": 515,
+          "column": 3,
+          "position": 5804
+        }
+      },
+      "secondFile": {
+        "name": "app/src/routes/analytics.lazy.jsx",
+        "start": 193,
+        "end": 213,
+        "startLoc": {
+          "line": 193,
+          "column": 5,
+          "position": 2291
+        },
+        "endLoc": {
+          "line": 213,
+          "column": 2,
+          "position": 2522
+        }
+      }
+    },
+    {
+      "format": "jsx",
+      "lines": 14,
+      "fragment": ";\n  const linesDaily = (() => {\n    const byDate = new Map((linesData?.lines || []).filter((d) => d.date).map((d) => [d.date, d]));\n    const result = [];\n    for (let i = 31; i >= 0; i--) {\n      const d = new Date();\n      d.setDate(d.getDate() - i);\n      const date = d.toISOString().slice(0, 10);\n      result.push(byDate.get(date) ?? { date, linesAdded: 0, linesRemoved: 0, filesChanged: 0 });\n    }\n    return result;\n  })();\n\n  if",
+      "tokens": 0,
+      "firstFile": {
+        "name": "app/src/routes/analytics.lazy.jsx",
+        "start": 692,
+        "end": 705,
+        "startLoc": {
+          "line": 692,
+          "column": 2,
+          "position": 8137
+        },
+        "endLoc": {
+          "line": 705,
+          "column": 3,
+          "position": 8359
+        }
+      },
+      "secondFile": {
+        "name": "app/src/routes/analytics.lazy.jsx",
+        "start": 621,
+        "end": 634,
+        "startLoc": {
+          "line": 621,
+          "column": 2,
+          "position": 6992
+        },
+        "endLoc": {
+          "line": 634,
+          "column": 6,
+          "position": 7214
+        }
+      }
+    },
+    {
+      "format": "jsx",
+      "lines": 17,
+      "fragment": "function AnimatedCount({ value, format = formatTokens, className = \"\" }) {\n  const [display, setDisplay] = useState(() => format(value));\n  const prevRef = useRef(value);\n  const rafRef = useRef(null);\n\n  useEffect(() => {\n    const from = prevRef.current || 0;\n    const to = value || 0;\n    prevRef.current = to;\n    if (from === to) { setDisplay(format(to)); return; }\n    const duration = 600;\n    const start = performance.now();\n    const tick = (now) => {\n      const elapsed = now - start;\n      const progress = Math.min(elapsed / duration, 1);\n      const eased = 1 - Math.pow(1 - progress, 3);\n      setDisplay",
+      "tokens": 0,
+      "firstFile": {
+        "name": "app/src/components/StatsBar.jsx",
+        "start": 13,
+        "end": 29,
+        "startLoc": {
+          "line": 13,
+          "column": 1,
+          "position": 186
+        },
+        "endLoc": {
+          "line": 29,
+          "column": 11,
+          "position": 445
+        }
+      },
+      "secondFile": {
+        "name": "app/src/routes/analytics.lazy.jsx",
+        "start": 23,
+        "end": 45,
+        "startLoc": {
+          "line": 23,
+          "column": 1,
+          "position": 263
+        },
+        "endLoc": {
+          "line": 45,
+          "column": 6,
+          "position": 528
+        }
+      }
+    },
+    {
+      "format": "jsx",
+      "lines": 18,
+      "fragment": ");\n\n  const groups = useMemo(() => {\n    const map = new Map();\n    const seen = new Set();\n    for (const hk of hotkeys) {\n      const desc = hk.description;\n      const group = hk.metadata?.group;\n      if (!desc || !group) continue;\n      const dedup = `${group}:${desc}`;\n      if (seen.has(dedup)) continue;\n      seen.add(dedup);\n      if (!map.has(group)) map.set(group, []);\n      map.get(group).push(hk);\n    }\n    const result = [];\n    for (const g of GROUP_ORDER) {\n      if (map.has(g)) result.push({ group: g, label",
+      "tokens": 0,
+      "firstFile": {
+        "name": "app/src/components/KeyboardShortcutsHelp.jsx",
+        "start": 38,
+        "end": 55,
+        "startLoc": {
+          "line": 38,
+          "column": 2,
+          "position": 393
+        },
+        "endLoc": {
+          "line": 55,
+          "column": 6,
+          "position": 633
+        }
+      },
+      "secondFile": {
+        "name": "app/src/routes/settings/hotkeys.jsx",
+        "start": 36,
+        "end": 53,
+        "startLoc": {
+          "line": 36,
+          "column": 2,
+          "position": 498
+        },
+        "endLoc": {
+          "line": 53,
+          "column": 4,
+          "position": 738
+        }
+      }
+    },
+    {
+      "format": "jsx",
+      "lines": 19,
+      "fragment": "useEffect(() => {\n    if (rows.length > prevCountRef.current && rows.length > 0) {\n      if (isNearBottom && listRef.current) {\n        requestAnimationFrame(() => {\n          listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: \"smooth\" });\n        });\n      } else if (prevCountRef.current > 0) {\n        setHasNewEvents(true);\n      }\n    }\n    prevCountRef.current = rows.length;\n  }, [rows.length, isNearBottom]);\n\n  const scrollToBottom = useCallback(() => {\n    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: \"smooth\" });\n    setHasNewEvents(false);\n  }, []);\n\n  if",
+      "tokens": 0,
+      "firstFile": {
+        "name": "app/src/components/EventsDrawer.jsx",
+        "start": 214,
+        "end": 232,
+        "startLoc": {
+          "line": 214,
+          "column": 3,
+          "position": 2233
+        },
+        "endLoc": {
+          "line": 232,
+          "column": 3,
+          "position": 2451
+        }
+      },
+      "secondFile": {
+        "name": "app/src/components/IssueDetailDrawer/tabs/EventsTab.jsx",
+        "start": 105,
+        "end": 123,
+        "startLoc": {
+          "line": 105,
+          "column": 3,
+          "position": 1289
+        },
+        "endLoc": {
+          "line": 123,
+          "column": 7,
+          "position": 1507
+        }
+      }
+    },
+    {
+      "format": "jsx",
+      "lines": 23,
+      "fragment": "] = useState(false);\n\n  const handleStart = useCallback(async () => {\n    setBusy(true);\n    try {\n      await api.post(`/dev-server/${server.id}/start`, {});\n      await onRefresh();\n    } finally {\n      setBusy(false);\n    }\n  }, [server.id, onRefresh]);\n\n  const handleStop = useCallback(async () => {\n    setBusy(true);\n    try {\n      await api.post(`/dev-server/${server.id}/stop`, {});\n      await onRefresh();\n    } finally {\n      setBusy(false);\n    }\n  }, [server.id, onRefresh]);\n\n  const state",
+      "tokens": 0,
+      "firstFile": {
+        "name": "app/src/components/DevServerPanel.jsx",
+        "start": 81,
+        "end": 103,
+        "startLoc": {
+          "line": 81,
+          "column": 11,
+          "position": 778
+        },
+        "endLoc": {
+          "line": 103,
+          "column": 6,
+          "position": 976
+        }
+      },
+      "secondFile": {
+        "name": "app/src/routes/workspace.jsx",
+        "start": 227,
+        "end": 241,
+        "startLoc": {
+          "line": 227,
+          "column": 11,
+          "position": 2890
+        },
+        "endLoc": {
+          "line": 241,
+          "column": 11,
+          "position": 3080
+        }
+      }
+    },
+    {
+      "format": "jsx",
+      "lines": 18,
+      "fragment": "(issue) => {\n                const beingDragged = dragState?.issueId === issue.id;\n                const justDropped = lastDroppedId === issue.id;\n                const isFocused = focusedIssueId === issue.id;\n                return (\n                  <div\n                    key={issue.id}\n                    data-issue-id={issue.id}\n                    className={`${beingDragged ? \"kanban-card-dragging-source\" : \"\"} ${justDropped ? \"animate-pop\" : \"\"} ${isFocused ? \"ring-2 ring-primary/50 rounded-lg\" : \"\"}`}\n                    onContextMenu={(e) => {\n                      if ('ontouchstart' in window) {\n                        e.preventDefault();\n                        onLongPress?.(issue);\n                      }\n                    }}\n                  >\n                    <IssueCard\n                      ",
+      "tokens": 0,
+      "firstFile": {
+        "name": "app/src/components/BoardView.jsx",
+        "start": 317,
+        "end": 334,
+        "startLoc": {
+          "line": 317,
+          "column": 2,
+          "position": 3324
+        },
+        "endLoc": {
+          "line": 334,
+          "column": 23,
+          "position": 3509
+        }
+      },
+      "secondFile": {
+        "name": "app/src/components/BoardView.jsx",
+        "start": 278,
+        "end": 289,
+        "startLoc": {
+          "line": 278,
+          "column": 2,
+          "position": 2812
+        },
+        "endLoc": {
+          "line": 289,
+          "column": 2,
+          "position": 2992
+        }
+      }
+    }
+  ]
+}

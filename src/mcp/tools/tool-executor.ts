@@ -170,7 +170,7 @@ export async function callTool(name: string, args: Record<string, unknown> = {})
     if (!issue) throw new Error(`Issue not found: ${issueId}`);
     let diff: Record<string, unknown> | null = null;
     let events: unknown[] = [];
-    try { diff = await apiGet(`/api/diff/${encodeURIComponent(issueId)}`); } catch {}
+    try { diff = await apiGet(`/api/issues/${encodeURIComponent(issueId)}/diff`); } catch {}
     try { const evResult = await apiGet(`/api/events/feed?issueId=${encodeURIComponent(issueId)}`); events = Array.isArray((evResult as any).events) ? (evResult as any).events : []; } catch {}
     const issueObj = issue as Record<string, unknown>;
     const mergeInfo = issueObj.mergedAt
@@ -246,7 +246,7 @@ export async function callTool(name: string, args: Record<string, unknown> = {})
     const issueId = typeof args.issueId === "string" ? args.issueId.trim() : "";
     if (!issueId) throw new Error("issueId is required");
     try {
-      const result = await apiGet(`/api/diff/${encodeURIComponent(issueId)}`);
+      const result = await apiGet(`/api/issues/${encodeURIComponent(issueId)}/diff`);
       return toolText(JSON.stringify(result, null, 2));
     } catch (error) {
       throw new Error(`Failed to get diff for ${issueId}: ${String(error)}`);
@@ -257,7 +257,7 @@ export async function callTool(name: string, args: Record<string, unknown> = {})
     const issueId = typeof args.issueId === "string" ? args.issueId.trim() : "";
     if (!issueId) throw new Error("issueId is required");
     try {
-      const result = await apiGet(`/api/live/${encodeURIComponent(issueId)}`);
+      const result = await apiGet(`/api/issues/${encodeURIComponent(issueId)}/live`);
       return toolText(JSON.stringify(result, null, 2));
     } catch (error) {
       throw new Error(`Failed to get live output for ${issueId}: ${String(error)}`);

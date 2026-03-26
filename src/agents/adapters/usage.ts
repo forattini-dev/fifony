@@ -1,5 +1,6 @@
 import { cwd, env } from "node:process";
 import { logger } from "../../concerns/logger.ts";
+import { sleep } from "../../concerns/helpers.ts";
 
 export interface RateLimitEntry {
   scope: string;        // "global", "session", or model slug
@@ -37,9 +38,6 @@ export interface ProviderUsageSnapshot {
   raw: string;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 async function createPtyProcess(command: string, args: string[]) {
   try {

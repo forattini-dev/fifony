@@ -79,6 +79,6 @@ export async function startDevFrontend(apiPort: number, devPort: number, options
     await server.listen();
     logger.info(`Dev frontend available at http://localhost:${devPort}`);
   } catch (error) {
-    logger.warn(`Failed to start Vite dev server: ${String(error)}`);
+    logger.warn(`Failed to start Vite service: ${String(error)}`);
   }
 }

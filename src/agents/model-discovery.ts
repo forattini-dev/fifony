@@ -3,7 +3,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import type { DetectedProvider } from "../types.ts";
-import { readCodexConfig, readGeminiConfig } from "./providers.ts";
+import { readClaudeConfig, readCodexConfig, readGeminiConfig } from "./providers.ts";
 
 // ── Model discovery ─────────────────────────────────────────────────────────
 
@@ -18,17 +18,6 @@ export type DiscoveredModel = {
 const modelCache = new Map<string, { models: DiscoveredModel[]; fetchedAt: number }>();
 const MODEL_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
-function readClaudeConfig(): { model?: string } {
-  try {
-    const settingsPath = join(homedir(), ".claude", "settings.json");
-    if (!existsSync(settingsPath)) return {};
-    const raw = readFileSync(settingsPath, "utf8");
-    const settings = JSON.parse(raw) as { model?: string };
-    return { model: typeof settings.model === "string" ? settings.model : undefined };
-  } catch {
-    return {};
-  }
-}
 
 function resolveGeminiModelsFile(): string | null {
   try {

@@ -1,6 +1,8 @@
+import { after, before } from "node:test";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { IssueEntry } from "../src/types.ts";
+import { setEnqueueFn } from "../src/persistence/plugins/fsm-issue.ts";
 
 function makeIssue(overrides: Partial<IssueEntry> = {}): IssueEntry {
   const now = new Date().toISOString();
@@ -47,6 +49,14 @@ function makeDeps() {
 }
 
 describe("retry commands", () => {
+  before(() => {
+    setEnqueueFn(async () => {});
+  });
+
+  after(() => {
+    setEnqueueFn(null);
+  });
+
   it("retryExecutionCommand increments attempts once via FSM", async () => {
     const { retryExecutionCommand } = await import("../src/commands/retry-execution.command.ts");
     const issue = makeIssue({

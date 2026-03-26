@@ -2,18 +2,18 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "../api.js";
 
 /**
- * Fetches all dev server statuses and polls every 3s.
+ * Fetches all service statuses and polls every 3s.
  * Simple polling is more predictable than WS+fallback and avoids
  * the race condition where WS connects but no refresh is triggered.
  */
-export function useDevServers() {
-  const [servers, setServers] = useState([]);
+export function useServices() {
+  const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const fetchAll = useCallback(async () => {
     try {
-      const res = await api.get("/dev-server");
-      if (res?.servers) setServers(res.servers);
+      const res = await api.get("/services");
+      if (res?.services) setServices(res.services);
     } catch {
       /* non-critical */
     } finally {
@@ -32,15 +32,15 @@ export function useDevServers() {
     return () => clearInterval(id);
   }, [fetchAll]);
 
-  return { servers, loading, refresh: fetchAll };
+  return { services, loading, refresh: fetchAll };
 }
 
 /**
- * Polling-based log viewer for a single dev server.
+ * Polling-based log viewer for a single service.
  * Fetches the full tail on mount, then polls for new bytes every 2s.
  * Returns { log, connected } — connected = true once first fetch succeeds.
  */
-export function useDevServerLog(id, enabled = false) {
+export function useServiceLog(id, enabled = false) {
   const [log, setLog] = useState("");
   const [connected, setConnected] = useState(false);
   const sizeRef = useRef(0);
@@ -60,8 +60,8 @@ export function useDevServerLog(id, enabled = false) {
       try {
         const after = sizeRef.current;
         const res = after > 0
-          ? await api.get(`/dev-server/${id}/log?after=${after}`)
-          : await api.get(`/dev-server/${id}/log`);
+          ? await api.get(`/services/${id}/log?after=${after}`)
+          : await api.get(`/services/${id}/log`);
         if (!alive) return;
 
         if (after > 0 && res.text !== undefined) {

@@ -5,7 +5,7 @@ import type {
   MilestoneEntry,
   RuntimeEvent,
   RuntimeSettingRecord,
-  DevServerEntry,
+  ServiceEntry,
   S3dbModule,
   S3dbDatabase,
   S3dbResource,
@@ -40,7 +40,7 @@ let eventStateResource: S3dbResource | null = null;
 let settingStateResource: S3dbResource | null = null;
 let agentSessionResource: S3dbResource | null = null;
 let agentPipelineResource: S3dbResource | null = null;
-let devServerResource: S3dbResource | null = null;
+let serviceResource: S3dbResource | null = null;
 let contextFragmentResource: S3dbResource | null = null;
 let activeApiPlugin: { stop?: () => Promise<void> } | null = null;
 let activeStateMachinePlugin: { stop?: () => Promise<void> } | null = null;
@@ -64,7 +64,7 @@ import {
   markAllIssuePlansDirty,
   markAllEventsDirty,
 } from "./dirty-tracker.ts";
-import { normalizeMilestone, refreshMilestoneSummaries } from "../domains/projects.ts";
+import { normalizeMilestone, refreshMilestoneSummaries } from "../domains/milestones.ts";
 
 export { markIssueDirty, markMilestoneDirty, markIssuePlanDirty, markEventDirty, hasDirtyState };
 
@@ -76,7 +76,7 @@ export function getEventStateResource(): S3dbResource | null { return eventState
 export function getSettingStateResource(): S3dbResource | null { return settingStateResource; }
 export function getAgentSessionResource(): S3dbResource | null { return agentSessionResource; }
 export function getAgentPipelineResource(): S3dbResource | null { return agentPipelineResource; }
-export function getDevServerResource(): S3dbResource | null { return devServerResource; }
+export function getServiceResource(): S3dbResource | null { return serviceResource; }
 export function getContextFragmentResource(): S3dbResource | null { return contextFragmentResource; }
 
 // ── Plan resource helpers (1:N model) ─────────────────────────────────────
@@ -274,7 +274,7 @@ export async function initStateStore(): Promise<void> {
     settingResourceName,
     agentSessionResourceName,
     agentPipelineResourceName,
-    devServerResourceName,
+    serviceResourceName,
     contextFragmentResourceName,
   ] = NATIVE_RESOURCE_NAMES;
   runtimeStateResource = await stateDb.getResource(runtimeStateResourceName);
@@ -285,7 +285,7 @@ export async function initStateStore(): Promise<void> {
   settingStateResource = await stateDb.getResource(settingResourceName);
   agentSessionResource = await stateDb.getResource(agentSessionResourceName);
   agentPipelineResource = await stateDb.getResource(agentPipelineResourceName);
-  devServerResource = await stateDb.getResource(devServerResourceName);
+  serviceResource = await stateDb.getResource(serviceResourceName);
   contextFragmentResource = await stateDb.getResource(contextFragmentResourceName || S3DB_CONTEXT_FRAGMENT_RESOURCE);
 
   // Capture resource.state API injected by StateMachinePlugin (resource-level shortcuts)
@@ -534,26 +534,41 @@ export async function replacePersistedSetting(setting: RuntimeSettingRecord): Pr
   await settingStateResource.replace(setting.id, setting);
 }
 
-// ── Dev servers resource helpers ──────────────────────────────────────────────
+// ── Services resource helpers ────────────────────────────────────────────────
 
-export async function loadPersistedDevServers(): Promise<DevServerEntry[]> {
-  if (!devServerResource?.list) return [];
+export async function loadPersistedServices(): Promise<ServiceEntry[]> {
+  if (!serviceResource?.list) return [];
   try {
-    const records = await devServerResource.list({ limit: 200 });
+    const records = await serviceResource.list({ limit: 200 });
     return Array.isArray(records)
-      ? records.filter((r): r is DevServerEntry =>
+      ? records.filter((r): r is ServiceEntry =>
         Boolean(r && typeof r.id === "string" && typeof r.command === "string"),
       )
       : [];
   } catch (error) {
-    logger.warn(`Failed to load dev servers from s3db: ${String(error)}`);
+    logger.warn(`Failed to load services from s3db: ${String(error)}`);
     return [];
   }
 }
 
-export async function replacePersistedDevServer(entry: DevServerEntry): Promise<void> {
-  if (!devServerResource) return;
-  await devServerResource.replace(entry.id, { ...entry, updatedAt: now() });
+export async function loadLegacyPersistedServices(): Promise<ServiceEntry[]> {
+  if (!stateDb?.getResource) return [];
+  try {
+    const legacyResource = await stateDb.getResource("dev_servers");
+    const records = await legacyResource?.list?.({ limit: 200 });
+    return Array.isArray(records)
+      ? records.filter((record): record is ServiceEntry =>
+        Boolean(record && typeof record.id === "string" && typeof record.command === "string")
+      )
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function replacePersistedService(entry: ServiceEntry): Promise<void> {
+  if (!serviceResource) return;
+  await serviceResource.replace(entry.id, { ...entry, updatedAt: now() });
 }
 
 export async function loadPersistedMilestones(): Promise<MilestoneEntry[]> {
@@ -571,21 +586,21 @@ export async function loadPersistedMilestones(): Promise<MilestoneEntry[]> {
   }
 }
 
-export async function deletePersistedDevServer(id: string): Promise<void> {
-  if (!devServerResource) return;
-  try { await (devServerResource as any).delete(id); } catch {}
+export async function deletePersistedService(id: string): Promise<void> {
+  if (!serviceResource) return;
+  try { await (serviceResource as any).delete(id); } catch {}
 }
 
-export async function replaceAllDevServers(entries: DevServerEntry[]): Promise<void> {
-  if (!devServerResource) return;
-  const existing = await loadPersistedDevServers();
+export async function replaceAllServices(entries: ServiceEntry[]): Promise<void> {
+  if (!serviceResource) return;
+  const existing = await loadPersistedServices();
   const incomingIds = new Set(entries.map((e) => e.id));
   // Delete removed entries
   await Promise.all(
-    existing.filter((e) => !incomingIds.has(e.id)).map((e) => deletePersistedDevServer(e.id)),
+    existing.filter((e) => !incomingIds.has(e.id)).map((e) => deletePersistedService(e.id)),
   );
   // Upsert all current entries
-  await Promise.all(entries.map((e) => replacePersistedDevServer(e)));
+  await Promise.all(entries.map((e) => replacePersistedService(e)));
 }
 
 /**

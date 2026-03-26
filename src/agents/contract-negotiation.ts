@@ -16,7 +16,12 @@ import { idToSafePath, now } from "../concerns/helpers.ts";
 import { logger } from "../concerns/logger.ts";
 import { compileContractNegotiation } from "./adapters/index.ts";
 import { runAgentSession } from "./agent-pipeline.ts";
-import { applyHarnessModeToPlan, recommendHarnessModeForIssue } from "./harness-policy.ts";
+import {
+  applyCheckpointPolicyToPlan,
+  applyHarnessModeToPlan,
+  recommendCheckpointPolicyForIssue,
+  recommendHarnessModeForIssue,
+} from "./harness-policy.ts";
 import { getReviewProvider } from "./providers.ts";
 import { refinePlan } from "./planning/issue-planner.ts";
 import { addTokenUsage } from "./directive-parser.ts";
@@ -25,6 +30,7 @@ import { addEvent } from "../domains/issues.ts";
 import { requiresContractNegotiation } from "../domains/contract-negotiation.ts";
 import { recordPolicyDecision } from "../domains/policy-decisions.ts";
 import { savePlanForIssue } from "../persistence/store.ts";
+import { recordWorkspaceMemoryEvent } from "./memory-engine.ts";
 
 export type ContractNegotiationResult = {
   status: ContractNegotiationStatus;
@@ -121,7 +127,7 @@ function completeContractNegotiationRun(
   if (!existing) return null;
 
   const concerns = decision?.concerns ?? [];
-  return upsertContractNegotiationRun(issue, {
+  const completedRun = upsertContractNegotiationRun(issue, {
     ...existing,
     status: options?.error ? "crashed" : "completed",
     completedAt,
@@ -140,6 +146,25 @@ function completeContractNegotiationRun(
     appliedRefinement: options?.appliedRefinement ?? existing.appliedRefinement,
     error: options?.error,
   });
+  if (issue.workspacePath && completedRun.status === "completed" && decision) {
+    recordWorkspaceMemoryEvent(issue, issue.workspacePath, {
+      id: `contract-${completedRun.id}`,
+      kind: "contract-negotiation",
+      issueId: issue.id,
+      issueIdentifier: issue.identifier,
+      title: decision.status === "approved" ? "Contract approved" : "Contract revision requested",
+      summary: decision.summary || (decision.status === "approved"
+        ? "Execution contract approved before implementation."
+        : "Execution contract required revision before implementation."),
+      details: concerns.slice(0, 3).map((concern) => `${concern.id} [${concern.severity}] ${concern.requiredChange}`),
+      source: "planning",
+      createdAt: completedRun.completedAt ?? completedRun.startedAt,
+      planVersion: completedRun.planVersion,
+      persistLongTerm: concerns.some((concern) => concern.severity === "blocking"),
+      tags: [decision.status, "contract"],
+    });
+  }
+  return completedRun;
 }
 
 export function extractContractDecision(text: string): ContractNegotiationDecision | null {
@@ -239,6 +264,37 @@ async function applyRefinedPlan(
       issue.id,
       "info",
       `Adaptive harness policy changed ${issue.identifier} from ${previousMode} to ${plan.harnessMode} during contract refinement: ${harnessRecommendation.rationale}`,
+    );
+  }
+  const checkpointRecommendation = state.config.adaptiveHarnessSelection === false
+    ? null
+    : recommendCheckpointPolicyForIssue(
+      state.issues.filter((entry) => entry.id !== issue.id),
+      issue,
+      plan.executionContract.checkpointPolicy,
+      state.config.adaptivePolicyMinSamples ?? 3,
+    );
+  if (checkpointRecommendation && checkpointRecommendation.checkpointPolicy !== plan.executionContract.checkpointPolicy) {
+    const previousCheckpointPolicy = plan.executionContract.checkpointPolicy;
+    applyCheckpointPolicyToPlan(plan, checkpointRecommendation.checkpointPolicy);
+    recordPolicyDecision(issue, {
+      id: `policy.contract.v${issue.planVersion ?? 1}.r${round}.checkpoint-policy`,
+      kind: "checkpoint-policy",
+      scope: "planning",
+      planVersion: issue.planVersion ?? 1,
+      attempt: round,
+      basis: checkpointRecommendation.basis,
+      from: previousCheckpointPolicy,
+      to: plan.executionContract.checkpointPolicy,
+      rationale: checkpointRecommendation.rationale,
+      recordedAt: now(),
+      profile: checkpointRecommendation.profile.primary,
+    });
+    addEvent(
+      state,
+      issue.id,
+      "info",
+      `Adaptive checkpoint policy changed ${issue.identifier} from ${previousCheckpointPolicy} to ${plan.executionContract.checkpointPolicy} during contract refinement: ${checkpointRecommendation.rationale}`,
     );
   }
   if (plan.suggestedPaths?.length && !(issue.paths?.length)) issue.paths = plan.suggestedPaths;

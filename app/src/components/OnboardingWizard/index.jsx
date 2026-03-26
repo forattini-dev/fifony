@@ -316,10 +316,10 @@ export default function OnboardingWizard({ onComplete }) {
         updatedAt: new Date().toISOString(),
       }));
 
-      // Show confetti, then navigate
+      // Show confetti, then navigate — await invalidation so cache is settled before gate checks
       setConfetti({ x: window.innerWidth / 2, y: window.innerHeight / 3 });
-      setTimeout(() => {
-        qc.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
+      setTimeout(async () => {
+        await qc.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
         onComplete?.();
       }, 1200);
     } catch {

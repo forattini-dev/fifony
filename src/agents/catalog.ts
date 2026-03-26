@@ -178,7 +178,7 @@ export function installAgents(
       try {
         writeFileSync(filePath, entry.content, "utf8");
         installedAny = true;
-        logger.info({ agent: name, path: filePath, provider: providerDir }, "Agent installed");
+        logger.debug({ agent: name, path: filePath, provider: providerDir }, "Agent installed");
       } catch (error) {
         result.errors.push({ name, error: `${providerDir}: ${error instanceof Error ? error.message : String(error)}` });
       }
@@ -242,7 +242,7 @@ export function installSkills(
         }
 
         installedAny = true;
-        logger.info({ skill: name, path: filePath, type: entry.installType, provider: providerDir }, "Skill installed");
+        logger.debug({ skill: name, path: filePath, type: entry.installType, provider: providerDir }, "Skill installed");
       } catch (error) {
         result.errors.push({ name, error: `${providerDir}: ${error instanceof Error ? error.message : String(error)}` });
       }

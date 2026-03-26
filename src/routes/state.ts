@@ -2,36 +2,23 @@ import type { IssueEntry, RuntimeMetrics, RuntimeState } from "../types.ts";
 import { isoWeek, now } from "../concerns/helpers.ts";
 import { logger } from "../concerns/logger.ts";
 import { persistState } from "../persistence/store.ts";
-import { markIssueDirty } from "../persistence/dirty-tracker.ts";
 import { addEvent, computeMetrics } from "../domains/issues.ts";
-import { ATTACHMENTS_ROOT, STATE_ROOT } from "../concerns/constants.ts";
 import type { RouteRegistrar } from "./http.ts";
-import { findIssue, mutateIssueState, parseIssue } from "../routes/helpers.ts";
-import { cleanWorkspace, createTestWorkspace, removeTestWorkspace } from "../domains/workspace.ts";
 import { detectAvailableProviders } from "../agents/providers.ts";
 import { analyzeParallelizability } from "../persistence/plugins/scheduler.ts";
-import { agentLogPath, getAgentStatus } from "../domains/agents.ts";
 import {
   getIssueStateMachineVisualization,
   getIssueStateMachineTransitions,
-  getIssueTransitionHistoryForIssue,
 } from "../domains/issue-state.ts";
 import {
   collectProviderUsage,
   collectProvidersUsage,
 } from "../agents/providers-usage.ts";
-import { closeSync, existsSync, mkdirSync, openSync, readSync, statSync, writeFileSync } from "node:fs";
-import { randomUUID } from "node:crypto";
-import { basename, extname, join } from "node:path";
-
-// Hexagonal architecture
-import { getContainer } from "../persistence/container.ts";
-import { approvePlanCommand } from "../commands/approve-plan.command.ts";
-import { executeIssueCommand } from "../commands/execute-issue.command.ts";
-import { replanIssueCommand } from "../commands/replan-issue.command.ts";
-import { mergeWorkspaceCommand } from "../commands/merge-workspace.command.ts";
-import { pushWorkspaceCommand } from "../commands/push-workspace.command.ts";
-import { transitionIssueCommand } from "../commands/transition-issue.command.ts";
+import {
+  buildProbeResult,
+  collectRuntimeHealthSnapshot,
+  runDoctorChecks,
+} from "../domains/runtime-diagnostics.ts";
 
 type GetStateResult = RuntimeState & {
   metrics: RuntimeMetrics;
@@ -67,21 +54,6 @@ function getStateQuery(
   };
 }
 
-function getWorkspaceActionErrorStatus(error: unknown): number {
-  const message = error instanceof Error ? error.message : String(error);
-  if (
-    message.includes("requires a git repository")
-    || message.includes("requires at least one commit")
-    || message.includes("has no git worktree")
-    || message.includes("No mergeable workspace found")
-    || message.includes("target repository has uncommitted changes")
-    || message.includes("current branch is")
-  ) {
-    return 409;
-  }
-  return 500;
-}
-
 export function registerStateRoutes(
   app: RouteRegistrar,
   state: RuntimeState,
@@ -97,6 +69,26 @@ export function registerStateRoutes(
       updatedAt: state.updatedAt,
       config: state.config,
       trackerKind: state.trackerKind,
+      health: collectRuntimeHealthSnapshot(state),
+    }),
+  );
+
+  app.get("/api/runtime/status", async (c) =>
+    c.json({
+      ok: true,
+      snapshot: collectRuntimeHealthSnapshot(state),
+    }),
+  );
+
+  app.get("/api/runtime/probe", async (c) =>
+    c.json(buildProbeResult(state)),
+  );
+
+  app.get("/api/runtime/doctor", async (c) =>
+    c.json({
+      ok: true,
+      generatedAt: now(),
+      checks: runDoctorChecks(state),
     }),
   );
 
@@ -138,205 +130,6 @@ export function registerStateRoutes(
   // NOTE: create, state, retry, cancel routes live in issues.resource.ts (s3db resource routes).
   // They have priority over collector routes. Do NOT duplicate them here.
 
-  app.post("/api/issues/:id/approve", async (c) => {
-    logger.info({ issueId: parseIssue(c) }, "[API] POST /api/issues/:id/approve");
-    return mutateIssueState(state, c, async (issue) => {
-      const container = getContainer();
-      await approvePlanCommand({ issue }, container);
-    });
-  });
-
-  app.post("/api/issues/:id/execute", async (c) => {
-    logger.info({ issueId: parseIssue(c) }, "[API] POST /api/issues/:id/execute");
-    return mutateIssueState(state, c, async (issue) => {
-      const container = getContainer();
-      await executeIssueCommand({ issue }, container);
-    });
-  });
-
-  app.post("/api/issues/:id/replan", async (c) => {
-    logger.info({ issueId: parseIssue(c) }, "[API] POST /api/issues/:id/replan");
-    return mutateIssueState(state, c, async (issue) => {
-      const container = getContainer();
-      await replanIssueCommand({ issue }, container);
-    });
-  });
-
-  app.post("/api/issues/:id/merge", async (c) => {
-    logger.info({ issueId: parseIssue(c) }, "[API] POST /api/issues/:id/merge");
-    try {
-      const issueId = parseIssue(c);
-      if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
-      const issue = findIssue(state, issueId);
-      if (!issue) return c.json({ ok: false, error: "Issue not found." }, 404);
-      const container = getContainer();
-      if (state.config.mergeMode === "push-pr") {
-        const result = await pushWorkspaceCommand({ issue, state }, container);
-        return c.json({ ok: true, prUrl: result.prUrl, ghAvailable: result.ghAvailable });
-      }
-      const result = await mergeWorkspaceCommand({ issue, state }, container);
-      return c.json({ ok: true, ...result });
-    } catch (error) {
-      const issueId = parseIssue(c);
-      logger.error(`Failed to merge workspace for ${issueId || "<unknown>"}: ${String(error)}`);
-      return c.json({ ok: false, error: String(error) }, getWorkspaceActionErrorStatus(error));
-    }
-  });
-
-  app.get("/api/issues/:id/merge-preview", async (c) => {
-    logger.info({ issueId: parseIssue(c) }, "[API] GET /api/issues/:id/merge-preview");
-    try {
-      const issueId = parseIssue(c);
-      if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
-      const issue = findIssue(state, issueId);
-      if (!issue) return c.json({ ok: false, error: "Issue not found." }, 404);
-      const { dryMerge } = await import("../domains/workspace.ts");
-      const result = dryMerge(issue);
-      return c.json({ ok: true, ...result });
-    } catch (error) {
-      logger.error(`Failed to preview merge for ${parseIssue(c) || "<unknown>"}: ${String(error)}`);
-      return c.json({ ok: false, error: String(error) }, getWorkspaceActionErrorStatus(error));
-    }
-  });
-
-  app.post("/api/issues/:id/rebase", async (c) => {
-    logger.info({ issueId: parseIssue(c) }, "[API] POST /api/issues/:id/rebase");
-    try {
-      const issueId = parseIssue(c);
-      if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
-      const issue = findIssue(state, issueId);
-      if (!issue) return c.json({ ok: false, error: "Issue not found." }, 404);
-      const { rebaseWorktree } = await import("../domains/workspace.ts");
-      const result = rebaseWorktree(issue);
-      if (result.success) {
-        addEvent(state, issue.id, "info", `Branch ${issue.branchName} rebased onto ${issue.baseBranch}.`);
-      }
-      await persistState(state);
-      return c.json({ ok: true, ...result });
-    } catch (error) {
-      logger.error(`Failed to rebase for ${parseIssue(c) || "<unknown>"}: ${String(error)}`);
-      return c.json({ ok: false, error: String(error) }, getWorkspaceActionErrorStatus(error));
-    }
-  });
-
-  app.post("/api/issues/:id/try", async (c) => {
-    logger.info({ issueId: parseIssue(c) }, "[API] POST /api/issues/:id/try");
-    return mutateIssueState(state, c, async (issue) => {
-      if (!["Reviewing", "PendingDecision"].includes(issue.state)) {
-        throw new Error(`Cannot create a test workspace for issue in state ${issue.state}.`);
-      }
-      const testWorkspacePath = createTestWorkspace(issue);
-      markIssueDirty(issue.id);
-      addEvent(state, issue.id, "manual", `Isolated test workspace created at ${testWorkspacePath}.`);
-    });
-  });
-
-  app.post("/api/issues/:id/revert-try", async (c) => {
-    logger.info({ issueId: parseIssue(c) }, "[API] POST /api/issues/:id/revert-try");
-    return mutateIssueState(state, c, async (issue) => {
-      removeTestWorkspace(issue);
-      markIssueDirty(issue.id);
-      addEvent(state, issue.id, "manual", "Isolated test workspace removed.");
-    });
-  });
-
-  app.post("/api/issues/:id/rollback", async (c) => {
-    logger.info({ issueId: parseIssue(c) }, "[API] POST /api/issues/:id/rollback");
-    return mutateIssueState(state, c, async (issue) => {
-      if (!["Reviewing", "PendingDecision", "Approved"].includes(issue.state)) {
-        throw new Error(`Cannot rollback issue in state ${issue.state}. Must be in Reviewing, Reviewed, or Done.`);
-      }
-      if (issue.workspacePath) {
-        try {
-          await cleanWorkspace(issue.id, issue, state);
-          delete issue.workspacePath;
-          delete issue.worktreePath;
-        } catch (error) {
-          logger.warn({ err: error }, `[API] Workspace cleanup failed during rollback for ${issue.id}`);
-        }
-      }
-      const container = getContainer();
-      await transitionIssueCommand(
-        { issue, target: "Queued", note: "Rolled back by user — worktree removed." },
-        container,
-      );
-      addEvent(state, issue.id, "manual", `${issue.identifier} rolled back. Worktree and branch removed.`);
-    });
-  });
-
-  app.post("/api/issues/:id/images", async (c) => {
-    try {
-      const issueId = parseIssue(c);
-      if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
-      const issue = findIssue(state, issueId);
-      if (!issue) return c.json({ ok: false, error: "Issue not found." }, 404);
-
-      const payload = await c.req.json() as { files?: Array<{ name: string; data: string; type: string }> };
-      if (!Array.isArray(payload.files) || payload.files.length === 0) {
-        return c.json({ ok: false, error: "No files provided." }, 400);
-      }
-
-      const issueAttachDir = join(ATTACHMENTS_ROOT, issue.id);
-      mkdirSync(issueAttachDir, { recursive: true });
-      const newPaths: string[] = [];
-      for (const file of payload.files) {
-        if (typeof file.data !== "string" || !file.name) continue;
-        const safeExt = extname(file.name).replace(/[^a-z0-9.]/gi, "").slice(0, 10) || ".bin";
-        const safeName = `${randomUUID()}${safeExt}`;
-        const dest = join(issueAttachDir, safeName);
-        writeFileSync(dest, Buffer.from(file.data, "base64"));
-        newPaths.push(dest);
-      }
-
-      issue.images = [...(issue.images ?? []), ...newPaths];
-      issue.updatedAt = now();
-      markIssueDirty(issue.id);
-      await persistState(state);
-      return c.json({ ok: true, paths: newPaths, issue });
-    } catch (error) {
-      logger.error({ err: error }, "[API] Issue image upload failed");
-      return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 500);
-    }
-  });
-
-  app.get("/api/issues/:id/images/:filename", async (c) => {
-    try {
-      const issueId = parseIssue(c);
-      if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
-      const filename = c.req.param("filename") ?? "";
-      if (!filename) return c.json({ ok: false, error: "Filename is required." }, 400);
-      const safeName = basename(filename);
-      const filePath = join(ATTACHMENTS_ROOT, issueId, safeName);
-      if (!existsSync(filePath)) return c.json({ ok: false, error: "Image not found." }, 404);
-      const ext = extname(safeName).toLowerCase();
-      const mimeMap: Record<string, string> = {
-        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-        ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
-      };
-      const mime = mimeMap[ext] ?? "application/octet-stream";
-      const { readFileSync } = await import("node:fs");
-      const data = readFileSync(filePath);
-      return new Response(data, { headers: { "Content-Type": mime, "Cache-Control": "private, max-age=86400" } });
-    } catch (error) {
-      return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 500);
-    }
-  });
-
-  app.get("/api/issues/:id/history", async (c) => {
-    const issueId = parseIssue(c);
-    if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
-    const issue = findIssue(state, issueId);
-    if (!issue) return c.json({ ok: false, error: "Issue not found." }, 404);
-    try {
-      const limit = parseInt(c.req.query("limit") ?? "50", 10);
-      const offset = parseInt(c.req.query("offset") ?? "0", 10);
-      const transitions = await getIssueTransitionHistoryForIssue(issue.id, { limit, offset });
-      return c.json({ ok: true, issueId: issue.id, transitions, localHistory: issue.history });
-    } catch (error) {
-      return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 500);
-    }
-  });
-
   app.get("/api/state-machine/transitions", async (c) => {
     try {
       return c.json({ ok: true, transitions: getIssueStateMachineTransitions() });
@@ -353,117 +146,6 @@ export function registerStateRoutes(
     } catch (error) {
       return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 500);
     }
-  });
-
-  // GET /api/issues/:id/agent/status — live agent job state + PID check
-  app.get("/api/issues/:id/agent/status", (c) => {
-    const issueId = parseIssue(c);
-    if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
-    const issue = findIssue(state, issueId);
-    if (!issue) return c.json({ ok: false, error: "Issue not found." }, 404);
-    return c.json({ ok: true, ...getAgentStatus(STATE_ROOT, issue.id, issue.identifier) });
-  });
-
-  // GET /api/issues/:id/agent/stream — SSE live tail of the agent's live-output.log
-  app.get("/api/issues/:id/agent/stream", (c) => {
-    const issueId = parseIssue(c);
-    if (!issueId) return c.json({ ok: false, error: "Issue id is required." }, 400);
-    const issue = findIssue(state, issueId);
-    if (!issue) return c.json({ ok: false, error: "Issue not found." }, 404);
-
-    const getLogFile = (): string | null => {
-      if (issue.workspacePath) return agentLogPath(issue.workspacePath);
-      return null;
-    };
-
-    const enc = new TextEncoder();
-    const sseMsg = (data: unknown) => enc.encode(`data: ${JSON.stringify(data)}\n\n`);
-    const sseComment = () => enc.encode(": keepalive\n\n");
-
-    let chunkIntervalId: ReturnType<typeof setInterval>;
-    let keepaliveId: ReturnType<typeof setInterval>;
-    let statusCheckId: ReturnType<typeof setInterval>;
-
-    const stream = new ReadableStream({
-      start(ctrl) {
-        let lastSize = 0;
-        const logFile = getLogFile();
-
-        // Send initial content (last 16KB)
-        if (logFile && existsSync(logFile)) {
-          try {
-            const stat = statSync(logFile);
-            lastSize = stat.size;
-            const readSize = Math.min(lastSize, 16_384);
-            const fd = openSync(logFile, "r");
-            const buf = Buffer.alloc(readSize);
-            readSync(fd, buf, 0, readSize, Math.max(0, lastSize - readSize));
-            closeSync(fd);
-            ctrl.enqueue(sseMsg({ type: "init", text: buf.toString("utf8"), size: lastSize }));
-          } catch { ctrl.enqueue(sseMsg({ type: "init", text: "", size: 0 })); }
-        } else {
-          ctrl.enqueue(sseMsg({ type: "init", text: "", size: 0 }));
-        }
-
-        // Stream new bytes every second
-        chunkIntervalId = setInterval(() => {
-          const lf = getLogFile();
-          if (!lf || !existsSync(lf)) return;
-          try {
-            const stat = statSync(lf);
-            if (stat.size < lastSize) {
-              // File was truncated (new agent session)
-              lastSize = 0;
-              const readSize = Math.min(stat.size, 16_384);
-              let text = "";
-              if (readSize > 0) {
-                const fd = openSync(lf, "r");
-                const buf = Buffer.alloc(readSize);
-                readSync(fd, buf, 0, readSize, 0);
-                closeSync(fd);
-                text = buf.toString("utf8");
-                lastSize = stat.size;
-              }
-              ctrl.enqueue(sseMsg({ type: "init", text, size: lastSize }));
-            } else if (stat.size > lastSize) {
-              const readSize = stat.size - lastSize;
-              const fd = openSync(lf, "r");
-              const buf = Buffer.alloc(readSize);
-              readSync(fd, buf, 0, readSize, lastSize);
-              closeSync(fd);
-              lastSize = stat.size;
-              ctrl.enqueue(sseMsg({ type: "chunk", text: buf.toString("utf8"), size: lastSize }));
-            }
-          } catch {}
-        }, 1_000);
-
-        // Notify client when agent stops
-        statusCheckId = setInterval(() => {
-          const current = state.issues.find((i) => i.id === issueId);
-          if (!current) return;
-          const status = getAgentStatus(STATE_ROOT, issueId, current.identifier);
-          if (!status.running) {
-            try { ctrl.enqueue(sseMsg({ type: "status", running: false, state: status.state })); } catch {}
-          }
-        }, 5_000);
-
-        keepaliveId = setInterval(() => {
-          try { ctrl.enqueue(sseComment()); } catch {}
-        }, 15_000);
-      },
-      cancel() {
-        clearInterval(chunkIntervalId);
-        clearInterval(keepaliveId);
-        clearInterval(statusCheckId);
-      },
-    });
-
-    return c.body(stream, 200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      "Connection": "keep-alive",
-      "X-Accel-Buffering": "no",
-    });
   });
 
   app.post("/api/refresh", async (c) => {

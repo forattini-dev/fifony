@@ -4,7 +4,7 @@ import { env, exit, argv } from "node:process";
 import { CLI_ARGS, STATE_ROOT, TARGET_ROOT } from "./concerns/constants.ts";
 import { debugBoot, fail, now, parseIntArg } from "./concerns/helpers.ts";
 import { initLogger, logger } from "./concerns/logger.ts";
-import { initStateStore, loadPersistedState, persistState, persistStateFull, closeStateStore, loadPersistedDevServers, loadPersistedMilestones } from "./persistence/store.ts";
+import { initStateStore, loadPersistedState, persistState, persistStateFull, closeStateStore, loadPersistedServices, loadPersistedMilestones, loadLegacyPersistedServices, replaceAllServices } from "./persistence/store.ts";
 import { initQueueWorkers, stopQueueWorkers, recoverState, recoverOrphans, cleanTerminalWorkspaces } from "./persistence/plugins/queue-workers.ts";
 import { createContainer } from "./persistence/container.ts";
 import {
@@ -24,14 +24,14 @@ import {
 import { setSkipSource, detectDefaultBranch, getGitRepoStatus } from "./domains/workspace.ts";
 import { deriveConfig, applyWorkflowConfig, buildRuntimeState, computeMetrics, addEvent, validateConfig } from "./domains/issues.ts";
 import { startApiServer } from "./persistence/plugins/api-server.ts";
-import { startDevFrontend } from "./persistence/plugins/dev-server.ts";
+import { startDevFrontend } from "./persistence/plugins/dev-frontend.ts";
 import { installGracefulShutdown, hasTerminalQueue } from "./persistence/plugins/scheduler.ts";
 import { recoverPlanningSession } from "./agents/planning/issue-planner.ts";
 import {
-  reconcileManagedDevServerStates,
-  startAutoConfiguredDevServers,
-  initManagedDevServerWatcher,
-} from "./domains/dev-server.ts";
+  reconcileManagedServiceStates,
+  startAutoConfiguredServices,
+  initManagedServiceWatcher,
+} from "./domains/services.ts";
 import {
   reconcileAgentStateTransitions,
   startManagedAgentWatcher,
@@ -66,7 +66,7 @@ function usage() {
     "  --attempts <n>         Maximum attempts per issue\n" +
     "  --poll <ms>            Scheduler interval in ms\n" +
     "  --timeout <ms>         Agent command timeout in ms (default: 1800000)\n" +
-    "  --dev                   Start Vite dev server alongside API (HMR on port+1)\n" +
+    "  --dev                   Start Vite dev frontend alongside API (HMR on port+1)\n" +
     "  --no-tls                Disable HTTPS (use plain HTTP)\n" +
     "  --once                  Process once and exit\n" +
     "  --skip-source           Skip source snapshot copy\n" +
@@ -77,7 +77,7 @@ function usage() {
 }
 
 async function main() {
-  let devWatcher: { stop: () => void } | null = null;
+  let serviceWatcher: { stop: () => void } | null = null;
   let agentWatcher: { stop: () => void } | null = null;
   debugBoot("main:start");
 
@@ -160,22 +160,34 @@ async function main() {
   debugBoot("main:container-early-init");
 
   if (dashboardPort) {
-    await startApiServer(apiState, dashboardPort);
+    const devPort = devMode ? dashboardPort + 1 : undefined;
+    await startApiServer(apiState, dashboardPort, { devPort });
     debugBoot("main:api-server-early-start");
 
-    if (devMode) {
-      const devPort = dashboardPort + 1;
+    if (devMode && devPort) {
       await startDevFrontend(dashboardPort, devPort);
     }
   }
 
+  const extractLegacyServicesFromRuntimeState = (value: unknown): import("./types.ts").ServiceEntry[] => {
+    if (!value || typeof value !== "object") return [];
+    const configValue = (value as { config?: unknown }).config;
+    if (!configValue || typeof configValue !== "object") return [];
+    const legacyServices = (configValue as Record<string, unknown>).devServers;
+    if (!Array.isArray(legacyServices)) return [];
+    return legacyServices.filter((entry): entry is import("./types.ts").ServiceEntry =>
+      Boolean(entry && typeof entry === "object" && typeof (entry as { id?: unknown }).id === "string" && typeof (entry as { command?: unknown }).command === "string")
+    );
+  };
+
   // ── Phase C: Parallel state loading ─────────────────────────────────────────
   debugBoot("main:phase-c-start");
   logger.debug("[Boot] Loading persisted state, settings, and recovering sessions");
-  const [previous, persistedSettings, persistedDevServers, persistedMilestones] = await Promise.all([
+  const [previous, persistedSettings, persistedServices, legacyPersistedServices, persistedMilestones] = await Promise.all([
     loadPersistedState(),
     loadRuntimeSettings(),
-    loadPersistedDevServers(),
+    loadPersistedServices(),
+    loadLegacyPersistedServices(),
     loadPersistedMilestones(),
     persistDetectedProvidersSetting(detectedProviders),
     recoverPlanningSession(),
@@ -183,9 +195,19 @@ async function main() {
   logger.info({ hadPreviousState: previous !== null, issueCount: previous?.issues?.length ?? 0, settingsCount: persistedSettings.length }, "[Boot] State loaded from persistence");
   debugBoot("main:state-loaded");
 
+  const runtimeLegacyServices = extractLegacyServicesFromRuntimeState(previous);
+  const migratedServices = persistedServices.length > 0
+    ? persistedServices
+    : legacyPersistedServices.length > 0
+      ? legacyPersistedServices
+      : runtimeLegacyServices;
+
   config = applyPersistedSettings(config, persistedSettings);
-  if (persistedDevServers.length > 0) {
-    config = { ...config, devServers: persistedDevServers };
+  if (migratedServices.length > 0) {
+    config = { ...config, services: migratedServices };
+    if (persistedServices.length === 0) {
+      await replaceAllServices(migratedServices);
+    }
   }
   await syncRuntimeConfigSettings(config, persistedSettings);
   const projectMetadata = resolveProjectMetadata(persistedSettings, TARGET_ROOT);
@@ -248,16 +270,21 @@ async function main() {
     logger.warn({ err }, "[Boot] Agent state reconciliation failed — continuing");
   }
 
-  // Dev server: reconcile states, auto-start, then launch watcher
+  // Services: reconcile states, auto-start, then launch watcher
   try {
-    const devServers = state.config.devServers ?? [];
-    reconcileManagedDevServerStates(devServers, STATE_ROOT);
-    const autoStartTransitions = startAutoConfiguredDevServers(devServers, TARGET_ROOT, STATE_ROOT);
+    const services = state.config.services ?? [];
+    reconcileManagedServiceStates(services, STATE_ROOT);
+    const autoStartTransitions = startAutoConfiguredServices(
+      services,
+      TARGET_ROOT,
+      STATE_ROOT,
+      state.config.serviceEnv,
+    );
     for (const t of autoStartTransitions) {
-      logger.info({ id: t.id, command: t.to }, "[Boot] Dev server auto-started");
+      logger.info({ id: t.id, command: t.to }, "[Boot] Service auto-started");
     }
   } catch (err) {
-    logger.warn({ err }, "[Boot] Dev server init failed — continuing");
+    logger.warn({ err }, "[Boot] Service init failed — continuing");
   }
 
   state.metrics = computeMetrics(state.issues);
@@ -279,14 +306,15 @@ async function main() {
     logger.warn({ err: error }, "[Boot] Queue workers failed to initialize — continuing without queue-based dispatch");
   }
 
-  devWatcher = initManagedDevServerWatcher(
-    () => apiState.config.devServers ?? [],
+  serviceWatcher = initManagedServiceWatcher(
+    () => apiState.config.services ?? [],
+    () => apiState.config.serviceEnv ?? {},
     STATE_ROOT,
     TARGET_ROOT,
     (t) => {
-      logger.info({ id: t.id, from: t.from, to: t.to, reason: t.reason }, "[DevServer] FSM transition");
+      logger.info({ id: t.id, from: t.from, to: t.to, reason: t.reason }, "[Service] FSM transition");
       broadcastToWebSocketClients({
-        type: "dev-server",
+        type: "service",
         id: t.id,
         state: t.to,
         running: t.to === "starting" || t.to === "running",
@@ -366,7 +394,7 @@ async function main() {
     state.updatedAt = now();
     state.metrics = computeMetrics(state.issues);
     await persistStateFull(state);
-    try { devWatcher?.stop(); } catch {}
+    try { serviceWatcher?.stop(); } catch {}
     try { agentWatcher?.stop(); } catch {}
     try { await stopQueueWorkers(); } catch {}
     await closeStateStore();

@@ -1,4 +1,4 @@
-import type { JsonRecord, RuntimeState, RuntimeSettingScope, RuntimeSettingSource, WorkflowConfig } from "../types.ts";
+import type { JsonRecord, RuntimeState, WorkflowConfig } from "../types.ts";
 import { logger } from "../concerns/logger.ts";
 import {
   getVapidPublicKey,
@@ -13,84 +13,20 @@ import { addEvent } from "../domains/issues.ts";
 import { persistState } from "../persistence/store.ts";
 import { detectAvailableProviders, discoverModels } from "../agents/providers.ts";
 import { warmEmbeddingProvider } from "../agents/embedding-provider.ts";
-import { resolveProjectMetadata, SETTING_ID_PROJECT_NAME } from "../domains/project.ts";
 import type { RouteRegistrar } from "./http.ts";
 import {
-  applyPersistedSettings,
   buildDefaultWorkflowConfig,
   getWorkflowConfig,
-  inferSettingScope,
   loadRuntimeSettings,
   persistSetting,
   persistWorkerConcurrencySetting,
   persistWorkflowConfig,
-  RUNTIME_CONFIG_SETTING_IDS,
 } from "../persistence/settings.ts";
-
-const VALID_SETTING_SCOPES = new Set<RuntimeSettingScope>(["runtime", "providers", "ui", "system"]);
-const VALID_SETTING_SOURCES = new Set<RuntimeSettingSource>(["user", "detected", "workflow", "system"]);
 
 export function registerSettingsRoutes(
   app: RouteRegistrar,
   state: RuntimeState,
 ): void {
-  app.get("/api/settings", async (c) => {
-    const settings = await loadRuntimeSettings();
-    return c.json({ settings });
-  });
-
-  app.get("/api/settings/:id", async (c) => {
-    const settingId = c.req.param("id") || "";
-    const settings = await loadRuntimeSettings();
-    const setting = settings.find((entry) => entry.id === settingId);
-    if (!setting) {
-      return c.json({ ok: false, error: "Setting not found" }, 404);
-    }
-    return c.json({ ok: true, setting });
-  });
-
-  app.post("/api/settings/:id", async (c) => {
-    const settingId = c.req.param("id") || "";
-    if (!settingId) {
-      return c.json({ ok: false, error: "Setting id is required" }, 400);
-    }
-
-    const payload = await c.req.json() as JsonRecord;
-    const scopeValue = typeof payload.scope === "string" ? payload.scope : inferSettingScope(settingId);
-    const sourceValue = typeof payload.source === "string" ? payload.source : "user";
-
-    if (!VALID_SETTING_SCOPES.has(scopeValue as RuntimeSettingScope)) {
-      return c.json({ ok: false, error: "Invalid setting scope" }, 400);
-    }
-
-    if (!VALID_SETTING_SOURCES.has(sourceValue as RuntimeSettingSource)) {
-      return c.json({ ok: false, error: "Invalid setting source" }, 400);
-    }
-
-    const setting = await persistSetting(settingId, payload.value, {
-      scope: scopeValue as RuntimeSettingScope,
-      source: sourceValue as RuntimeSettingSource,
-    });
-    if (settingId === SETTING_ID_PROJECT_NAME) {
-      const settings = await loadRuntimeSettings();
-      const projectMetadata = resolveProjectMetadata(settings, state.sourceRepoUrl);
-      state.projectName = projectMetadata.projectName;
-      state.detectedProjectName = projectMetadata.detectedProjectName;
-      state.projectNameSource = projectMetadata.projectNameSource;
-      state.queueTitle = projectMetadata.queueTitle;
-      state.updatedAt = now();
-      addEvent(state, undefined, "manual", `Project title updated to ${projectMetadata.queueTitle}.`);
-      await persistState(state);
-    }
-    if (RUNTIME_CONFIG_SETTING_IDS.has(settingId)) {
-      state.config = applyPersistedSettings(state.config, [setting]);
-      state.updatedAt = now();
-      addEvent(state, undefined, "manual", `Runtime setting ${settingId} updated.`);
-      await persistState(state);
-    }
-    return c.json({ ok: true, setting });
-  });
-
   app.post("/api/config/concurrency", async (c) => {
     const payload = await c.req.json() as JsonRecord;
     const value = typeof payload.concurrency === "number" ? payload.concurrency : undefined;

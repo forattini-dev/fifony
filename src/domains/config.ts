@@ -72,7 +72,7 @@ export function deriveConfig(args: string[]): RuntimeConfig {
     workerConcurrency: clamp(workerConcurrency, 1, 10),
     commandTimeoutMs: clamp(commandTimeoutMs, 1_000, 3_600_000),
     maxAttemptsDefault: clamp(maxAttemptsDefault, 1, 10),
-    maxTurns: clamp(parseEnvNumber("FIFONY_AGENT_MAX_TURNS", 4), 1, 16),
+    maxTurns: clamp(parseEnvNumber("FIFONY_AGENT_MAX_TURNS", 4), 1, 50),
     retryDelayMs: parseEnvNumber("FIFONY_RETRY_DELAY_MS", 3_000),
     staleInProgressTimeoutMs: parseEnvNumber("FIFONY_STALE_IN_PROGRESS_MS", 2_400_000),
     logLinesTail: parseEnvNumber("FIFONY_LOG_TAIL_CHARS", 12_000),
@@ -97,6 +97,7 @@ export function deriveConfig(args: string[]): RuntimeConfig {
     beforeRunHook: env.FIFONY_BEFORE_RUN_HOOK ?? "",
     afterRunHook: env.FIFONY_AFTER_RUN_HOOK ?? "",
     beforeRemoveHook: env.FIFONY_BEFORE_REMOVE_HOOK ?? "",
+    serviceEnv: {},
   };
 }
 
@@ -115,10 +116,10 @@ export function validateConfig(config: RuntimeConfig): string[] {
   if (config.pollIntervalMs < 200) errors.push(`pollIntervalMs too low: ${config.pollIntervalMs} (min 200)`);
   if (config.workerConcurrency < 1 || config.workerConcurrency > 10) errors.push(`workerConcurrency out of range: ${config.workerConcurrency} (1-10)`);
   if (config.maxAttemptsDefault < 1 || config.maxAttemptsDefault > 10) errors.push(`maxAttemptsDefault out of range: ${config.maxAttemptsDefault} (1-10)`);
-  if (config.maxTurns < 1 || config.maxTurns > 16) errors.push(`maxTurns out of range: ${config.maxTurns} (1-16)`);
+  if (config.maxTurns < 1 || config.maxTurns > 50) errors.push(`maxTurns out of range: ${config.maxTurns} (1-50)`);
   if (config.commandTimeoutMs < 1000) errors.push(`commandTimeoutMs too low: ${config.commandTimeoutMs} (min 1000)`);
   if (config.retryDelayMs < 0) errors.push(`retryDelayMs negative: ${config.retryDelayMs}`);
-  if ((config.adaptivePolicyMinSamples ?? 3) < 1 || (config.adaptivePolicyMinSamples ?? 3) > 10) {
+  if (config.adaptivePolicyMinSamples !== undefined && (config.adaptivePolicyMinSamples < 1 || config.adaptivePolicyMinSamples > 10)) {
     errors.push(`adaptivePolicyMinSamples out of range: ${config.adaptivePolicyMinSamples} (1-10)`);
   }
   for (const [stateKey, limit] of Object.entries(config.maxConcurrentByState)) {

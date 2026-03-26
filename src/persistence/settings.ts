@@ -12,6 +12,12 @@ import type {
 } from "../types.ts";
 import type { DiscoveredModel } from "../agents/providers.ts";
 import { clamp, now, toBooleanValue } from "../concerns/helpers.ts";
+import {
+  DEFAULT_ADAPTIVE_POLICY_MIN_SAMPLES,
+  DEFAULT_AUTO_REPLAN_STALL_THRESHOLD,
+  DEFAULT_MAX_REVIEW_AUTO_RETRIES,
+} from "../concerns/constants.ts";
+import { normalizeServiceEnvironment } from "../domains/service-env.ts";
 import { loadPersistedSettings, replacePersistedSetting } from "./store.ts";
 import { getProviderDefaultCommand, normalizeAgentProvider, readCodexConfig } from "../agents/providers.ts";
 
@@ -44,6 +50,7 @@ export const SETTING_ID_AUTO_REPLAN_STALL_THRESHOLD = "runtime.autoReplanStallTh
 export const SETTING_ID_ADAPTIVE_HARNESS_SELECTION = "runtime.adaptiveHarnessSelection";
 export const SETTING_ID_ADAPTIVE_REVIEW_ROUTING = "runtime.adaptiveReviewRouting";
 export const SETTING_ID_ADAPTIVE_POLICY_MIN_SAMPLES = "runtime.adaptivePolicyMinSamples";
+export const SETTING_ID_SERVICE_ENV = "runtime.serviceEnv";
 
 export async function loadRuntimeSettings(): Promise<RuntimeSettingRecord[]> {
   return loadPersistedSettings();
@@ -75,6 +82,7 @@ export const RUNTIME_CONFIG_SETTING_IDS = new Set<string>([
   SETTING_ID_ADAPTIVE_HARNESS_SELECTION,
   SETTING_ID_ADAPTIVE_REVIEW_ROUTING,
   SETTING_ID_ADAPTIVE_POLICY_MIN_SAMPLES,
+  SETTING_ID_SERVICE_ENV,
 ]);
 
 const VALID_REASONING_EFFORTS = new Set<ReasoningEffort>(["low", "medium", "high", "extra-high"]);
@@ -158,13 +166,14 @@ function buildRuntimeConfigSettings(
     { id: SETTING_ID_AUTO_REVIEW_APPROVAL, scope: "runtime", value: config.autoReviewApproval, source, updatedAt },
     { id: SETTING_ID_DOCKER_EXECUTION, scope: "runtime", value: config.dockerExecution, source, updatedAt },
     { id: SETTING_ID_DOCKER_IMAGE, scope: "runtime", value: config.dockerImage, source, updatedAt },
-    { id: SETTING_ID_MAX_REVIEW_AUTO_RETRIES, scope: "runtime", value: config.maxReviewAutoRetries ?? 2, source, updatedAt },
+    { id: SETTING_ID_MAX_REVIEW_AUTO_RETRIES, scope: "runtime", value: config.maxReviewAutoRetries ?? DEFAULT_MAX_REVIEW_AUTO_RETRIES, source, updatedAt },
     { id: SETTING_ID_ENABLE_PLAYWRIGHT_REVIEW, scope: "runtime", value: config.enablePlaywrightReview ?? false, source, updatedAt },
     { id: SETTING_ID_AUTO_REPLAN_ON_STALL, scope: "runtime", value: config.autoReplanOnStall ?? false, source, updatedAt },
-    { id: SETTING_ID_AUTO_REPLAN_STALL_THRESHOLD, scope: "runtime", value: config.autoReplanStallThreshold ?? 2, source, updatedAt },
+    { id: SETTING_ID_AUTO_REPLAN_STALL_THRESHOLD, scope: "runtime", value: config.autoReplanStallThreshold ?? DEFAULT_AUTO_REPLAN_STALL_THRESHOLD, source, updatedAt },
     { id: SETTING_ID_ADAPTIVE_HARNESS_SELECTION, scope: "runtime", value: config.adaptiveHarnessSelection !== false, source, updatedAt },
     { id: SETTING_ID_ADAPTIVE_REVIEW_ROUTING, scope: "runtime", value: config.adaptiveReviewRouting !== false, source, updatedAt },
-    { id: SETTING_ID_ADAPTIVE_POLICY_MIN_SAMPLES, scope: "runtime", value: config.adaptivePolicyMinSamples ?? 3, source, updatedAt },
+    { id: SETTING_ID_ADAPTIVE_POLICY_MIN_SAMPLES, scope: "runtime", value: config.adaptivePolicyMinSamples ?? DEFAULT_ADAPTIVE_POLICY_MIN_SAMPLES, source, updatedAt },
+    { id: SETTING_ID_SERVICE_ENV, scope: "runtime", value: config.serviceEnv ?? {}, source, updatedAt },
   ];
 }
 
@@ -323,6 +332,13 @@ export function applyPersistedSettings(config: RuntimeConfig, settings: RuntimeS
         const parsed = parseIntegerSetting(setting.value);
         if (parsed !== null && parsed >= 1 && parsed <= 10) {
           nextConfig.adaptivePolicyMinSamples = parsed;
+        }
+        break;
+      }
+      case SETTING_ID_SERVICE_ENV: {
+        const parsed = normalizeServiceEnvironment(setting.value);
+        if (parsed.errors.length === 0) {
+          nextConfig.serviceEnv = parsed.env;
         }
         break;
       }

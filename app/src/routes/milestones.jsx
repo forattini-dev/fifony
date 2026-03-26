@@ -3,8 +3,8 @@ import { useMemo, useState } from "react";
 import { FolderOpen, Plus, Target, CheckCircle2, ChevronRight, X, Trash2 } from "lucide-react";
 import { useDashboard } from "../context/DashboardContext.jsx";
 
-export const Route = createFileRoute("/projects")({
-  component: ProjectsPage,
+export const Route = createFileRoute("/milestones")({
+  component: MilestonesPage,
 });
 
 function progressTone(percent) {
@@ -13,7 +13,7 @@ function progressTone(percent) {
   return "progress-warning";
 }
 
-function ProjectsPage() {
+function MilestonesPage() {
   const ctx = useDashboard();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");

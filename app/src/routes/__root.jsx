@@ -358,17 +358,17 @@ function RootComponent() {
   const routerState = useRouterState();
   const isOnboarding = routerState.location.pathname === "/onboarding";
 
-  if (isOnboarding) {
-    return <Outlet />;
-  }
-
   return (
     <HotkeysProvider>
-      <OnboardingGate>
-        <DashboardProvider>
-          <RootLayout />
-        </DashboardProvider>
-      </OnboardingGate>
+      <DashboardProvider>
+        {isOnboarding ? (
+          <Outlet />
+        ) : (
+          <OnboardingGate>
+            <RootLayout />
+          </OnboardingGate>
+        )}
+      </DashboardProvider>
     </HotkeysProvider>
   );
 }

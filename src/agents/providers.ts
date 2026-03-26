@@ -301,11 +301,6 @@ function stageToRole(stage: AgentStage): AgentProviderRole {
   return "executor";
 }
 
-function stageToWorkflowKey(stage: AgentStage): keyof WorkflowConfig {
-  if (stage === "plan") return "plan";
-  if (stage === "review") return "review";
-  return "execute";
-}
 
 function buildStageProvider(
   state: RuntimeState,
@@ -314,7 +309,7 @@ function buildStageProvider(
   workflowConfig?: WorkflowConfig | null,
 ): AgentProviderDefinition {
   const role = stageToRole(stage);
-  const stageConfig = workflowConfig?.[stageToWorkflowKey(stage)];
+  const stageConfig = workflowConfig?.[roleToStageKey(stageToRole(stage))];
   const effort = stageConfig?.effort || resolveEffort(role, issue.effort, state.config.defaultEffort);
   const providerName = stageConfig?.provider || state.config.agentProvider;
   const model = stageConfig?.model || undefined;
