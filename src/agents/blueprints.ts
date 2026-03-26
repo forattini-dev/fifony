@@ -137,6 +137,25 @@ export function buildHarnessBlueprint(
     node(EXECUTION_NODE_IDS.handoff, "Handoff", "handoff", [EXECUTION_NODE_IDS.finalReview], { role: "executor" }),
   );
 
+  // Inject user-defined deterministic nodes from ExecutionContract (Feature A)
+  const contractDeterministicNodes = plan?.executionContract?.deterministicNodes ?? [];
+  for (const dn of contractDeterministicNodes) {
+    const afterIdx = nodes.findIndex((n) => n.id === dn.after);
+    if (afterIdx >= 0) {
+      nodes.splice(afterIdx + 1, 0, {
+        id: dn.id,
+        label: dn.label,
+        type: "deterministic" as BlueprintNode["type"],
+        mode: "serial" as BlueprintNodeExecutionMode,
+        required: dn.blocking !== false,
+        command: dn.command,
+        blocking: dn.blocking !== false,
+        dependsOn: [dn.after],
+        outputs: [],
+      });
+    }
+  }
+
   return {
     id: plan.executionContract.blueprintId || DEFAULT_BLUEPRINT_ID,
     version: DEFAULT_BLUEPRINT_VERSION,

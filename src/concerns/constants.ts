@@ -82,6 +82,7 @@ export const S3DB_SETTINGS_RESOURCE = "settings";
 export const S3DB_AGENT_SESSION_RESOURCE = "agent_sessions";
 export const S3DB_AGENT_PIPELINE_RESOURCE = "agent_pipelines";
 export const S3DB_SERVICES_RESOURCE = "workspace_services";
+export const S3DB_VARIABLES_RESOURCE = "workspace_variables";
 export const S3DB_CONTEXT_FRAGMENT_RESOURCE = "context_fragments";
 export const S3DB_RUNTIME_RECORD_ID = "current";
 export const S3DB_RUNTIME_SCHEMA_VERSION = 1;
@@ -147,6 +148,12 @@ export const DEFAULT_AUTO_REPLAN_STALL_THRESHOLD = 2;
 
 /** Default number of planner↔reviewer negotiation rounds before failing the contract gate */
 export const DEFAULT_MAX_CONTRACT_NEGOTIATION_ROUNDS = 2;
+
+/** Maximum context reset (new session with handoff) cycles per execute attempt */
+export const DEFAULT_MAX_CONTEXT_RESETS = 2;
+
+/** Context window usage % that triggers an automatic context reset */
+export const DEFAULT_CONTEXT_RESET_THRESHOLD_PCT = 85;
 
 /** Default minimum samples before adaptive policy makes routing decisions */
 export const DEFAULT_ADAPTIVE_POLICY_MIN_SAMPLES = 3;

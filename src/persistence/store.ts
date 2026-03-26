@@ -6,6 +6,7 @@ import type {
   RuntimeEvent,
   RuntimeSettingRecord,
   ServiceEntry,
+  VariableEntry,
   S3dbModule,
   S3dbDatabase,
   S3dbResource,
@@ -41,6 +42,7 @@ let settingStateResource: S3dbResource | null = null;
 let agentSessionResource: S3dbResource | null = null;
 let agentPipelineResource: S3dbResource | null = null;
 let serviceResource: S3dbResource | null = null;
+let variablesResource: S3dbResource | null = null;
 let contextFragmentResource: S3dbResource | null = null;
 let activeApiPlugin: { stop?: () => Promise<void> } | null = null;
 let activeStateMachinePlugin: { stop?: () => Promise<void> } | null = null;
@@ -77,6 +79,7 @@ export function getSettingStateResource(): S3dbResource | null { return settingS
 export function getAgentSessionResource(): S3dbResource | null { return agentSessionResource; }
 export function getAgentPipelineResource(): S3dbResource | null { return agentPipelineResource; }
 export function getServiceResource(): S3dbResource | null { return serviceResource; }
+export function getVariablesResource(): S3dbResource | null { return variablesResource; }
 export function getContextFragmentResource(): S3dbResource | null { return contextFragmentResource; }
 
 // ── Plan resource helpers (1:N model) ─────────────────────────────────────
@@ -275,6 +278,7 @@ export async function initStateStore(): Promise<void> {
     agentSessionResourceName,
     agentPipelineResourceName,
     serviceResourceName,
+    variablesResourceName,
     contextFragmentResourceName,
   ] = NATIVE_RESOURCE_NAMES;
   runtimeStateResource = await stateDb.getResource(runtimeStateResourceName);
@@ -286,6 +290,7 @@ export async function initStateStore(): Promise<void> {
   agentSessionResource = await stateDb.getResource(agentSessionResourceName);
   agentPipelineResource = await stateDb.getResource(agentPipelineResourceName);
   serviceResource = await stateDb.getResource(serviceResourceName);
+  variablesResource = await stateDb.getResource(variablesResourceName);
   contextFragmentResource = await stateDb.getResource(contextFragmentResourceName || S3DB_CONTEXT_FRAGMENT_RESOURCE);
 
   // Capture resource.state API injected by StateMachinePlugin (resource-level shortcuts)
@@ -601,6 +606,33 @@ export async function replaceAllServices(entries: ServiceEntry[]): Promise<void>
   );
   // Upsert all current entries
   await Promise.all(entries.map((e) => replacePersistedService(e)));
+}
+
+// ── Variables resource helpers ───────────────────────────────────────────────
+
+export async function loadPersistedVariables(): Promise<VariableEntry[]> {
+  if (!variablesResource?.list) return [];
+  try {
+    const records = await variablesResource.list({ limit: 1000 });
+    return Array.isArray(records)
+      ? records.filter((r): r is VariableEntry =>
+        Boolean(r && typeof r.id === "string" && typeof r.key === "string"),
+      )
+      : [];
+  } catch (error) {
+    logger.warn(`Failed to load variables from s3db: ${String(error)}`);
+    return [];
+  }
+}
+
+export async function upsertPersistedVariable(entry: VariableEntry): Promise<void> {
+  if (!variablesResource) return;
+  await variablesResource.replace(entry.id, { ...entry, updatedAt: now() });
+}
+
+export async function deletePersistedVariable(id: string): Promise<void> {
+  if (!variablesResource) return;
+  try { await (variablesResource as any).delete(id); } catch {}
 }
 
 /**

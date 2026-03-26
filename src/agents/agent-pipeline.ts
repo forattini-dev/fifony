@@ -26,7 +26,10 @@ import {
 import { readAgentDirective, addTokenUsage } from "./directive-parser.ts";
 import { buildTurnPrompt, buildProviderBasePrompt, buildRetryContext, resolveContextWindow } from "./prompt-builder.ts";
 import { resolveMaxTurns } from "../persistence/plugins/fsm-agent.ts";
-import { runCommandWithTimeout, runHook } from "./command-executor.ts";
+import { runCommandWithTimeout, runHook, writeToDaemon } from "./command-executor.ts";
+import { writeHandoffArtifact } from "./handoff-writer.ts";
+import { DEFAULT_MAX_CONTEXT_RESETS, DEFAULT_CONTEXT_RESET_THRESHOLD_PCT } from "../concerns/constants.ts";
+import { runDeterministicNode } from "./deterministic-node-runner.ts";
 import { record as recordTokens } from "../domains/tokens.ts";
 import { buildContextMarkdown, buildTraceFromContext } from "./context-engine.ts";
 import { markIssueDirty } from "../persistence/dirty-tracker.ts";
@@ -248,6 +251,31 @@ export async function runAgentSession(
     ].join("\n").trim();
   }
 
+  // Auto context reset: if beyond threshold and turns remain, reset instead of continuing
+  const resetThreshold = state?.config?.contextResetThresholdPct ?? DEFAULT_CONTEXT_RESET_THRESHOLD_PCT;
+  const maxResets = state?.config?.maxContextResets ?? DEFAULT_MAX_CONTEXT_RESETS;
+  const resetCount = issue.contextResetCount ?? 0;
+  if (
+    directive.status === "continue" &&
+    turnIndex >= 2 &&
+    contextPct !== null &&
+    contextPct >= resetThreshold &&
+    resetCount < maxResets
+  ) {
+    const handoffPath = writeHandoffArtifact(workspacePath, issue, previousOutput, nextPrompt);
+    issue.lastHandoffFile = handoffPath;
+    issue.contextResetCount = resetCount + 1;
+    markIssueDirty(issue.id);
+    addEvent(state, issue.id, "info", `Context reset ${issue.contextResetCount}/${maxResets}: handoff written, spawning fresh session.`);
+    logger.info({ issueId: issue.id, identifier: issue.identifier, contextPct, resetCount: issue.contextResetCount }, "[Agent] Context reset triggered — handoff written, daemon will be replaced");
+    // Signal the PTY daemon to exit (new spawn on next iteration)
+    try {
+      await writeToDaemon(workspacePath, "/exit\r");
+    } catch { /* daemon may already be gone */ }
+    await persistAgentSessionState(sessionKey, issue, provider, cycle, session);
+    return { success: false, blocked: false, continueRequested: true, code: lastCode, output: lastOutput, turns: session.turns.length, contextReset: true };
+  }
+
   // Accumulate tools/skills/agents/commands used across turns
   if (directive.toolsUsed?.length) issue.toolsUsed = [...new Set([...(issue.toolsUsed ?? []), ...directive.toolsUsed])];
   if (directive.skillsUsed?.length) issue.skillsUsed = [...new Set([...(issue.skillsUsed ?? []), ...directive.skillsUsed])];
@@ -403,6 +431,17 @@ export async function runAgentPipeline(
     }
   }
 
+  // Inject handoff from previous context reset session
+  if (issue.lastHandoffFile && (issue.contextResetCount ?? 0) > 0) {
+    const { readFileSync, existsSync } = await import("node:fs");
+    if (existsSync(issue.lastHandoffFile)) {
+      const handoffContent = readFileSync(issue.lastHandoffFile, "utf8");
+      providerPrompt = `## Context Reset — Prior Session Summary\n\n${handoffContent}\n\n---\n\n${providerPrompt}`;
+    }
+    issue.lastHandoffFile = undefined;
+    markIssueDirty(issue.id);
+  }
+
   pipeline.history.push(`[${now()}] Running ${effectiveProvider.role}:${effectiveProvider.provider} in cycle ${pipeline.cycle}${compiled ? ` [${compiled.meta.adapter} adapter]` : ""}.`);
   await persistAgentPipelineState(pipelineFile, pipeline);
 
@@ -480,9 +519,29 @@ export async function runAgentPipeline(
     attachNodeArtifacts(blueprintRun, implementNodeId, artifacts);
   }
 
-  const result = await runAgentSession(state, issue, effectiveProvider, pipeline.cycle, workspacePath, providerPrompt, basePromptFile);
+  // Check for parallel sub-task execution
+  let parallelExecuted = false;
+  if (issue.plan?.executionContract?.parallelSubTasks && issue.plan.executionContract.parallelSubTasks.length >= 2) {
+    const { spawnParallelSubTasks } = await import("./parallel-executor.ts");
+    const parallelSuccess = await spawnParallelSubTasks(state, issue, effectiveProvider, pipeline.cycle, providerPrompt, basePromptFile);
+    parallelExecuted = true;
+    if (!parallelSuccess) {
+      if (blueprint && blueprintRun) {
+        updateBlueprintNodeRun(blueprintRun, BLUEPRINT_EXECUTION_NODE_IDS.implement, "failed", { error: "One or more parallel sub-agents failed." });
+        finalizeBlueprintRun(blueprintRun, "failed");
+      }
+      return { success: false, blocked: true, continueRequested: false, code: 1, output: "One or more parallel sub-agents failed.", turns: 0 };
+    }
+    if (blueprint && blueprintRun) {
+      updateBlueprintNodeRun(blueprintRun, BLUEPRINT_EXECUTION_NODE_IDS.implement, "completed", {});
+    }
+  }
 
-  if (blueprint && blueprintRun) {
+  const result = parallelExecuted
+    ? { success: true, blocked: false, continueRequested: false, code: 0, output: "Parallel sub-agents completed.", turns: 0 } as AgentSessionResult
+    : await runAgentSession(state, issue, effectiveProvider, pipeline.cycle, workspacePath, providerPrompt, basePromptFile);
+
+  if (blueprint && blueprintRun && !parallelExecuted) {
     const implementNodeId = BLUEPRINT_EXECUTION_NODE_IDS.implement;
     const implementArtifacts = [
       writeBlueprintArtifact(
@@ -514,6 +573,26 @@ export async function runAgentPipeline(
   }
 
   if (result.success) {
+    // Run user-defined deterministic nodes that should run after implement (Feature A)
+    if (blueprint && blueprintRun) {
+      const postImplementNodes = blueprint.nodes.filter(
+        (n) => n.type === "deterministic" && n.command && n.dependsOn?.includes(BLUEPRINT_EXECUTION_NODE_IDS.implement),
+      );
+      for (const dn of postImplementNodes) {
+        updateBlueprintNodeRun(blueprintRun, dn.id, "running", {});
+        const dnResult = await runDeterministicNode(dn, workspacePath, issue);
+        updateBlueprintNodeRun(blueprintRun, dn.id, dnResult.passed ? "completed" : "failed", dnResult.passed ? {} : { error: dnResult.output });
+        if (!dnResult.passed && dn.blocking !== false) {
+          addEvent(state, issue.id, "error", `Deterministic node "${dn.label}" failed (blocking). Issue blocked before review.`);
+          finalizeBlueprintRun(blueprintRun, "failed");
+          return { success: false, blocked: true, continueRequested: false, code: 1, output: dnResult.output, turns: 0 };
+        }
+        if (!dnResult.passed) {
+          addEvent(state, issue.id, "warn", `Deterministic node "${dn.label}" failed (non-blocking). Continuing to review.`);
+        }
+      }
+    }
+
     if (compiled && blueprint && blueprintRun && shouldRunBlueprintNode(blueprint, BLUEPRINT_EXECUTION_NODE_IDS.runLocalGates, "execute")) {
       const localGateNodeId = BLUEPRINT_EXECUTION_NODE_IDS.runLocalGates;
       updateBlueprintNodeRun(blueprintRun, localGateNodeId, "running");

@@ -21,7 +21,7 @@ import type {
   RuntimeState,
   WorkflowConfig,
 } from "../../types.ts";
-import { SOURCE_ROOT, STATE_ROOT, TARGET_ROOT, TERMINAL_STATES, WORKSPACE_ROOT, DEFAULT_MAX_REVIEW_AUTO_RETRIES, DEFAULT_MAX_TURNS, DEFAULT_MAX_TURNS_BY_MODE, DEFAULT_AUTO_REPLAN_STALL_THRESHOLD } from "../../concerns/constants.ts";
+import { SOURCE_ROOT, STATE_ROOT, TARGET_ROOT, TERMINAL_STATES, WORKSPACE_ROOT, DEFAULT_MAX_REVIEW_AUTO_RETRIES, DEFAULT_MAX_TURNS, DEFAULT_MAX_TURNS_BY_MODE, DEFAULT_AUTO_REPLAN_STALL_THRESHOLD, DEFAULT_MAX_CONTEXT_RESETS } from "../../concerns/constants.ts";
 import { now, idToSafePath } from "../../concerns/helpers.ts";
 import { logger } from "../../concerns/logger.ts";
 import { markIssueDirty } from "../dirty-tracker.ts";
@@ -1495,6 +1495,9 @@ async function runExecuteOnce(
     issue.nextRetryAt = new Date(Date.now() + 1000).toISOString();
     issue.history.push(`[${issue.updatedAt}] Agent requested another turn (${runResult.turns}/${resolveMaxTurns(issue, state.config)}).`);
     container.eventStore.addEvent(issue.id, "runner", `Issue ${issue.identifier} queued for next turn.`);
+    if ((runResult as { contextReset?: boolean }).contextReset) {
+      container.eventStore.addEvent(issue.id, "runner", `Context reset ${issue.contextResetCount}/${state.config.maxContextResets ?? DEFAULT_MAX_CONTEXT_RESETS}: new session will start from handoff.`);
+    }
   } else {
     issue.lastError = runResult.output;
     issue.lastFailedPhase = "execute";

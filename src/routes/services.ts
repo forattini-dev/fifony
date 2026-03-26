@@ -192,7 +192,14 @@ export function registerServiceRoutes(
     const entry = (state.config.services ?? []).find((e) => e.id === id);
     if (!entry) return c.json({ ok: false, error: "Service not found." }, 404);
     try {
-      const t = startManagedService(entry, TARGET_ROOT, STATE_ROOT, state.config.serviceEnv);
+      const globalVars = Object.fromEntries(
+        (state.variables ?? []).filter((v) => v.scope === "global").map((v) => [v.key, v.value]),
+      );
+      const serviceVars = Object.fromEntries(
+        (state.variables ?? []).filter((v) => v.scope === entry.id).map((v) => [v.key, v.value]),
+      );
+      const mergedEnv = { ...entry.env, ...globalVars, ...serviceVars };
+      const t = startManagedService(entry, TARGET_ROOT, STATE_ROOT, mergedEnv);
       broadcastTransition(t);
       return c.json({ ok: true, pid: t.pid, state: t.to });
     } catch (err) {

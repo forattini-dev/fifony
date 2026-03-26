@@ -280,6 +280,7 @@ export function buildRuntimeState(
       "Codex-only execution path enabled.",
       "No external tracker dependency (filesystem-backed local mode).",
     ],
+    variables: previous?.variables ?? [],
   };
 
   refreshMilestoneSummaries(state);

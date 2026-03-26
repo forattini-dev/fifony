@@ -154,6 +154,12 @@ export type IssueEntry = {
   memoryFlushCount?: number;
   /** Persisted execution/review blueprint runs for audit and resume */
   blueprintRuns?: BlueprintRun[];
+  /** Number of context resets (fresh session with handoff) performed in the current execute attempt */
+  contextResetCount?: number;
+  /** Path to the handoff artifact written during a context reset — injected into the next session */
+  lastHandoffFile?: string;
+  /** Parallel sub-task tracking for parallel-execution mode */
+  parallelSubTasks?: ParallelSubTask[];
 };
 
 export type AttemptSummary = {
@@ -180,6 +186,18 @@ export type ValidationResult = {
   output: string;
   command: string;
   ranAt: string;
+};
+
+export type ParallelSubTask = {
+  id: string;
+  label: string;
+  stepIndices: number[];
+  worktreePath?: string;
+  status: "pending" | "running" | "done" | "failed";
+  result?: string;
+  tokenUsage?: AgentTokenUsage;
+  startedAt?: string;
+  completedAt?: string;
 };
 
 export type WorkspaceMemoryEntryKind =
@@ -353,6 +371,20 @@ export type ExecutionContract = {
   blueprintId?: string;
   delegationPolicy?: DelegationPolicy;
   budgetPolicy?: BudgetPolicy;
+  /** User-defined deterministic nodes to inject into the blueprint after the implement node */
+  deterministicNodes?: Array<{
+    id: string;
+    label: string;
+    command: string;
+    after: string;
+    blocking?: boolean;
+  }>;
+  /** Parallel sub-task decomposition for multi-agent concurrent execution */
+  parallelSubTasks?: Array<{
+    id: string;
+    label: string;
+    steps: number[];
+  }>;
 };
 
 export type HarnessMode = "solo" | "standard" | "contractual";
@@ -543,6 +575,10 @@ export type RuntimeConfig = {
   adaptiveReviewRouting?: boolean;
   /** Minimum historical samples before adaptive policy trusts observed lift over heuristics. Default: 3 */
   adaptivePolicyMinSamples?: number;
+  /** Maximum context reset (new session with handoff) cycles per execute attempt. Default: 2 */
+  maxContextResets?: number;
+  /** Context window usage % that triggers an automatic context reset. Default: 85 */
+  contextResetThresholdPct?: number;
 };
 
 export type ProjectNameSource = "saved" | "detected" | "missing";
@@ -697,6 +733,10 @@ export type BlueprintNode = {
   required?: boolean;
   fanoutGroup?: string;
   outputs?: string[];
+  /** Shell command to run for deterministic nodes */
+  command?: string;
+  /** When true, failure of this node blocks the pipeline */
+  blocking?: boolean;
 };
 
 export type HarnessBlueprint = {
@@ -1016,6 +1056,8 @@ export type AgentSessionResult = {
   output: string;
   turns: number;
   artifacts?: BlueprintArtifact[];
+  /** True when a context reset was triggered (new session will start from handoff) */
+  contextReset?: boolean;
 };
 
 export type AgentSessionTurn = {

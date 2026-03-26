@@ -4,7 +4,7 @@ import { env, exit, argv } from "node:process";
 import { CLI_ARGS, STATE_ROOT, TARGET_ROOT } from "./concerns/constants.ts";
 import { debugBoot, fail, now, parseIntArg } from "./concerns/helpers.ts";
 import { initLogger, logger } from "./concerns/logger.ts";
-import { initStateStore, loadPersistedState, persistState, persistStateFull, closeStateStore, loadPersistedServices, loadPersistedMilestones, loadLegacyPersistedServices, replaceAllServices } from "./persistence/store.ts";
+import { initStateStore, loadPersistedState, persistState, persistStateFull, closeStateStore, loadPersistedServices, loadPersistedMilestones, loadLegacyPersistedServices, replaceAllServices, loadPersistedVariables, upsertPersistedVariable } from "./persistence/store.ts";
 import { initQueueWorkers, stopQueueWorkers, recoverState, recoverOrphans, cleanTerminalWorkspaces } from "./persistence/plugins/queue-workers.ts";
 import { createContainer } from "./persistence/container.ts";
 import {
@@ -183,12 +183,13 @@ async function main() {
   // ── Phase C: Parallel state loading ─────────────────────────────────────────
   debugBoot("main:phase-c-start");
   logger.debug("[Boot] Loading persisted state, settings, and recovering sessions");
-  const [previous, persistedSettings, persistedServices, legacyPersistedServices, persistedMilestones] = await Promise.all([
+  const [previous, persistedSettings, persistedServices, legacyPersistedServices, persistedMilestones, persistedVariables] = await Promise.all([
     loadPersistedState(),
     loadRuntimeSettings(),
     loadPersistedServices(),
     loadLegacyPersistedServices(),
     loadPersistedMilestones(),
+    loadPersistedVariables(),
     persistDetectedProvidersSetting(detectedProviders),
     recoverPlanningSession(),
   ]);
@@ -212,6 +213,27 @@ async function main() {
   await syncRuntimeConfigSettings(config, persistedSettings);
   const projectMetadata = resolveProjectMetadata(persistedSettings, TARGET_ROOT);
   const state = buildRuntimeState(previous, config, projectMetadata, persistedMilestones);
+
+  // Load variables; auto-migrate from legacy serviceEnv + per-service env if table is empty
+  state.variables = persistedVariables;
+  if (state.variables.length === 0) {
+    const migrated = [];
+    const globalEnv = config.serviceEnv ?? {};
+    for (const [key, value] of Object.entries(globalEnv)) {
+      migrated.push({ id: `global:${key}`, key, value: String(value ?? ""), scope: "global", updatedAt: now() });
+    }
+    for (const svc of config.services ?? []) {
+      for (const [key, value] of Object.entries(svc.env ?? {})) {
+        migrated.push({ id: `${svc.id}:${key}`, key, value: String(value ?? ""), scope: svc.id, updatedAt: now() });
+      }
+    }
+    if (migrated.length > 0) {
+      await Promise.all(migrated.map((v) => upsertPersistedVariable(v)));
+      state.variables = migrated;
+      logger.info({ count: migrated.length }, "[Boot] Migrated legacy env vars to variables resource");
+    }
+  }
+
   debugBoot("main:state-merged");
 
   state.config.dashboardPort = dashboardPort ? String(dashboardPort) : undefined;
