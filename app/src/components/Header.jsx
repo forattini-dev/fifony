@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState, useLayoutEffect, useCallback } from "react";
 import { Link, useRouterState } from "@tanstack/react-router";
-import { Kanban, ListTodo, Activity, Bot, TrendingUp, Sliders } from "lucide-react";
+import { Kanban, ListTodo, Activity, Bot, TrendingUp, Sliders, Server } from "lucide-react";
 import { timeAgo } from "../utils.js";
 import NotificationCenter from "./NotificationCenter.jsx";
 import { buildQueueTitle } from "../project-meta.js";
@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { to: "/issues", label: "Issues", icon: ListTodo },
   { to: "/agents", label: "Agents", icon: Bot },
   { to: "/analytics", label: "Analytics", icon: TrendingUp },
+  { to: "/workspace", label: "Services", icon: Server },
   { to: "/settings", label: "Settings", icon: Sliders },
 ];
 

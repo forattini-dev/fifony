@@ -5,8 +5,6 @@ import {
   ChevronLeft, ChevronRight, X, Download,
 } from "lucide-react";
 import { api } from "../../api";
-import { useDashboard } from "../../context/DashboardContext";
-import { ConcurrencySection } from "../../components/SettingsView";
 
 export const Route = createFileRoute("/settings/agents")({
   component: AgentsSettings,
@@ -489,20 +487,11 @@ function CatalogBrowser() {
 // ── Main page ────────────────────────────────────────────────────────────────
 
 function AgentsSettings() {
-  const ctx = useDashboard();
   const [catalogVersion, setCatalogVersion] = useState(0);
 
   return (
     <div className="space-y-4">
-      <ConcurrencySection
-        concurrency={ctx.concurrency}
-        setConcurrency={ctx.setConcurrency}
-        saveConcurrency={ctx.saveConcurrency}
-        savePending={ctx.saveConcPending}
-      />
-
       <SourcesSection onCatalogRefresh={() => setCatalogVersion((v) => v + 1)} />
-
       <CatalogBrowser key={catalogVersion} />
     </div>
   );

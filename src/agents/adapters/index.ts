@@ -232,6 +232,7 @@ export function persistCompilationArtifacts(workspacePath: string, compiled: Com
         adapter: compiled.meta.adapter,
         model: compiled.meta.model,
         reasoningEffort: compiled.meta.reasoningEffort,
+        providerCapabilities: compiled.meta.providerCapabilities,
         skillsActivated: compiled.meta.skillsActivated,
         subagentsRequested: compiled.meta.subagentsRequested,
         phasesCount: compiled.meta.phasesCount,

@@ -148,6 +148,7 @@ function RootLayout() {
   useHotkeys("a", () => navigate({ to: "/agents" }), { enabled: noDrawer, description: "Go to Agents", metadata: { group: "navigation" } }, [navigate, noDrawer]);
   useHotkeys("t", () => navigate({ to: "/analytics" }), { enabled: noDrawer, description: "Go to Analytics", metadata: { group: "navigation" } }, [navigate, noDrawer]);
   useHotkeys("s", () => navigate({ to: "/settings" }), { enabled: noDrawer, description: "Go to Settings", metadata: { group: "navigation" } }, [navigate, noDrawer]);
+  useHotkeys("w", () => navigate({ to: "/workspace" }), { enabled: noDrawer, description: "Go to Services", metadata: { group: "navigation" } }, [navigate, noDrawer]);
 
   // ── Drawer ──────────────────────────────────────────────────────────
   useHotkeys("]", () => switchDrawerTab(1), { enabled: hasDrawer, description: "Next tab", metadata: { group: "drawer" } }, [switchDrawerTab, hasDrawer]);

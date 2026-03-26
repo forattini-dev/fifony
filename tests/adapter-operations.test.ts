@@ -149,10 +149,11 @@ function makeProvider(provider: string, role: string, overrides: Partial<AgentPr
 // ══════════════════════════════════════════════════════════════════════════════
 
 describe("operation: plan — command per CLI", () => {
-  it("claude: uses --json-schema with PLAN_JSON_SCHEMA and noToolAccess", () => {
+  it("claude: uses native schema output and read-only planning mode", () => {
     const cmd = getPlanCommand("claude", "claude-sonnet-4-6");
     assert.ok(cmd.includes("claude"), "starts with claude");
     assert.ok(cmd.includes("--json-schema"), "uses plan JSON schema");
+    assert.ok(cmd.includes("--permission-mode plan"), "uses read-only planning mode");
     assert.ok(!cmd.includes("--dangerously-skip-permissions"), "no tool access for planning");
     assert.ok(cmd.includes("--output-format json"), "JSON output");
   });
@@ -164,10 +165,11 @@ describe("operation: plan — command per CLI", () => {
     assert.ok(cmd.includes("--model o4-mini"), "model injected");
   });
 
-  it("gemini: NO --json-schema, uses --output-format json", () => {
+  it("gemini: falls back to prompt contract but still uses read-only planning mode", () => {
     const cmd = getPlanCommand("gemini", "gemini-2.5-pro");
     assert.ok(cmd.includes("gemini"), "starts with gemini");
     assert.ok(!cmd.includes("--json-schema"), "gemini has no schema flag");
+    assert.ok(cmd.includes("--approval-mode plan"), "uses read-only planning mode");
     assert.ok(cmd.includes("--output-format json"), "JSON output enabled");
   });
 
@@ -299,6 +301,24 @@ describe("operation: execute — compile per CLI", () => {
         const result = await compileExecution(issue, provider, BASE_CONFIG, WORKSPACE, "");
 
         assert.equal(result!.meta.adapter, providerName);
+      });
+
+      it("includes provider capability metadata and delegation hints", async () => {
+        const issue = makeIssue({
+          plan: makePlan({ suggestedAgents: ["ui-reviewer", "api-auditor"] }),
+        });
+        const provider = makeProvider(providerName, "executor");
+        const result = await compileExecution(issue, provider, BASE_CONFIG, WORKSPACE, "");
+
+        assert.equal(result!.meta.subagentsRequested.length, 2);
+
+        if (providerName === "claude") {
+          assert.equal(result!.meta.providerCapabilities.structuredOutput.mode, "json-schema");
+          assert.equal(result!.meta.providerCapabilities.nativeSubagents, "native");
+        } else {
+          assert.equal(result!.meta.providerCapabilities.structuredOutput.mode, "prompt-contract");
+          assert.equal(result!.meta.providerCapabilities.nativeSubagents, "runtime-only");
+        }
       });
     });
   }

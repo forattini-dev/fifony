@@ -12,6 +12,17 @@ import {
   parseClaudeUsageFromStatus,
 } from "./usage.ts";
 
+const CLAUDE_CAPABILITIES = {
+  readOnlyExecution: "plan",
+  structuredOutput: {
+    mode: "json-schema",
+    requiresToolDisable: true,
+  },
+  imageInput: "prompt-inline",
+  usageReporting: "cli-command",
+  nativeSubagents: "native",
+} as const;
+
 export const CLAUDE_USAGE_COMMAND = "/usage";
 export const collectClaudeUsageFromCli = (): Promise<ProviderUsageSnapshot | null> =>
   collectProviderUsageSnapshotFromCli("claude", CLAUDE_USAGE_COMMAND, parseClaudeUsageFromStatus, [
@@ -83,6 +94,7 @@ async function compile(
     planPrompt: buildFullPlanPrompt(plan),
     suggestedSkills: plan.suggestedSkills ?? [],
     suggestedAgents: plan.suggestedAgents ?? [],
+    hasNativeSubagents: CLAUDE_CAPABILITIES.nativeSubagents === "native",
     suggestedPaths: plan.suggestedPaths ?? [],
     workspacePath,
     issueIdentifier: issue.identifier,
@@ -136,6 +148,7 @@ async function compile(
       adapter: "claude",
       reasoningEffort: effort || "default",
       model: provider.model || "default",
+      providerCapabilities: CLAUDE_CAPABILITIES,
       skillsActivated: plan.suggestedSkills || [],
       subagentsRequested: plan.suggestedAgents || [],
       phasesCount: plan.phases?.length || 0,
@@ -144,6 +157,7 @@ async function compile(
 }
 
 export const claudeAdapter: ProviderAdapter = {
+  capabilities: CLAUDE_CAPABILITIES,
   buildCommand: buildClaudeCommand,
   buildReviewCommand: (reviewer, config) => buildClaudeCommand({
     model: reviewer.model,

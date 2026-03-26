@@ -53,6 +53,20 @@ Invoke these skills during execution:
 {{/each}}
 {{/if}}
 
+{{#if suggestedAgents.length}}
+## Delegation
+Fifony may decompose this work into specialist subtasks:
+{{#each suggestedAgents}}
+- **{{this}}**
+{{/each}}
+
+{{#if hasNativeSubagents}}
+Your current runtime supports native subagents. Use them for independent subtasks when that improves throughput.
+{{else}}
+Your current runtime may not expose native subagents. Preserve the same delegation semantics by keeping subtask boundaries explicit and maintaining a single integration owner for the final result.
+{{/if}}
+{{/if}}
+
 {{#if validationItems.length}}
 ## Pre-completion checks
 Before reporting done, run:

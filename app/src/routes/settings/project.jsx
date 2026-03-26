@@ -3,7 +3,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { api } from "../../api.js";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSettings, getSettingsList, getSettingValue, SETTINGS_QUERY_KEY, upsertSettingPayload } from "../../hooks";
-import { PROJECT_SETTING_ID, buildQueueTitle, normalizeProjectName, resolveProjectMeta } from "../../project-meta.js";
+import { PROJECT_SETTING_ID, normalizeProjectName, resolveProjectMeta } from "../../project-meta.js";
 import {
   FolderRoot,
   GitMerge,
@@ -13,8 +13,6 @@ import {
   CheckCircle,
   PencilLine,
   Radio,
-  ShieldCheck,
-  FlaskConical,
   GitBranch,
 } from "lucide-react";
 
@@ -30,11 +28,8 @@ function ProjectSettings() {
   const settings = getSettingsList(settingsQuery.data);
   const [hydrated, setHydrated] = useState(false);
   const [projectName, setProjectName] = useState("");
-  const [projectSource, setProjectSource] = useState("missing");
   const [mergeMode, setMergeMode] = useState("local");
   const [prBaseBranch, setPrBaseBranch] = useState("");
-  const [autoReviewApproval, setAutoReviewApproval] = useState(true);
-  const [testCommand, setTestCommand] = useState("");
 
   const [gitStatus, setGitStatus] = useState(null);
   const [currentBranch, setCurrentBranch] = useState("");
@@ -49,14 +44,11 @@ function ProjectSettings() {
 
   const [savingProject, setSavingProject] = useState(false);
   const [savingDelivery, setSavingDelivery] = useState(false);
-  const [savingValidation, setSavingValidation] = useState(false);
   const [savingBranch, setSavingBranch] = useState(false);
   const [validationMessage, setValidationMessage] = useState("");
 
   const runtimeMetaRef = useRef(null);
 
-  const normalizedProjectName = normalizeProjectName(projectName);
-  const queueTitle = buildQueueTitle(normalizedProjectName || runtimeMetaRef.current?.detectedProjectName || runtimeMetaRef.current?.projectName);
 
   const persistSetting = useCallback((id, value, scope) => {
     qc.setQueryData(SETTINGS_QUERY_KEY, (current) => upsertSettingPayload(current, {
@@ -108,19 +100,8 @@ function ProjectSettings() {
       setPrBaseBranch(nextPrBaseBranch);
     }
 
-    const nextAutoReviewApproval = getSettingValue(settings, "runtime.autoReviewApproval", true);
-    if (typeof nextAutoReviewApproval === "boolean") {
-      setAutoReviewApproval(nextAutoReviewApproval);
-    }
-
-    const nextTestCommand = getSettingValue(settings, "runtime.testCommand", "");
-    if (typeof nextTestCommand === "string") {
-      setTestCommand(nextTestCommand);
-    }
-
     const projectMeta = resolveProjectMeta(settings, runtimeMetaRef.current || {});
     setProjectName(projectMeta.projectName || "");
-    setProjectSource(projectMeta.source);
 
     if (!prBaseBranch && projectMeta.projectName) {
       setPrBaseBranch(projectMeta.detectedProjectName || currentBranch || nextPrBaseBranch || "");
@@ -191,36 +172,12 @@ function ProjectSettings() {
       });
       persistSetting("runtime.prBaseBranch", prBaseBranch.trim(), "runtime");
 
-      await api.post(`/settings/${encodeURIComponent("runtime.autoReviewApproval")}`, {
-        scope: "runtime",
-        value: autoReviewApproval,
-        source: "user",
-      });
-      persistSetting("runtime.autoReviewApproval", autoReviewApproval, "runtime");
-
       setValidationMessage("Delivery settings updated.");
       setTimeout(() => setValidationMessage(""), 1400);
     } finally {
       setSavingDelivery(false);
     }
-  }, [autoReviewApproval, mergeMode, prBaseBranch, persistSetting]);
-
-  const saveTestConfig = useCallback(async () => {
-    setSavingValidation(true);
-    setValidationMessage("");
-    try {
-      await api.post(`/settings/${encodeURIComponent("runtime.testCommand")}`, {
-        scope: "runtime",
-        value: testCommand.trim(),
-        source: "user",
-      });
-      persistSetting("runtime.testCommand", testCommand.trim(), "runtime");
-      setValidationMessage("Validation command updated.");
-      setTimeout(() => setValidationMessage(""), 1400);
-    } finally {
-      setSavingValidation(false);
-    }
-  }, [testCommand, persistSetting]);
+  }, [mergeMode, prBaseBranch, persistSetting]);
 
   const startBranchEdit = useCallback(() => {
     setEditingBranch(true);
@@ -301,16 +258,10 @@ function ProjectSettings() {
             />
           </label>
 
-          <div className="rounded-xl border border-base-300/70 bg-base-100 px-4 py-3">
-            <div className="text-xs uppercase tracking-[0.2em] text-base-content/40">Queue title preview</div>
-            <div className="mt-1.5 text-base font-semibold tracking-tight break-words">{queueTitle || "fifony"}</div>
-          </div>
-
-          <div className="flex gap-2 items-center">
+          <div>
             <button className="btn btn-sm btn-primary" onClick={saveProjectName} disabled={savingProject || !normalizeProjectName(projectName)}>
               {savingProject ? <Loader2 className="size-3 animate-spin" /> : "Save project name"}
             </button>
-            <span className="text-xs opacity-50">Source: {projectSource}</span>
           </div>
         </div>
       </div>
@@ -459,52 +410,17 @@ function ProjectSettings() {
             </label>
           )}
 
-          <label className="label cursor-pointer justify-start gap-3">
-            <input
-              type="checkbox"
-              className="toggle toggle-sm toggle-primary"
-              checked={autoReviewApproval}
-              onChange={(e) => setAutoReviewApproval(e.target.checked)}
-            />
-            <span className="label-text text-sm">Auto-approve after review</span>
-          </label>
-          <p className="text-xs opacity-50">{autoReviewApproval ? "Issues auto-approve after reviewer success (or if no reviewer is configured)." : "Issues always wait in Pending Decision for manual human approval."}</p>
-
           <button className="btn btn-sm btn-primary" onClick={saveDeliveryConfig} disabled={savingDelivery}>
             {savingDelivery ? <Loader2 className="size-3 animate-spin" /> : "Save delivery settings"}
           </button>
         </div>
       </div>
 
-      <div className="card bg-base-200">
-        <div className="card-body gap-4 p-6">
-          <div className="flex items-center gap-2">
-            <FlaskConical className="size-4 opacity-50" />
-            <h2 className="card-title text-sm">Validation command</h2>
-          </div>
-          <p className="text-xs opacity-50">Runs before issue completion and merge/done.</p>
-          <input
-            type="text"
-            className="input input-bordered w-full text-sm font-mono"
-            placeholder="pnpm test"
-            value={testCommand}
-            onChange={(e) => setTestCommand(e.target.value)}
-          />
-          <button className="btn btn-sm btn-primary" onClick={saveTestConfig} disabled={savingValidation}>
-            {savingValidation ? <Loader2 className="size-3 animate-spin" /> : "Save validation command"}
-          </button>
-        </div>
-      </div>
-
       {validationMessage && (
         <div className="alert alert-success py-2 text-xs">
-          <ShieldCheck className="size-3" /> {validationMessage}
+          {validationMessage}
         </div>
       )}
-
-      <div className="text-xs text-base-content/40">
-        <p>These settings mirror the onboarding setup. Use Workflow for pipeline, Agents for catalog installs and worker concurrency.</p>
-      </div>
     </div>
   );
 }

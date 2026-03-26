@@ -1,6 +1,6 @@
 import { appendFileTail, extractJsonObjects } from "../../concerns/helpers.ts";
 import { logger } from "../../concerns/logger.ts";
-import { detectAvailableProviders } from "../providers.ts";
+import { detectAvailableProviders, resolveProviderCapabilities } from "../providers.ts";
 import type { RuntimeConfig } from "../../types.ts";
 import { renderPrompt } from "../prompting.ts";
 import { resolvePlanStageConfig } from "./planning-prompts.ts";
@@ -171,12 +171,7 @@ async function runProviderCommand(
   writeFileSync(promptFile, `${prompt}\n`, "utf8");
   writeFileSync(issuePayloadFile, JSON.stringify({ title, description, field }, null, 2), "utf8");
 
-  // For Codex: inject --image flags before the stdin redirect
-  let effectiveCommand = command;
-  if (provider === "codex" && images?.length) {
-    const imageFlags = images.map((p) => `--image "${p}"`).join(" ");
-    effectiveCommand = command.replace('< "$FIFONY_PROMPT_FILE"', `${imageFlags} < "$FIFONY_PROMPT_FILE"`);
-  }
+  const effectiveCommand = command;
 
   const spawnEnv = {
     ...env,
@@ -286,11 +281,14 @@ export async function enhanceIssueField(
     additionalProperties: false,
   });
 
+  const capabilities = resolveProviderCapabilities(selectedProvider);
+
   const command = adapter.buildCommand({
     model: selectedModel,
-    imagePaths: images,
-    jsonSchema: selectedProvider === "claude" ? ENHANCE_JSON_SCHEMA : undefined,
-    noToolAccess: selectedProvider === "claude",
+    imagePaths: capabilities.imageInput === "cli-flag" ? images : undefined,
+    jsonSchema: capabilities.structuredOutput.mode === "json-schema" ? ENHANCE_JSON_SCHEMA : undefined,
+    noToolAccess: capabilities.structuredOutput.requiresToolDisable && capabilities.readOnlyExecution === "none",
+    readOnly: capabilities.readOnlyExecution !== "none",
   });
   if (!command) {
     throw new Error(`Adapter returned empty command for provider "${selectedProvider}".`);

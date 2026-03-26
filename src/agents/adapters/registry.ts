@@ -1,4 +1,10 @@
-import type { IssueEntry, AgentProviderDefinition, RuntimeConfig, IssuePlan } from "../../types.ts";
+import type {
+  IssueEntry,
+  AgentProviderDefinition,
+  ProviderCapabilities,
+  RuntimeConfig,
+  IssuePlan,
+} from "../../types.ts";
 import type { CompiledExecution } from "./types.ts";
 
 /** Normalized options passed to every provider's buildCommand. */
@@ -21,6 +27,8 @@ export type ProviderCommandOptions = {
 };
 
 export type ProviderAdapter = {
+  /** Declared runtime capabilities for this provider. */
+  capabilities: ProviderCapabilities;
   /** Build the CLI command string for execution/planning */
   buildCommand(options: ProviderCommandOptions): string;
   /** Build the CLI command string for review */
@@ -46,3 +54,68 @@ export const ADAPTERS: Record<string, ProviderAdapter> = {
   codex: codexAdapter,
   gemini: geminiAdapter,
 };
+
+const UNSUPPORTED_CAPABILITIES: ProviderCapabilities = {
+  readOnlyExecution: "none",
+  structuredOutput: {
+    mode: "none",
+    requiresToolDisable: false,
+  },
+  imageInput: "none",
+  usageReporting: "none",
+  nativeSubagents: "runtime-only",
+};
+
+export function getProviderAdapter(provider: string): ProviderAdapter | null {
+  return ADAPTERS[provider] ?? null;
+}
+
+export function getProviderCapabilities(
+  provider: string,
+  overrides?: ProviderCapabilities | null,
+): ProviderCapabilities {
+  if (overrides) return overrides;
+  return ADAPTERS[provider]?.capabilities ?? UNSUPPORTED_CAPABILITIES;
+}
+
+export function supportsReadOnlyExecution(capabilities: ProviderCapabilities): boolean {
+  return capabilities.readOnlyExecution !== "none";
+}
+
+export function usesNativeStructuredOutput(capabilities: ProviderCapabilities): boolean {
+  return capabilities.structuredOutput.mode === "json-schema";
+}
+
+export function shouldDisableToolsForStructuredOutput(capabilities: ProviderCapabilities): boolean {
+  return capabilities.structuredOutput.requiresToolDisable;
+}
+
+export function usesCliImageInput(capabilities: ProviderCapabilities): boolean {
+  return capabilities.imageInput === "cli-flag";
+}
+
+export function supportsNativeSubagents(capabilities: ProviderCapabilities): boolean {
+  return capabilities.nativeSubagents === "native";
+}
+
+export function describeProviderCapabilityWarnings(provider: string, capabilities: ProviderCapabilities): string[] {
+  const warnings: string[] = [];
+
+  if (!supportsReadOnlyExecution(capabilities)) {
+    warnings.push(`${provider} does not expose CLI-enforced read-only execution; planner/reviewer runs fall back to prompt/runtime discipline.`);
+  }
+
+  if (!usesNativeStructuredOutput(capabilities)) {
+    warnings.push(`${provider} does not expose native JSON schema enforcement; structured output falls back to prompt-contract parsing.`);
+  }
+
+  if (!supportsNativeSubagents(capabilities)) {
+    warnings.push(`${provider} does not expose native subagents; delegation will use Fifony runtime orchestration instead.`);
+  }
+
+  if (capabilities.usageReporting === "none") {
+    warnings.push(`${provider} does not expose usage reporting; provider budget telemetry may be incomplete.`);
+  }
+
+  return warnings;
+}

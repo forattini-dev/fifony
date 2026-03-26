@@ -10,6 +10,8 @@ import {
   normalizeAgentRole,
   resolveEffort,
   resolveAgentCommand,
+  resolveProviderCapabilities,
+  getProviderCapabilityWarnings,
   getProviderDefaultCommand,
   getExecutionProviders,
   getReviewProvider,
@@ -188,6 +190,29 @@ describe("getProviderDefaultCommand", () => {
   });
 });
 
+describe("provider capability routing", () => {
+  it("declares native schema + native subagents for claude", () => {
+    const capabilities = resolveProviderCapabilities("claude");
+    assert.equal(capabilities.structuredOutput.mode, "json-schema");
+    assert.equal(capabilities.readOnlyExecution, "plan");
+    assert.equal(capabilities.nativeSubagents, "native");
+  });
+
+  it("declares fallback structured output for codex", () => {
+    const capabilities = resolveProviderCapabilities("codex");
+    assert.equal(capabilities.structuredOutput.mode, "prompt-contract");
+    assert.equal(capabilities.imageInput, "cli-flag");
+    assert.equal(capabilities.nativeSubagents, "runtime-only");
+  });
+
+  it("surfaces capability warnings for providers that rely on harness fallbacks", () => {
+    const warnings = getProviderCapabilityWarnings("codex");
+    assert.ok(warnings.some((warning) => warning.includes("read-only execution")));
+    assert.ok(warnings.some((warning) => warning.includes("JSON schema")));
+    assert.ok(warnings.some((warning) => warning.includes("native subagents")));
+  });
+});
+
 // ── resolveAgentCommand() ─────────────────────────────────────────────────────
 
 describe("resolveAgentCommand", () => {
@@ -338,6 +363,7 @@ describe("stage-specific providers", () => {
     assert.equal(providers[0]?.provider, "codex");
     assert.equal(providers[0]?.model, "gpt-5.4");
     assert.equal(providers[0]?.reasoningEffort, "medium");
+    assert.equal(providers[0]?.capabilities?.structuredOutput.mode, "prompt-contract");
   });
 
   it("returns a real reviewer provider from the review workflow stage", () => {

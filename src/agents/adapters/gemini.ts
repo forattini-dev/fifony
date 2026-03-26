@@ -12,6 +12,17 @@ import {
   parseGeminiUsageFromStatus,
 } from "./usage.ts";
 
+const GEMINI_CAPABILITIES = {
+  readOnlyExecution: "approval",
+  structuredOutput: {
+    mode: "prompt-contract",
+    requiresToolDisable: false,
+  },
+  imageInput: "prompt-inline",
+  usageReporting: "cli-command",
+  nativeSubagents: "runtime-only",
+} as const;
+
 export const GEMINI_USAGE_COMMAND = "/stats session";
 export const collectGeminiUsageFromCli = (): Promise<ProviderUsageSnapshot | null> =>
   collectProviderUsageSnapshotFromCli("gemini", GEMINI_USAGE_COMMAND, parseGeminiUsageFromStatus);
@@ -96,6 +107,8 @@ async function compile(
       goal: phase.goal,
       outputs: phase.outputs ?? [],
     })),
+    suggestedAgents: plan.suggestedAgents ?? [],
+    hasNativeSubagents: GEMINI_CAPABILITIES.nativeSubagents === "native",
     suggestedPaths: plan.suggestedPaths ?? [],
     suggestedSkills: plan.suggestedSkills ?? [],
     validationItems: (plan.validation ?? []).map((value) => ({ value })),
@@ -142,14 +155,16 @@ async function compile(
       adapter: "gemini",
       reasoningEffort: effort || "default",
       model: provider.model || "default",
+      providerCapabilities: GEMINI_CAPABILITIES,
       skillsActivated: plan.suggestedSkills || [],
-      subagentsRequested: [],
+      subagentsRequested: plan.suggestedAgents || [],
       phasesCount: plan.phases?.length || 0,
     },
   };
 }
 
 export const geminiAdapter: ProviderAdapter = {
+  capabilities: GEMINI_CAPABILITIES,
   buildCommand: buildGeminiCommand,
   buildReviewCommand: (reviewer) => buildGeminiCommand({
     model: reviewer.model,

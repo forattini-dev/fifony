@@ -105,6 +105,8 @@ describe("runtime diagnostics", () => {
     assert.equal(snapshot.services.running, 1);
     assert.equal(snapshot.agents.active, 1);
     assert.equal(snapshot.memory.totalFlushes, 3);
+    assert.equal(snapshot.providers.configuredCapabilities.structuredOutput.mode, "prompt-contract");
+    assert.ok(snapshot.providers.capabilityWarnings.some((warning) => warning.includes("JSON schema")));
   });
 
   it("marks probe degraded and doctor failed when workspace or provider are unhealthy", () => {
@@ -144,6 +146,7 @@ describe("runtime diagnostics", () => {
     assert.equal(probe.ok, false);
     assert.ok(doctor.some((check) => check.id === "workspace-git" && check.status === "fail"));
     assert.ok(doctor.some((check) => check.id === "provider-runtime" && check.status === "fail"));
+    assert.ok(doctor.some((check) => check.id === "provider-capabilities" && check.status === "warn"));
     assert.ok(doctor.some((check) => check.id === "memory-pipeline" && check.status === "warn"));
   });
 });

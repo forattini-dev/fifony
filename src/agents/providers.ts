@@ -64,6 +64,20 @@ export function normalizeAgentRole(value: string): AgentProviderRole {
   return "executor";
 }
 
+export function resolveProviderCapabilities(
+  provider: string,
+  overrides?: AgentProviderDefinition["capabilities"],
+) {
+  return getProviderCapabilities(provider, overrides ?? null);
+}
+
+export function getProviderCapabilityWarnings(
+  provider: string,
+  overrides?: AgentProviderDefinition["capabilities"],
+): string[] {
+  return describeProviderCapabilityWarnings(provider, resolveProviderCapabilities(provider, overrides));
+}
+
 export function resolveAgentCommand(
   provider: string,
   explicitCommand: string,
@@ -94,14 +108,19 @@ export function resolveEffort(
   return globalEffort?.default;
 }
 
-import { ADAPTERS } from "./adapters/registry.ts";
+import {
+  ADAPTERS,
+  describeProviderCapabilityWarnings,
+  getProviderCapabilities,
+  usesNativeStructuredOutput,
+} from "./adapters/registry.ts";
 import { CLAUDE_RESULT_SCHEMA } from "./adapters/commands.ts";
 
 export function getProviderDefaultCommand(provider: string, reasoningEffort?: string, model?: string): string {
   const adapter = ADAPTERS[provider];
   if (!adapter) return "";
-  // Claude needs a JSON schema in its default command; pass effort for all providers
-  const jsonSchema = provider === "claude" ? CLAUDE_RESULT_SCHEMA : undefined;
+  const capabilities = resolveProviderCapabilities(provider);
+  const jsonSchema = usesNativeStructuredOutput(capabilities) ? CLAUDE_RESULT_SCHEMA : undefined;
   return adapter.buildCommand({ model, effort: reasoningEffort, jsonSchema });
 }
 
@@ -117,11 +136,12 @@ export function detectAvailableProviders(): DetectedProvider[] {
   const providers: DetectedProvider[] = [];
 
   for (const name of ["claude", "codex", "gemini"]) {
+    const capabilities = resolveProviderCapabilities(name);
     try {
       const path = execFileSync("which", [name], { encoding: "utf8", timeout: 5000 }).trim();
-      providers.push({ name, available: true, path });
+      providers.push({ name, available: true, path, capabilities });
     } catch {
-      providers.push({ name, available: false, path: "" });
+      providers.push({ name, available: false, path: "", capabilities });
     }
   }
 
@@ -228,6 +248,7 @@ export function resolveWorkflowAgentProviders(
         profile,
         profilePath: resolvedProfile.profilePath,
         profileInstructions: resolvedProfile.instructions,
+        capabilities: resolveProviderCapabilities(provider),
       });
     }
   }
@@ -248,6 +269,7 @@ export function resolveWorkflowAgentProviders(
       profile: fallbackProfile,
       profilePath: resolvedProfile.profilePath,
       profileInstructions: resolvedProfile.instructions,
+      capabilities: resolveProviderCapabilities(fallbackProvider),
     },
   ];
 }
@@ -263,6 +285,7 @@ export function getBaseAgentProviders(
       profile: "",
       profilePath: "",
       profileInstructions: "",
+      capabilities: resolveProviderCapabilities(state.config.agentProvider),
     },
   ];
 }
@@ -332,6 +355,7 @@ function buildStageProvider(
       ? `Using workflow ${stage} stage configuration.`
       : `Using default ${stage} stage provider configuration.`,
     overlays: [],
+    capabilities: resolveProviderCapabilities(providerName),
   };
 }
 
@@ -378,6 +402,7 @@ function buildAdaptiveReviewCandidates(
       model,
       command,
       selectionReason: reason,
+      capabilities: resolveProviderCapabilities(providerName),
     };
     candidates.set(buildReviewRouteKey(candidate), candidate);
   };
@@ -454,6 +479,7 @@ export function applyWorkflowConfigToProviders(
       model: newModel,
       command: command || provider.command,
       reasoningEffort: newEffort,
+      capabilities: resolveProviderCapabilities(newProvider),
     };
   });
 }

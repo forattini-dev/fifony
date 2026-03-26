@@ -1,4 +1,4 @@
-import type { AgentTokenUsage, ReviewProfile, ReviewScope } from "../../types.ts";
+import type { AgentTokenUsage, ProviderCapabilities, ReviewProfile, ReviewScope } from "../../types.ts";
 import type { ExecutionPayload } from "./shared.ts";
 
 export type CompiledExecution = {
@@ -13,6 +13,7 @@ export type CompiledExecution = {
     adapter: "claude" | "codex" | "gemini" | "passthrough";
     reasoningEffort: string;
     model: string;
+    providerCapabilities: ProviderCapabilities;
     skillsActivated: string[];
     subagentsRequested: string[];
     phasesCount: number;

@@ -1,6 +1,7 @@
 import type {
   DoctorCheckResult,
   IssueEntry,
+  ProviderCapabilities,
   RuntimeHealthSnapshot,
   RuntimeState,
   ServiceStatus,
@@ -8,7 +9,11 @@ import type {
 } from "../types.ts";
 import { now } from "../concerns/helpers.ts";
 import { TARGET_ROOT, STATE_ROOT } from "../concerns/constants.ts";
-import { detectAvailableProviders } from "../agents/providers.ts";
+import {
+  detectAvailableProviders,
+  getProviderCapabilityWarnings,
+  resolveProviderCapabilities,
+} from "../agents/providers.ts";
 import { getGitRepoStatus, type GitRepoStatus } from "./workspace.ts";
 import { listServiceStatuses } from "./services.ts";
 import { getAgentStatus } from "./agents.ts";
@@ -25,6 +30,14 @@ export type RuntimeDiagnosticsDeps = {
   serviceStatuses?: ServiceStatus[];
   agentStatuses?: AgentStatusSnapshot[];
 };
+
+function findConfiguredCapabilities(
+  configuredProvider: string,
+  providers: DetectedProvider[],
+): ProviderCapabilities {
+  const detected = providers.find((provider) => provider.name === configuredProvider);
+  return resolveProviderCapabilities(configuredProvider, detected?.capabilities);
+}
 
 function collectIssueCounts(issues: IssueEntry[]) {
   return {
@@ -63,6 +76,8 @@ export function collectRuntimeHealthSnapshot(
   const services = collectServiceStatuses(state, deps);
   const agentStatuses = collectAgentStatuses(state, deps);
   const issueCounts = collectIssueCounts(state.issues);
+  const configuredCapabilities = findConfiguredCapabilities(state.config.agentProvider, providers);
+  const capabilityWarnings = getProviderCapabilityWarnings(state.config.agentProvider, configuredCapabilities);
 
   const snapshot: RuntimeHealthSnapshot = {
     generatedAt: now(),
@@ -74,6 +89,8 @@ export function collectRuntimeHealthSnapshot(
     providers: {
       configuredProvider: state.config.agentProvider,
       configuredCommand: state.config.agentCommand,
+      configuredCapabilities,
+      capabilityWarnings,
       available: providers,
     },
     issues: issueCounts,
@@ -148,6 +165,22 @@ export function runDoctorChecks(
       status: "fail",
       summary: `Configured provider ${snapshot.providers.configuredProvider} is not available on PATH.`,
       suggestedAction: "Install the provider CLI or change the configured provider/command.",
+    });
+
+  checks.push(snapshot.providers.capabilityWarnings.length === 0
+    ? {
+      id: "provider-capabilities",
+      title: "Provider capability coverage",
+      status: "pass",
+      summary: `Configured provider ${snapshot.providers.configuredProvider} exposes the runtime capabilities this harness expects natively.`,
+    }
+    : {
+      id: "provider-capabilities",
+      title: "Provider capability coverage",
+      status: "warn",
+      summary: `${snapshot.providers.configuredProvider} requires harness fallbacks for some runtime capabilities.`,
+      detail: snapshot.providers.capabilityWarnings.join(" "),
+      suggestedAction: "Use the warnings to understand which behaviors are enforced by Fifony runtime fallbacks instead of the provider CLI itself.",
     });
 
   checks.push(snapshot.services.crashed === 0

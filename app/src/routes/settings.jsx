@@ -1,22 +1,26 @@
 import { createFileRoute, Outlet, Link, useRouterState } from "@tanstack/react-router";
 import {
   FolderRoot,
-  Workflow,
+  ListOrdered,
+  Cpu,
+  ShieldCheck,
   Bell,
   Users,
   SlidersHorizontal,
+  Palette,
   Settings,
-  Keyboard,
 } from "lucide-react";
 
 const TABS = [
-  { to: "/settings/project", label: "Project", icon: FolderRoot },
-  { to: "/settings/workflow", label: "Execution", icon: Workflow },
-  { to: "/settings/agents", label: "Agents", icon: Users },
-  { to: "/settings/general", label: "System", icon: Settings },
+  { to: "/settings/project",       label: "Project",       icon: FolderRoot },
+  { to: "/settings/pipeline",      label: "Pipeline",      icon: ListOrdered },
+  { to: "/settings/execution",     label: "Execution",     icon: Cpu },
+  { to: "/settings/quality",       label: "Quality",       icon: ShieldCheck },
+  { to: "/settings/agents",        label: "Agents",        icon: Users },
   { to: "/settings/notifications", label: "Notifications", icon: Bell },
-  { to: "/settings/providers", label: "Providers", icon: SlidersHorizontal },
-  { to: "/settings/hotkeys", label: "Hotkeys", icon: Keyboard },
+  { to: "/settings/providers",     label: "Providers",     icon: SlidersHorizontal },
+  { to: "/settings/appearance",    label: "Appearance",    icon: Palette },
+  { to: "/settings/system",        label: "System",        icon: Settings },
 ];
 
 export const Route = createFileRoute("/settings")({

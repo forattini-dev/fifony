@@ -8,7 +8,7 @@ import { PLAN_JSON_SCHEMA } from "./planning-schema.ts";
 import { ADAPTERS } from "../adapters/registry.ts";
 import { renderPrompt } from "../prompting.ts";
 import { STATE_ROOT, TARGET_ROOT } from "../../concerns/constants.ts";
-import { detectAvailableProviders } from "../providers.ts";
+import { detectAvailableProviders, resolveProviderCapabilities } from "../providers.ts";
 import { getWorkflowConfig, loadRuntimeSettings } from "../../persistence/settings.ts";
 import { discoverSkills, discoverAgents, discoverCommands } from "../skills.ts";
 
@@ -54,8 +54,17 @@ export async function buildRefinePrompt(
 export function getPlanCommand(provider: string, model?: string, imagePaths?: string[]): string {
   const adapter = ADAPTERS[provider];
   if (!adapter) return "";
-  const jsonSchema = provider === "claude" ? PLAN_JSON_SCHEMA : undefined;
-  return adapter.buildCommand({ model, imagePaths, jsonSchema, noToolAccess: provider === "claude" });
+  const capabilities = resolveProviderCapabilities(provider);
+  const jsonSchema = capabilities.structuredOutput.mode === "json-schema" ? PLAN_JSON_SCHEMA : undefined;
+  const readOnly = capabilities.readOnlyExecution !== "none";
+  const cliImages = capabilities.imageInput === "cli-flag" ? imagePaths : undefined;
+  return adapter.buildCommand({
+    model,
+    imagePaths: cliImages,
+    jsonSchema,
+    noToolAccess: capabilities.structuredOutput.requiresToolDisable && !readOnly,
+    readOnly,
+  });
 }
 
 // ── Shared: debug file saving ─────────────────────────────────────────────────

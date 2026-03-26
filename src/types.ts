@@ -292,6 +292,8 @@ export type RuntimeHealthSnapshot = {
   providers: {
     configuredProvider: string;
     configuredCommand: string;
+    configuredCapabilities: ProviderCapabilities;
+    capabilityWarnings: string[];
     available: DetectedProvider[];
   };
   issues: {
@@ -642,6 +644,41 @@ export type BudgetPolicy = {
   maxTokenBudgetUsd?: number;
 };
 
+export type ProviderReadOnlyExecutionMode =
+  | "plan"
+  | "approval"
+  | "none";
+
+export type ProviderStructuredOutputMode =
+  | "json-schema"
+  | "prompt-contract"
+  | "none";
+
+export type ProviderImageInputMode =
+  | "cli-flag"
+  | "prompt-inline"
+  | "none";
+
+export type ProviderUsageReportingMode =
+  | "cli-command"
+  | "session-files"
+  | "none";
+
+export type ProviderNativeSubagentMode =
+  | "native"
+  | "runtime-only";
+
+export type ProviderCapabilities = {
+  readOnlyExecution: ProviderReadOnlyExecutionMode;
+  structuredOutput: {
+    mode: ProviderStructuredOutputMode;
+    requiresToolDisable: boolean;
+  };
+  imageInput: ProviderImageInputMode;
+  usageReporting: ProviderUsageReportingMode;
+  nativeSubagents: ProviderNativeSubagentMode;
+};
+
 export type BlueprintArtifact = {
   id: string;
   nodeId: string;
@@ -742,6 +779,7 @@ export type AgentProviderDefinition = {
   selectionReason?: string;
   overlays?: string[];
   reasoningEffort?: ReasoningEffort;
+  capabilities?: ProviderCapabilities;
 };
 
 export type ReviewProfileName =
@@ -1172,4 +1210,5 @@ export type DetectedProvider = {
   name: string;
   available: boolean;
   path: string;
+  capabilities?: ProviderCapabilities;
 };

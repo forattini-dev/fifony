@@ -24,14 +24,17 @@ Role: executor. Implement the required changes.
 {{planPrompt}}
 
 {{#if suggestedAgents.length}}
-## Agents (Claude-specific)
-You have access to the Agent tool for spawning subagents. Use these agents for this task:
+## Delegation
+Fifony may decompose this work into specialist subtasks:
 {{#each suggestedAgents}}
-- Use the **{{this}}** agent for specialized work in its domain.
+- **{{this}}**
 {{/each}}
 
-Launch agents for independent subtasks to maximize parallelism.
-Use the main thread for coordination and integration.
+{{#if hasNativeSubagents}}
+Your current runtime supports native subagents. Use them for independent subtasks to maximize parallelism.
+{{else}}
+Your current runtime may not expose native subagents. Preserve the same delegation semantics by keeping subtask boundaries explicit and using a single integration owner for the final result.
+{{/if}}
 {{/if}}
 
 {{#if suggestedSkills.length}}

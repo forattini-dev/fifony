@@ -12,6 +12,17 @@ import {
   parseCodexUsageFromStatus,
 } from "./usage.ts";
 
+const CODEX_CAPABILITIES = {
+  readOnlyExecution: "none",
+  structuredOutput: {
+    mode: "prompt-contract",
+    requiresToolDisable: false,
+  },
+  imageInput: "cli-flag",
+  usageReporting: "cli-command",
+  nativeSubagents: "runtime-only",
+} as const;
+
 export const CODEX_USAGE_COMMAND = "/status";
 export const collectCodexUsageFromCli = (): Promise<ProviderUsageSnapshot | null> =>
   collectProviderUsageSnapshotFromCli("codex", CODEX_USAGE_COMMAND, parseCodexUsageFromStatus, [
@@ -106,6 +117,8 @@ async function compile(
       goal: phase.goal,
       outputs: phase.outputs ?? [],
     })),
+    suggestedAgents: plan.suggestedAgents ?? [],
+    hasNativeSubagents: CODEX_CAPABILITIES.nativeSubagents === "native",
     suggestedPaths: plan.suggestedPaths ?? [],
     suggestedSkills: plan.suggestedSkills ?? [],
     validationItems: (plan.validation ?? []).map((value) => ({ value })),
@@ -145,14 +158,16 @@ async function compile(
       adapter: "codex",
       reasoningEffort: effort || "default",
       model: provider.model || "default",
+      providerCapabilities: CODEX_CAPABILITIES,
       skillsActivated: plan.suggestedSkills || [],
-      subagentsRequested: [],
+      subagentsRequested: plan.suggestedAgents || [],
       phasesCount: plan.phases?.length || 0,
     },
   };
 }
 
 export const codexAdapter: ProviderAdapter = {
+  capabilities: CODEX_CAPABILITIES,
   buildCommand: buildCodexCommand,
   buildReviewCommand: (reviewer, _config) => buildCodexCommand({
     model: reviewer.model,
