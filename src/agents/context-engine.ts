@@ -198,8 +198,9 @@ function readTextFileSafe(absolutePath: string): string {
   }
 }
 
-function normalizeExcerpt(value: string, max = 420): string {
-  const compact = value.replace(/\r/g, "").replace(/\n{3,}/g, "\n\n").trim();
+function normalizeExcerpt(value: unknown, max = 420): string {
+  const str = typeof value === "string" ? value : value == null ? "" : String(value);
+  const compact = str.replace(/\r/g, "").replace(/\n{3,}/g, "\n\n").trim();
   return compact.length > max ? `${compact.slice(0, max).trimEnd()}...` : compact;
 }
 
