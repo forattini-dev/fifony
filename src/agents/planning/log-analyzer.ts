@@ -186,21 +186,18 @@ function extractJsonFromOutput<T>(raw: string): T | null {
   for (const candidate of candidates) {
     try {
       const parsed = JSON.parse(candidate);
-      // Unwrap CLI envelope: Claude/Gemini wrap the actual response in a
-      // `result` or `response` string field (--output-format json envelope).
-      const nested =
-        parsed && typeof parsed === "object"
-          ? (typeof parsed.result === "string" ? parsed.result :
-             typeof parsed.response === "string" ? parsed.response :
-             null)
-          : null;
-      if (nested) {
-        const clean = nested.trim().replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
-        for (const inner of extractJsonObjects(clean)) {
-          try { return JSON.parse(inner) as T; } catch {}
+      // Unwrap CLI envelope: Claude --output-format json wraps the schema
+      // response in a `result` field that can be either an object or a string.
+      if (parsed && typeof parsed === "object") {
+        const r = (parsed as Record<string, unknown>).result ?? (parsed as Record<string, unknown>).response;
+        if (r && typeof r === "object") return r as T;
+        if (typeof r === "string") {
+          const clean = r.trim().replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
+          for (const inner of extractJsonObjects(clean)) {
+            try { return JSON.parse(inner) as T; } catch {}
+          }
+          try { return JSON.parse(r) as T; } catch {}
         }
-        // result might be the JSON string itself
-        try { return JSON.parse(nested) as T; } catch {}
       }
       return parsed as T;
     } catch {
