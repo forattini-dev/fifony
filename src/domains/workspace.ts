@@ -407,6 +407,21 @@ export async function createGitWorktree(issue: IssueEntry, worktreePath: string,
 
   const branchName = `fifony/${issue.id}`;
 
+  // Clean up stale worktree entries before creating (handles crashed/incomplete previous runs)
+  try { execSync("git worktree prune", { cwd: TARGET_ROOT, stdio: "pipe" }); } catch {}
+
+  // If the worktree path already exists, remove it first
+  if (existsSync(worktreePath)) {
+    try {
+      execSync(`git worktree remove --force "${worktreePath}"`, { cwd: TARGET_ROOT, stdio: "pipe" });
+    } catch {
+      // If git worktree remove fails, force-delete the directory and prune again
+      rmSync(worktreePath, { recursive: true, force: true });
+      try { execSync("git worktree prune", { cwd: TARGET_ROOT, stdio: "pipe" }); } catch {}
+    }
+  }
+
+  // If the branch is still locked by a stale worktree entry, prune should have fixed it.
   // -B creates or resets the branch (handles retry scenarios)
   execSync(`git worktree add "${worktreePath}" -B "${branchName}"`, {
     cwd: TARGET_ROOT,
