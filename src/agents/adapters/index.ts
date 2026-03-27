@@ -180,8 +180,11 @@ export async function compileContractNegotiation(
   });
 
   const adapter = ADAPTERS[reviewer.provider];
+  // Contract negotiation must NOT use --json-schema: the agent needs to emit a
+  // free-form ```json contract_decision``` block which is incompatible with a
+  // forced JSON schema. Use the plain read-only base command instead.
   const command = adapter
-    ? adapter.buildReviewCommand(reviewer)
+    ? adapter.buildCommand({ model: reviewer.model, effort: reviewer.reasoningEffort, readOnly: true })
     : reviewer.command;
 
   return {

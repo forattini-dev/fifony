@@ -168,34 +168,44 @@ function completeContractNegotiationRun(
 }
 
 export function extractContractDecision(text: string): ContractNegotiationDecision | null {
-  const match = text.match(/```json contract_decision\n([\s\S]+?)```/);
-  if (!match) return null;
-
+  // Collect candidate texts: the raw output AND the unwrapped result from a
+  // --output-format json envelope (Claude CLI JSON-encodes the result, so
+  // JSON.parse restores the original newlines needed for regex matching).
+  const candidates: string[] = [text];
   try {
-    const parsed = JSON.parse(match[1]) as Partial<ContractNegotiationDecision>;
-    const status = parsed.status === "approved" || parsed.status === "revise" ? parsed.status : null;
-    if (!status) return null;
-    const concerns = Array.isArray(parsed.concerns)
-      ? parsed.concerns.filter((concern): concern is ContractNegotiationConcern => {
-        if (!concern || typeof concern !== "object") return false;
-        const record = concern as Record<string, unknown>;
-        return typeof record.id === "string"
-          && (record.severity === "blocking" || record.severity === "advisory")
-          && typeof record.area === "string"
-          && typeof record.problem === "string"
-          && typeof record.requiredChange === "string";
-      })
-      : [];
+    const envelope = JSON.parse(text.trim()) as Record<string, unknown>;
+    if (envelope && typeof envelope === "object") {
+      if (typeof envelope.result === "string") candidates.push(envelope.result);
+    }
+  } catch { /* not a JSON envelope */ }
 
-    return {
-      status,
-      summary: typeof parsed.summary === "string" ? parsed.summary : "",
-      rationale: typeof parsed.rationale === "string" ? parsed.rationale : "",
-      concerns,
-    };
-  } catch {
-    return null;
+  for (const candidate of candidates) {
+    const match = candidate.match(/```json contract_decision\n([\s\S]+?)```/);
+    if (!match) continue;
+    try {
+      const parsed = JSON.parse(match[1]) as Partial<ContractNegotiationDecision>;
+      const status = parsed.status === "approved" || parsed.status === "revise" ? parsed.status : null;
+      if (!status) continue;
+      const concerns = Array.isArray(parsed.concerns)
+        ? parsed.concerns.filter((concern): concern is ContractNegotiationConcern => {
+          if (!concern || typeof concern !== "object") return false;
+          const record = concern as Record<string, unknown>;
+          return typeof record.id === "string"
+            && (record.severity === "blocking" || record.severity === "advisory")
+            && typeof record.area === "string"
+            && typeof record.problem === "string"
+            && typeof record.requiredChange === "string";
+        })
+        : [];
+      return {
+        status,
+        summary: typeof parsed.summary === "string" ? parsed.summary : "",
+        rationale: typeof parsed.rationale === "string" ? parsed.rationale : "",
+        concerns,
+      };
+    } catch { /* bad JSON in the block, try next candidate */ }
   }
+  return null;
 }
 
 export function buildContractNegotiationFeedback(decision: ContractNegotiationDecision): string {
