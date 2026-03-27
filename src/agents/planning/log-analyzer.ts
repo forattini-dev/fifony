@@ -299,7 +299,14 @@ export async function analyzeLogForFix(
   const result = extractJsonFromOutput<{ title: string; description: string; issueType: string }>(raw);
 
   if (!result?.title) {
-    logger.warn({ provider, serviceName, rawLength: raw.length, rawTail: raw.slice(-400) }, "[LogAnalyzer] Could not extract fix suggestion from log");
+    // Parse outer envelope keys for debugging
+    let envelopeKeys: string[] = [];
+    try {
+      const { extractJsonObjects } = await import("../../concerns/helpers.ts");
+      const candidates = extractJsonObjects(raw.trim());
+      if (candidates.length > 0) envelopeKeys = Object.keys(JSON.parse(candidates[candidates.length - 1]));
+    } catch {}
+    logger.warn({ provider, serviceName, rawLength: raw.length, envelopeKeys, rawTail: raw.slice(-400) }, "[LogAnalyzer] Could not extract fix suggestion from log");
     return null;
   }
 
