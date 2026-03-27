@@ -179,7 +179,7 @@ function ServiceDrawerBody({ service, onClose, onRefresh }) {
   const [detectResult, setDetectResult] = useState(null); // null | { found, healthcheck } | "error"
   const [fixing, setFixing] = useState(false);
   const [fixDrawer, setFixDrawer] = useState({ open: false, defaultValues: null });
-  const [fixError, setFixError] = useState(null);
+  const [fixResult, setFixResult] = useState(null); // null | "healthy" | "error:<msg>"
   const { createIssue, showToast } = useDashboard();
 
   const state = service.state ?? (service.running ? "running" : "stopped");
@@ -216,13 +216,17 @@ function ServiceDrawerBody({ service, onClose, onRefresh }) {
 
   const handleFix = useCallback(async () => {
     setFixing(true);
-    setFixError(null);
+    setFixResult(null);
     try {
       const res = await api.post(`/services/${service.id}/fix`, {});
-      setFixDrawer({ open: true, defaultValues: { title: res.title, description: res.description, issueType: res.issueType } });
+      if (!res.hasProblem) {
+        setFixResult("healthy");
+      } else {
+        setFixDrawer({ open: true, defaultValues: { title: res.title, description: res.description, issueType: res.issueType } });
+      }
     } catch (err) {
       const msg = err.message ?? "Analysis failed";
-      setFixError(msg);
+      setFixResult(`error:${msg}`);
       showToast(msg, "error");
     } finally {
       setFixing(false);
@@ -316,9 +320,14 @@ function ServiceDrawerBody({ service, onClose, onRefresh }) {
               <span className="text-[11px] opacity-30 ml-1">no config detected</span>
             )
           )}
-          {fixError && (
-            <span className="flex items-center gap-1 text-[11px] text-error/70 ml-1 truncate" title={fixError}>
-              <AlertTriangle className="size-3 shrink-0" />{fixError}
+          {fixResult === "healthy" && (
+            <span className="flex items-center gap-1 text-[11px] text-success/70 ml-1">
+              <CheckCircle2 className="size-3 shrink-0" />looks healthy
+            </span>
+          )}
+          {fixResult?.startsWith("error:") && (
+            <span className="flex items-center gap-1 text-[11px] text-error/70 ml-1 truncate" title={fixResult.slice(6)}>
+              <AlertTriangle className="size-3 shrink-0" />{fixResult.slice(6)}
             </span>
           )}
         </div>

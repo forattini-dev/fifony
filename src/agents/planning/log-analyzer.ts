@@ -27,11 +27,12 @@ const HEALTHCHECK_JSON_SCHEMA = JSON.stringify({
 const FIX_JSON_SCHEMA = JSON.stringify({
   type: "object",
   properties: {
+    hasProblem: { type: "boolean" },
     title: { type: "string" },
     description: { type: "string" },
     issueType: { type: "string", enum: ["bug", "chore", "feature"] },
   },
-  required: ["title", "description", "issueType"],
+  required: ["hasProblem"],
   additionalProperties: false,
 });
 
@@ -62,18 +63,21 @@ ${logTail}
 }
 
 function buildFixPrompt(logTail: string, serviceName: string): string {
-  return `You are analyzing the error log of a service called "${serviceName}" that appears to have a problem.
+  return `You are analyzing the log of a service called "${serviceName}".
 
-Your task: identify the root cause of the problem and create a clear issue report for a developer to investigate.
+Step 1 — decide if there is a real actionable problem:
+- Set hasProblem=true if the log contains errors, crashes, unresolved dependencies, misconfigurations, or anything preventing the service from working correctly.
+- Set hasProblem=false if the service started and is running normally (no errors, just startup output or healthy traffic logs).
 
-Return ONLY a JSON object with this exact structure:
-{
-  "title": "Short descriptive title of the problem (max 80 chars)",
-  "description": "Clear description of what went wrong, what error was observed, and what might need to be investigated. Include relevant error messages, file paths, or commands from the log.",
-  "issueType": "bug"
-}
+Step 2 — if hasProblem=true, fill in title, description, and issueType to create a clear issue report a developer can act on:
+- title: short (max 80 chars), specific to the actual error
+- description: root cause, relevant error messages, file paths or commands from the log, and what to investigate
+- issueType: "bug" for crashes/errors, "chore" for config/dependency/tooling issues, "feature" for missing functionality
 
-issueType should be "bug" for crashes/errors, "chore" for config/dependency issues, "feature" for missing functionality.
+Return ONLY a JSON object:
+{ "hasProblem": true, "title": "...", "description": "...", "issueType": "bug" }
+or
+{ "hasProblem": false }
 
 SERVICE LOG (last lines):
 \`\`\`
@@ -277,16 +281,21 @@ export async function analyzeLogForHealthcheck(
 }
 
 export type FixSuggestion = {
+  hasProblem: true;
   title: string;
   description: string;
   issueType: "bug" | "chore" | "feature";
 };
 
+export type FixResult =
+  | FixSuggestion
+  | { hasProblem: false };
+
 export async function analyzeLogForFix(
   logTail: string,
   serviceName: string,
   config: RuntimeConfig,
-): Promise<FixSuggestion | null> {
+): Promise<FixResult | null> {
   const { provider, model, adapter } = await resolveProvider(config);
   const caps = resolveProviderCapabilities(provider);
   const command = adapter.buildCommand({
@@ -301,10 +310,9 @@ export async function analyzeLogForFix(
   logger.debug({ provider, serviceName }, "[LogAnalyzer] Analyzing log for fix suggestion");
 
   const raw = await runOneShot(command, provider, prompt, timeoutMs);
-  const result = extractJsonFromOutput<{ title: string; description: string; issueType: string }>(raw);
+  const result = extractJsonFromOutput<{ hasProblem: boolean; title?: string; description?: string; issueType?: string }>(raw);
 
-  if (!result?.title) {
-    // Parse outer envelope keys for debugging
+  if (result === null) {
     let envelopeKeys: string[] = [];
     try {
       const { extractJsonObjects } = await import("../../concerns/helpers.ts");
@@ -315,11 +323,22 @@ export async function analyzeLogForFix(
     return null;
   }
 
+  if (!result.hasProblem) {
+    logger.debug({ provider, serviceName }, "[LogAnalyzer] No problem detected in log");
+    return { hasProblem: false };
+  }
+
+  if (!result.title) {
+    logger.warn({ provider, serviceName }, "[LogAnalyzer] hasProblem=true but no title in result");
+    return null;
+  }
+
   const issueType = ["bug", "chore", "feature"].includes(result.issueType ?? "")
     ? (result.issueType as "bug" | "chore" | "feature")
     : "bug";
 
   return {
+    hasProblem: true,
     title: result.title.slice(0, 120),
     description: result.description ?? "",
     issueType,

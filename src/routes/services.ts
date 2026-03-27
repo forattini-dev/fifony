@@ -442,7 +442,11 @@ export function registerServiceRoutes(
       const suggestion = await analyzeLogForFix(logTail, entry.name, state.config);
 
       if (!suggestion) {
-        return c.json({ ok: false, error: "Could not identify a problem from the log." }, 422);
+        return c.json({ ok: false, error: "Could not parse AI response." }, 422);
+      }
+
+      if (!suggestion.hasProblem) {
+        return c.json({ ok: true, hasProblem: false });
       }
 
       return c.json({ ok: true, ...suggestion });
