@@ -18,6 +18,9 @@ export async function executeIssueCommand(
 ): Promise<void> {
   const { issue } = input;
 
+  // Idempotent: already executing is fine — the queue will handle it.
+  if (issue.state === "Queued" || issue.state === "Running") return;
+
   if (issue.state !== "PendingApproval") {
     throw new Error(`Cannot execute issue in state ${issue.state}. Must be in PendingApproval.`);
   }

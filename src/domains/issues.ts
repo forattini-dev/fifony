@@ -223,7 +223,7 @@ export function buildRuntimeState(
         checkpointAttempt: toNumberValue(existing.checkpointAttempt, 0),
         contractNegotiationAttempt: toNumberValue(existing.contractNegotiationAttempt, 0),
         checkpointStatus: toStringValue(existing.checkpointStatus) as IssueEntry["checkpointStatus"],
-        checkpointPassedAt: toStringValue(existing.checkpointPassedAt),
+        checkpointPassedAt: toStringValue(existing.checkpointPassedAt) || undefined,
         contractNegotiationStatus: toStringValue(existing.contractNegotiationStatus) as IssueEntry["contractNegotiationStatus"],
         planHistory: Array.isArray(existing.planHistory) ? existing.planHistory : [],
         contractNegotiationRuns: Array.isArray(existing.contractNegotiationRuns) ? existing.contractNegotiationRuns : [],
