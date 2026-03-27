@@ -568,20 +568,178 @@ export function ReviewTab({ issue, issueId, onStateChange, onRetry }) {
 
 // ── Attempt History Section ───────────────────────────────────────────────
 
+/**
+ * Parse a raw error string that may be a CLI JSON result object.
+ * Returns a human-readable first line, or null if indeterminate.
+ */
+function parseRawError(errorStr) {
+  if (!errorStr) return null;
+  const trimmed = errorStr.trim();
+  if (trimmed.startsWith("{")) {
+    try {
+      const obj = JSON.parse(trimmed);
+      if (obj?.type === "result") {
+        const dur = obj.duration_ms ? ` (${Math.round(obj.duration_ms / 1000)}s)` : "";
+        return obj.is_error
+          ? `CLI exited with error: ${obj.subtype || "unknown"}${dur}`
+          : `CLI session ended: ${obj.subtype || "success"}${dur}`;
+      }
+    } catch {}
+  }
+  // First meaningful line
+  const line = trimmed.split("\n").map((l) => l.trim()).find(Boolean) ?? "";
+  return line.slice(0, 300) || null;
+}
+
+function AttemptCard({ attempt, index, total, preReviewValidation }) {
+  const [rawExpanded, setRawExpanded] = useState(false);
+  const [gateExpanded, setGateExpanded] = useState(false);
+
+  const phase = attempt.phase || "unknown";
+  const phaseColor =
+    phase === "review" ? "badge-secondary" :
+    phase === "execute" ? "badge-primary" :
+    phase === "crash" ? "badge-error" : "badge-ghost";
+
+  // Prefer structured insight; fall back to parsing raw error
+  const displayError = attempt.insight?.rootCause || parseRawError(attempt.error) || attempt.error;
+  const rawIsDifferent = attempt.error && attempt.error !== displayError;
+
+  // Show pre-review gate details when this attempt failed on the gate
+  const showGate = preReviewValidation && !preReviewValidation.passed;
+
+  return (
+    <div className="rounded-lg border border-base-300 bg-base-200/40 overflow-hidden text-xs">
+      {/* Header */}
+      <div className="flex items-center gap-2 px-3 py-2 bg-base-200 border-b border-base-300">
+        <span className="text-[10px] font-bold opacity-40 shrink-0">
+          {index + 1}/{total}
+        </span>
+        <span className={`badge badge-xs ${phaseColor} shrink-0`}>{phase}</span>
+        {attempt.insight?.errorType && (
+          <span className="badge badge-xs badge-ghost font-mono truncate max-w-[120px]" title={attempt.insight.errorType}>
+            {attempt.insight.errorType}
+          </span>
+        )}
+        <div className="ml-auto flex items-center gap-2 shrink-0">
+          <span className="font-mono opacity-30">v{attempt.planVersion}a{attempt.executeAttempt}</span>
+          {attempt.timestamp && (
+            <span className="opacity-30">{new Date(attempt.timestamp).toLocaleTimeString()}</span>
+          )}
+        </div>
+      </div>
+
+      {/* Body */}
+      <div className="px-3 py-2.5 space-y-2.5">
+        {/* Root cause — main readable description */}
+        {displayError && (
+          <p className="text-base-content/80 leading-relaxed">{displayError}</p>
+        )}
+
+        {/* Pre-review gate failure detail */}
+        {showGate && (
+          <div className="rounded border border-error/30 bg-error/8 overflow-hidden">
+            <button
+              className="flex items-center gap-2 px-2 py-1.5 w-full text-left hover:bg-error/10 transition-colors"
+              onClick={() => setGateExpanded((v) => !v)}
+            >
+              <AlertTriangle className="size-3 text-error shrink-0" />
+              <span className="text-[10px] font-semibold text-error/80 flex-1">Pre-review gate failed</span>
+              <span className="font-mono text-[10px] text-error/50">$ {preReviewValidation.command}</span>
+              <span className="text-error/40">{gateExpanded ? "▴" : "▾"}</span>
+            </button>
+            {gateExpanded && preReviewValidation.output && (
+              <pre className="px-2 pb-2 text-[10px] opacity-70 whitespace-pre-wrap max-h-48 overflow-y-auto leading-relaxed border-t border-error/20">
+                {preReviewValidation.output.length > 2000
+                  ? preReviewValidation.output.slice(-2000) + "\n…(truncated)"
+                  : preReviewValidation.output}
+              </pre>
+            )}
+          </div>
+        )}
+
+        {/* Suggestion */}
+        {attempt.insight?.suggestion && (
+          <div className="flex gap-1.5 bg-warning/8 border border-warning/25 rounded px-2 py-1.5">
+            <span className="text-warning/70 shrink-0 font-bold mt-px">→</span>
+            <p className="text-[11px] text-warning/85 leading-relaxed">{attempt.insight.suggestion}</p>
+          </div>
+        )}
+
+        {/* Files involved */}
+        {attempt.insight?.filesInvolved?.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            <span className="text-[10px] opacity-35 mr-0.5 self-center">files:</span>
+            {attempt.insight.filesInvolved.slice(0, 6).map((f) => (
+              <span key={f} className="badge badge-xs badge-ghost font-mono">{f.split("/").pop()}</span>
+            ))}
+            {attempt.insight.filesInvolved.length > 6 && (
+              <span className="badge badge-xs badge-ghost opacity-50">+{attempt.insight.filesInvolved.length - 6}</span>
+            )}
+          </div>
+        )}
+
+        {/* Failed command */}
+        {attempt.insight?.failedCommand && (
+          <div className="font-mono text-[10px] opacity-40 bg-base-300 rounded px-2 py-1 truncate" title={attempt.insight.failedCommand}>
+            $ {attempt.insight.failedCommand}
+          </div>
+        )}
+
+        {/* Raw error (collapsible) */}
+        {rawIsDifferent && (
+          <div>
+            <button
+              className="text-[10px] opacity-30 hover:opacity-60 transition-opacity flex items-center gap-1"
+              onClick={() => setRawExpanded((v) => !v)}
+            >
+              {rawExpanded ? "▴" : "▾"} raw error output
+            </button>
+            {rawExpanded && (
+              <pre className="mt-1 text-[10px] bg-base-300 rounded p-2 overflow-x-auto whitespace-pre-wrap max-h-40 overflow-y-auto opacity-55 leading-relaxed">
+                {attempt.error}
+              </pre>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AttemptHistory({ issue }) {
-  const attempts = issue.previousAttemptSummaries || [];
+  const archived = issue.previousAttemptSummaries || [];
   const planHistory = issue.planHistory || [];
   const resolution = issue.mergeResult?.conflictResolution;
   const rebase = issue.rebaseResult;
-  const hasHistory = attempts.length > 0 || planHistory.length > 0 || resolution || rebase;
   const hasUsage = issue.toolsUsed?.length || issue.skillsUsed?.length || issue.agentsUsed?.length;
 
+  // The final attempt that caused cancellation/blocking is NOT archived into
+  // previousAttemptSummaries (archiving only happens on re-enter Queued).
+  // Synthesize it from lastError so it appears in the log.
+  const currentAttempt = issue.lastError
+    ? {
+        phase: issue.lastFailedPhase ?? "unknown",
+        error: issue.lastError,
+        timestamp: issue.updatedAt,
+        planVersion: issue.planVersion ?? 1,
+        executeAttempt: issue.executeAttempt ?? 1,
+        insight: null,
+        _isCurrent: true,
+      }
+    : null;
+
+  // Oldest → newest
+  const allAttempts = currentAttempt ? [...archived, currentAttempt] : archived;
+  const total = allAttempts.length;
+
+  const hasHistory = total > 0 || planHistory.length > 0 || resolution || rebase;
   if (!hasHistory && !hasUsage) return null;
 
   return (
     <Section title="History & Insights" icon={History}>
       <div className="space-y-3">
-        {/* Tools/Skills/Agents used across all turns */}
+        {/* Tools / Skills / Agents */}
         {hasUsage && (
           <div className="space-y-1.5">
             {issue.toolsUsed?.length > 0 && (
@@ -614,7 +772,7 @@ function AttemptHistory({ issue }) {
           </div>
         )}
 
-        {/* Merge conflict resolution result */}
+        {/* Merge conflict resolution */}
         {resolution && (
           <div className={`alert text-xs py-2 gap-1.5 ${resolution.resolved ? "alert-success" : "alert-warning"}`}>
             <GitMerge className="size-3.5 shrink-0" />
@@ -641,37 +799,30 @@ function AttemptHistory({ issue }) {
           </div>
         )}
 
-        {/* Previous failed attempts */}
-        {attempts.length > 0 && (
-          <div>
-            <div className="text-xs font-semibold opacity-50 mb-1.5">Previous Attempts ({attempts.length})</div>
-            <div className="space-y-1.5">
-              {attempts.map((a, i) => (
-                <div key={i} className="bg-base-200 rounded-lg p-2 text-xs space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className={`badge badge-xs ${a.phase === "review" ? "badge-secondary" : a.phase === "execute" ? "badge-primary" : "badge-error"}`}>
-                      {a.phase || "unknown"}
-                    </span>
-                    <span className="font-mono opacity-50">v{a.planVersion}a{a.executeAttempt}</span>
-                    <span className="opacity-40 ml-auto">{new Date(a.timestamp).toLocaleString()}</span>
-                  </div>
-                  <p className="opacity-70 line-clamp-2">{a.error}</p>
-                  {a.insight && (
-                    <div className="text-[10px] opacity-50">
-                      {a.insight.errorType}: {a.insight.rootCause}
-                      {a.insight.suggestion && <span className="block">{a.insight.suggestion}</span>}
-                    </div>
-                  )}
-                </div>
-              ))}
+        {/* Attempt log — all attempts, oldest → newest */}
+        {total > 0 && (
+          <div className="space-y-2">
+            <div className="text-[10px] font-semibold uppercase tracking-wide opacity-40">
+              Attempt log · {total} attempt{total !== 1 ? "s" : ""}
             </div>
+            {allAttempts.map((a, i) => (
+              <AttemptCard
+                key={i}
+                attempt={a}
+                index={i}
+                total={total}
+                preReviewValidation={a._isCurrent ? issue.preReviewValidation : null}
+              />
+            ))}
           </div>
         )}
 
-        {/* Plan history (previous plan versions) */}
+        {/* Plan history */}
         {planHistory.length > 0 && (
           <div>
-            <div className="text-xs font-semibold opacity-50 mb-1.5">Plan History ({planHistory.length} previous)</div>
+            <div className="text-[10px] font-semibold uppercase tracking-wide opacity-40 mb-1.5">
+              Plan history · {planHistory.length} previous
+            </div>
             <div className="space-y-1">
               {planHistory.map((plan, i) => (
                 <div key={i} className="bg-base-200 rounded-lg p-2 text-xs">
