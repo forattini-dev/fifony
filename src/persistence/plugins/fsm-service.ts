@@ -191,10 +191,12 @@ export function cmdStart(
   const existing = readPidInfo(fifonyDir, entry.id);
   const fromState: ServiceState | "none" = existing?.state ?? "none";
 
-  // Kill existing process group if still alive (detached: true makes the shell a group leader;
-  // -pid kills the entire group so child processes like node don't orphan the port)
+  // Kill existing process group + direct PID (detached: true makes the shell a group leader;
+  // -pid kills the entire group so child processes like node don't orphan the port.
+  // Fallback direct kill covers the case where the shell already died but a child survived.)
   if (existing && isProcessAlive(existing.pid)) {
     try { process.kill(-existing.pid, "SIGKILL"); } catch {}
+    try { process.kill(existing.pid, "SIGKILL"); } catch {}
   }
 
   const spawned = spawnProcess(entry, targetRoot, fifonyDir, globalEnv);
@@ -337,6 +339,7 @@ function tickOne(
 
       if (stoppingAgeMs >= STOPPING_KILL_MS) {
         try { process.kill(-info.pid, "SIGKILL"); } catch {}
+        try { process.kill(info.pid, "SIGKILL"); } catch {}
         removePidInfo(fifonyDir, entry.id);
         logger.info({ id: entry.id, pid: info.pid }, "[Service] FSM: stopping → stopped (SIGKILL)");
         return {
