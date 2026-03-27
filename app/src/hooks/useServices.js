@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "../api.js";
-import { sendWsMessage } from "../hooks.js";
+import { subscribeServiceLog, unsubscribeServiceLog } from "../hooks.js";
 
 // ── Service log pub/sub (WebSocket push path) ───────────────────────────────
 
@@ -138,7 +138,8 @@ export function useServiceLog(id, enabled = false) {
     });
 
     // 2. Subscribe to the WS room — server will push chunks from now on
-    sendWsMessage({ type: "service:log:subscribe", id });
+    // Uses tracked subscription so it's restored after WS reconnect
+    subscribeServiceLog(id);
 
     // 3. Listen for incoming chunks
     const unsub = onServiceLog(id, (chunk) => {
@@ -161,7 +162,7 @@ export function useServiceLog(id, enabled = false) {
 
     return () => {
       alive = false;
-      sendWsMessage({ type: "service:log:unsubscribe", id });
+      unsubscribeServiceLog(id);
       unsub();
       unsubRestart();
       setConnected(false);

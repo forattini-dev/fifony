@@ -52,6 +52,25 @@ export function sendWsMessage(msg) {
   }
 }
 
+// ── Service log WS room subscriptions ────────────────────────────────────────
+// Tracked so subscriptions can be restored after WS reconnect.
+
+const _serviceLogSubs = new Set(); // active serviceIds
+
+export function subscribeServiceLog(serviceId) {
+  _serviceLogSubs.add(serviceId);
+  if (_activeSend) {
+    try { _activeSend(JSON.stringify({ type: "service:log:subscribe", id: serviceId })); } catch {}
+  }
+}
+
+export function unsubscribeServiceLog(serviceId) {
+  _serviceLogSubs.delete(serviceId);
+  if (_activeSend) {
+    try { _activeSend(JSON.stringify({ type: "service:log:unsubscribe", id: serviceId })); } catch {}
+  }
+}
+
 // ── Analytics WS room subscriptions ──────────────────────────────────────────
 // Reference-counted so multiple hook instances share one WS subscription.
 
@@ -107,6 +126,10 @@ export function useRuntimeWebSocket(onMessage) {
           if (count > 0) {
             try { ws.send(JSON.stringify({ type: "analytics:subscribe", topic })); } catch {}
           }
+        }
+        // Re-subscribe all active service log rooms after reconnect
+        for (const serviceId of _serviceLogSubs) {
+          try { ws.send(JSON.stringify({ type: "service:log:subscribe", id: serviceId })); } catch {}
         }
       };
 
