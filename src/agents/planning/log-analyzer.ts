@@ -285,7 +285,7 @@ export async function analyzeLogForFix(
   const result = extractJsonFromOutput<{ title: string; description: string; issueType: string }>(raw);
 
   if (!result?.title) {
-    logger.debug({ provider, serviceName }, "[LogAnalyzer] Could not extract fix suggestion from log");
+    logger.warn({ provider, serviceName, rawLength: raw.length, rawTail: raw.slice(-400) }, "[LogAnalyzer] Could not extract fix suggestion from log");
     return null;
   }
 
