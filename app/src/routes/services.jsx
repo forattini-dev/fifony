@@ -179,7 +179,7 @@ function ServiceDrawerBody({ service, onClose, onRefresh }) {
   const [detectResult, setDetectResult] = useState(null); // null | { found, healthcheck } | "error"
   const [fixing, setFixing] = useState(false);
   const [fixDrawer, setFixDrawer] = useState({ open: false, defaultValues: null });
-  const [fixResult, setFixResult] = useState(null); // null | "healthy" | "error:<msg>"
+  const [fixDiagnosis, setFixDiagnosis] = useState(null); // null | { healthy: true } | { healthy: false, title, description, issueType } | { error: string }
   const { createIssue, showToast } = useDashboard();
 
   const state = service.state ?? (service.running ? "running" : "stopped");
@@ -214,24 +214,22 @@ function ServiceDrawerBody({ service, onClose, onRefresh }) {
     }
   }, [service.id, onRefresh, showToast]);
 
-  const handleFix = useCallback(async () => {
+  const handleAnalyze = useCallback(async () => {
     setFixing(true);
-    setFixResult(null);
+    setFixDiagnosis(null);
     try {
       const res = await api.post(`/services/${service.id}/fix`, {});
       if (!res.hasProblem) {
-        setFixResult("healthy");
+        setFixDiagnosis({ healthy: true });
       } else {
-        setFixDrawer({ open: true, defaultValues: { title: res.title, description: res.description, issueType: res.issueType } });
+        setFixDiagnosis({ healthy: false, title: res.title, description: res.description, issueType: res.issueType });
       }
     } catch (err) {
-      const msg = err.message ?? "Analysis failed";
-      setFixResult(`error:${msg}`);
-      showToast(msg, "error");
+      setFixDiagnosis({ error: err.message ?? "Analysis failed" });
     } finally {
       setFixing(false);
     }
-  }, [service.id, showToast]);
+  }, [service.id]);
 
   const stateColor = state === "running" ? "text-success" : state === "crashed" ? "text-error" : state === "starting" || state === "stopping" ? "text-warning" : "opacity-35";
 
@@ -291,7 +289,7 @@ function ServiceDrawerBody({ service, onClose, onRefresh }) {
         )}
       </div>
 
-      {/* ── Row 3: AI toolbar (only when useful) ────────────────────────────── */}
+      {/* ── Row 3: AI toolbar ───────────────────────────────────────────────── */}
       {(state === "running" || state === "crashed") && (
         <div className="flex items-center gap-0.5 px-2 py-1 border-t border-base-200/60 bg-base-200/20 shrink-0">
           <button
@@ -304,11 +302,11 @@ function ServiceDrawerBody({ service, onClose, onRefresh }) {
           </button>
           <button
             className="btn btn-xs btn-ghost h-6 min-h-0 gap-1 px-2 text-[11px] opacity-50 hover:opacity-90"
-            onClick={handleFix}
+            onClick={handleAnalyze}
             disabled={fixing || detecting}
           >
             {fixing ? <Loader2 className="size-3 animate-spin" /> : <Wrench className="size-3" />}
-            Fix
+            Analyze
           </button>
           {detectResult && detectResult !== "error" && (
             detectResult.found ? (
@@ -320,15 +318,26 @@ function ServiceDrawerBody({ service, onClose, onRefresh }) {
               <span className="text-[11px] opacity-30 ml-1">no config detected</span>
             )
           )}
-          {fixResult === "healthy" && (
+          {fixDiagnosis?.healthy && (
             <span className="flex items-center gap-1 text-[11px] text-success/70 ml-1">
-              <CheckCircle2 className="size-3 shrink-0" />looks healthy
+              <CheckCircle2 className="size-3 shrink-0" />No issues detected
             </span>
           )}
-          {fixResult?.startsWith("error:") && (
-            <span className="flex items-center gap-1 text-[11px] text-error/70 ml-1 truncate" title={fixResult.slice(6)}>
-              <AlertTriangle className="size-3 shrink-0" />{fixResult.slice(6)}
+          {fixDiagnosis?.error && (
+            <span className="flex items-center gap-1 text-[11px] text-error/70 ml-1 truncate" title={fixDiagnosis.error}>
+              <AlertTriangle className="size-3 shrink-0" />{fixDiagnosis.error}
             </span>
+          )}
+          {fixDiagnosis && !fixDiagnosis.healthy && !fixDiagnosis.error && (
+            <button
+              className="flex items-center gap-1 text-[11px] text-warning/80 hover:text-warning ml-1 truncate underline-offset-2 hover:underline"
+              onClick={() => setFixDrawer({ open: true, defaultValues: { title: fixDiagnosis.title, description: fixDiagnosis.description, issueType: fixDiagnosis.issueType } })}
+              title={fixDiagnosis.title}
+            >
+              <AlertTriangle className="size-3 shrink-0" />
+              <span className="truncate max-w-[180px]">{fixDiagnosis.title}</span>
+              <ChevronRight className="size-3 shrink-0 opacity-60" />
+            </button>
           )}
         </div>
       )}
