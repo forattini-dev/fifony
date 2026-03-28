@@ -1421,8 +1421,7 @@ async function runReviewOnce(
     issue.lastFailedPhase = "review";
     issue.attempts += 1;
     if (issue.attempts >= issue.maxAttempts) {
-      issue.cancelledReason = `Max attempts reached (${issue.attempts}/${issue.maxAttempts}): reviewer failed or blocked.`;
-      await cancelIssueFromAgentCommand(issue, `Review failed, max attempts reached for ${issue.identifier}.`, container);
+      await blockIssueForRetryCommand(issue, `Review failed — max attempts reached (${issue.attempts}/${issue.maxAttempts}) for ${issue.identifier}. Manual intervention required.`, container);
     } else {
       issue.nextRetryAt = getNextRetryAt(issue, state.config.retryDelayMs);
       await blockIssueForRetryCommand(issue, `Review failed for ${issue.identifier}. Retry at ${issue.nextRetryAt}.`, container);
@@ -1507,8 +1506,7 @@ async function runExecuteOnce(
         issue.lastFailedPhase = "execute";
         issue.attempts += 1;
         if (issue.attempts >= issue.maxAttempts) {
-          issue.cancelledReason = `Max attempts reached: pre-review gate failed repeatedly.`;
-          await cancelIssueFromAgentCommand(issue, `Max attempts reached (${issue.attempts}/${issue.maxAttempts}): pre-review gate failed.`, container);
+          await blockIssueForRetryCommand(issue, `Pre-review validation gate failed — max attempts reached (${issue.attempts}/${issue.maxAttempts}). Manual intervention required.`, container);
         } else {
           issue.nextRetryAt = getNextRetryAt(issue, state.config.retryDelayMs);
           await blockIssueForRetryCommand(issue, `Pre-review validation gate failed on attempt ${issue.attempts}/${issue.maxAttempts}. Retry scheduled at ${issue.nextRetryAt}.`, container);
@@ -1559,8 +1557,7 @@ async function runExecuteOnce(
 
     if (issue.attempts >= issue.maxAttempts) {
       issue.commandExitCode = runResult.code;
-      issue.cancelledReason = `Max attempts reached (${issue.attempts}/${issue.maxAttempts}): execution failed repeatedly.`;
-      await cancelIssueFromAgentCommand(issue, `Max attempts reached (${issue.attempts}/${issue.maxAttempts}).`, container);
+      await blockIssueForRetryCommand(issue, `Execution failed — max attempts reached (${issue.attempts}/${issue.maxAttempts}). Manual intervention required.`, container);
     } else {
       issue.nextRetryAt = getNextRetryAt(issue, state.config.retryDelayMs);
       await blockIssueForRetryCommand(issue, `${runResult.blocked ? "Agent requested manual intervention" : "Failure"} on attempt ${issue.attempts}/${issue.maxAttempts}; retry scheduled at ${issue.nextRetryAt}.`, container);
@@ -1644,8 +1641,7 @@ export async function runReviewPhase(
     issue.lastFailedPhase = "review";
 
     if (issue.attempts >= issue.maxAttempts) {
-      issue.cancelledReason = `Max attempts reached (${issue.attempts}/${issue.maxAttempts}): unexpected failure — ${issue.lastError?.slice(0, 120) ?? "unknown error"}.`;
-      await cancelIssueFromAgentCommand(issue, `Issue failed unexpectedly: ${issue.lastError}`, container);
+      await blockIssueForRetryCommand(issue, `Unexpected failure — max attempts reached (${issue.attempts}/${issue.maxAttempts}): ${issue.lastError?.slice(0, 120) ?? "unknown error"}. Manual intervention required.`, container);
     } else {
       issue.nextRetryAt = getNextRetryAt(issue, state.config.retryDelayMs);
       await blockIssueForRetryCommand(issue, `Unexpected failure. Retry scheduled at ${issue.nextRetryAt}.`, container);
@@ -1765,8 +1761,7 @@ export async function runExecutePhase(
     target.lastFailedPhase = target.lastFailedPhase ?? "execute";
 
     if (target.attempts >= target.maxAttempts) {
-      target.cancelledReason = `Max attempts reached (${target.attempts}/${target.maxAttempts}): unexpected failure — ${target.lastError?.slice(0, 120) ?? "unknown error"}.`;
-      await cancelIssueFromAgentCommand(target, `Issue failed unexpectedly: ${target.lastError}`, container);
+      await blockIssueForRetryCommand(target, `Unexpected failure — max attempts reached (${target.attempts}/${target.maxAttempts}): ${target.lastError?.slice(0, 120) ?? "unknown error"}. Manual intervention required.`, container);
     } else {
       target.nextRetryAt = getNextRetryAt(target, state.config.retryDelayMs);
       await blockIssueForRetryCommand(target, `Unexpected failure. Retry scheduled at ${target.nextRetryAt}.`, container);

@@ -223,8 +223,7 @@ async function handleReviewStage(
     issue.lastFailedPhase = "review";
     issue.attempts += 1;
     if (issue.attempts >= issue.maxAttempts) {
-      issue.cancelledReason = `Max attempts reached (${issue.attempts}/${issue.maxAttempts}): reviewer failed or blocked.`;
-      await transitionIssueCommand({ issue, target: "Cancelled", note: `Review failed, max attempts reached for ${issue.identifier}.` }, container);
+      await transitionIssueCommand({ issue, target: "Blocked", note: `Review failed — max attempts reached (${issue.attempts}/${issue.maxAttempts}) for ${issue.identifier}. Manual intervention required.` }, container);
     } else {
       issue.nextRetryAt = getNextRetryAt(issue, state.config.retryDelayMs);
       await transitionIssueCommand({ issue, target: "Blocked", note: `Review failed for ${issue.identifier}. Retry at ${issue.nextRetryAt}.` }, container);
@@ -305,9 +304,7 @@ async function handleExecutionStage(
 
     if (issue.attempts >= issue.maxAttempts) {
       issue.commandExitCode = runResult.code;
-      issue.cancelledReason = `Max attempts reached (${issue.attempts}/${issue.maxAttempts}): execution failed repeatedly.`;
-      await transitionIssueCommand({ issue, target: "Cancelled", note: `Max attempts reached (${issue.attempts}/${issue.maxAttempts}).` }, container);
-      // FSM onEnterCancelled emits the state event
+      await transitionIssueCommand({ issue, target: "Blocked", note: `Execution failed — max attempts reached (${issue.attempts}/${issue.maxAttempts}). Manual intervention required.` }, container);
     } else {
       issue.nextRetryAt = getNextRetryAt(issue, state.config.retryDelayMs);
       await transitionIssueCommand({ issue, target: "Blocked", note: `${runResult.blocked ? "Agent requested manual intervention" : "Failure"} on attempt ${issue.attempts}/${issue.maxAttempts}; retry scheduled at ${issue.nextRetryAt}.` }, container);
@@ -394,8 +391,7 @@ export async function runIssueOnce(
     issue.lastFailedPhase = issue.lastFailedPhase ?? "execute";
 
     if (issue.attempts >= issue.maxAttempts) {
-      issue.cancelledReason = `Max attempts reached (${issue.attempts}/${issue.maxAttempts}): unexpected failure — ${issue.lastError?.slice(0, 120) ?? "unknown error"}.`;
-      await transitionIssueCommand({ issue, target: "Cancelled", note: `Issue failed unexpectedly: ${issue.lastError}` }, container);
+      await transitionIssueCommand({ issue, target: "Blocked", note: `Unexpected failure — max attempts reached (${issue.attempts}/${issue.maxAttempts}): ${issue.lastError?.slice(0, 120) ?? "unknown error"}. Manual intervention required.` }, container);
     } else {
       issue.nextRetryAt = getNextRetryAt(issue, state.config.retryDelayMs);
       await transitionIssueCommand({ issue, target: "Blocked", note: `Unexpected failure. Retry scheduled at ${issue.nextRetryAt}.` }, container);
