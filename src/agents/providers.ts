@@ -303,6 +303,23 @@ const REVIEW_PROFILE_MIN_EFFORT: Record<ReviewProfileName, ReasoningEffort> = {
   "security-hardening": "extra-high",
 };
 
+/** Cap effort by complexity — trivial/low tasks don't need extra-high reasoning. */
+const COMPLEXITY_MAX_EFFORT: Record<string, ReasoningEffort> = {
+  trivial: "low",
+  low: "medium",
+  medium: "high",
+  high: "extra-high",
+};
+
+function capEffortByComplexity(effort: ReasoningEffort | undefined, complexity: string | undefined): ReasoningEffort | undefined {
+  if (!effort || !complexity) return effort;
+  const cap = COMPLEXITY_MAX_EFFORT[complexity];
+  if (!cap) return effort;
+  const effortIdx = EFFORT_ORDER.indexOf(effort);
+  const capIdx = EFFORT_ORDER.indexOf(cap);
+  return effortIdx > capIdx ? cap : effort;
+}
+
 const REVIEW_PROFILE_OVERLAYS: Record<ReviewProfileName, string[]> = {
   "general-quality": [],
   "ui-polish": ["impeccable", "frontend-design"],
@@ -362,7 +379,10 @@ function buildStageProvider(
 function specializeReviewerProvider(baseProvider: AgentProviderDefinition, issue: IssueEntry): AgentProviderDefinition {
   const reviewProfile = issue.reviewProfile ?? deriveReviewProfile(issue);
   const minEffort = REVIEW_PROFILE_MIN_EFFORT[reviewProfile.primary];
-  const reasoningEffort = maxEffort(baseProvider.reasoningEffort, minEffort);
+  const complexity = issue.plan?.estimatedComplexity;
+  // Floor by profile, then cap by complexity — trivial tasks don't need extra-high.
+  const floored = maxEffort(baseProvider.reasoningEffort, minEffort);
+  const reasoningEffort = capEffortByComplexity(floored, complexity);
   const overlays = [...new Set([...(baseProvider.overlays ?? []), ...REVIEW_PROFILE_OVERLAYS[reviewProfile.primary]])];
   const command = getProviderDefaultCommand(baseProvider.provider, reasoningEffort, baseProvider.model) || baseProvider.command;
 
@@ -371,7 +391,7 @@ function specializeReviewerProvider(baseProvider: AgentProviderDefinition, issue
     command,
     reasoningEffort,
     overlays,
-    selectionReason: `Reviewer specialized for ${reviewProfile.primary}; raised scrutiny with ${reasoningEffort ?? "default"} effort.`,
+    selectionReason: `Reviewer specialized for ${reviewProfile.primary}; effort ${reasoningEffort ?? "default"}${complexity && complexity !== "medium" ? ` (capped by ${complexity} complexity)` : ""}.`,
   };
 }
 

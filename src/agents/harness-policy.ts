@@ -490,6 +490,20 @@ export function recommendHarnessModeForIssue(
     && (negotiation.revisionRate ?? 1) <= 0.15;
 
   if (highRisk && currentMode !== "contractual") {
+    // Low-scope work never gets contractual — even on high-risk profiles.
+    // A file path containing "auth" shouldn't trigger full contract negotiation
+    // when the actual task is trivial (e.g., installing a missing dependency).
+    if (lowScope) {
+      if (currentMode === "solo") {
+        return {
+          mode: "standard",
+          profile,
+          basis: "heuristic",
+          rationale: `Upgraded from solo to standard for ${profile.primary} (high-risk profile), but kept lightweight because complexity is ${complexity}.`,
+        };
+      }
+      return null; // standard is fine for low-scope high-risk
+    }
     if (highRiskNegotiationPressure) {
       return {
         mode: "contractual",

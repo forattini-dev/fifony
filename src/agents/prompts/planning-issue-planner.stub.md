@@ -55,6 +55,7 @@ Quality rules:
   `solo` for trivial, low-risk work;
   `standard` for normal multi-file work;
   `contractual` for high-risk, UI-critical, workflow/FSM, integration, or high-complexity work.
+  IMPORTANT: trivial/low complexity tasks MUST use `solo` or `standard` — NEVER `contractual`. A missing dependency install, a typo fix, or a config change does not need contract negotiation regardless of which files are involved.
 - Produce structured `acceptanceCriteria`. Every criterion must include category, verificationMethod, evidenceExpected, blocking, and weight.
 - Produce an `executionContract` that fixes deliverables, required checks, required evidence, focus areas, and checkpoint policy before execution begins.
 - Identify assumptions, constraints, unknowns, and risks.

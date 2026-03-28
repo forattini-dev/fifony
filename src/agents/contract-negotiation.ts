@@ -345,6 +345,19 @@ export async function runContractNegotiation(
     return { status: "skipped", approved: true, rounds: 0 };
   }
 
+  // Low-complexity plans don't benefit from contract negotiation — skip it.
+  // This prevents scope-creep where the negotiator adds SSRF audits and smoke
+  // tests to a task that just needs `pnpm install`.
+  const complexity = issue.plan?.estimatedComplexity;
+  if (complexity === "trivial" || complexity === "low") {
+    issue.contractNegotiationStatus = "skipped";
+    issue.contractNegotiationAttempt = 0;
+    issue.planningError = undefined;
+    markIssueDirty(issue.id);
+    addEvent(state, issue.id, "info", `Contract negotiation skipped for ${issue.identifier}: ${complexity} complexity does not warrant negotiation.`);
+    return { status: "skipped", approved: true, rounds: 0 };
+  }
+
   issue.contractNegotiationStatus = "running";
   issue.planningError = undefined;
   markIssueDirty(issue.id);

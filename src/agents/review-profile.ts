@@ -54,6 +54,8 @@ export function deriveReviewProfile(issue: IssueEntry): ReviewProfile {
   const paths = collectCandidatePaths(issue);
   const text = collectCandidateText(issue);
   const criteria = issue.plan?.acceptanceCriteria ?? [];
+  const complexity = issue.plan?.estimatedComplexity;
+  const lowScope = complexity === "trivial" || complexity === "low";
 
   const scores: ProfileScore[] = [
     { name: "general-quality", score: 1, rationale: ["Fallback profile for broad correctness, regression risk, and code quality review."] },
@@ -64,53 +66,65 @@ export function deriveReviewProfile(issue: IssueEntry): ReviewProfile {
     { name: "security-hardening", score: 0, rationale: [] },
   ];
 
+  // For trivial/low complexity, dampen keyword/path signals — a file path containing
+  // "auth" shouldn't trigger security-hardening when the task is just installing a
+  // dependency. Only explicit AC categories still count at full weight.
+  const pathWeight = lowScope ? 1 : 5;
+  const keywordWeight = lowScope ? 1 : 3;
+  const broadKeywordWeight = lowScope ? 0 : 2;
+
   const uiScore = scores.find((entry) => entry.name === "ui-polish")!;
   if (paths.some((path) => UI_EXTENSIONS.some((ext) => path.endsWith(ext)))) {
-    uiScore.score += 4;
+    uiScore.score += lowScope ? 2 : 4;
     uiScore.rationale.push("Touched frontend files that can regress visual polish, interaction flow, or responsiveness.");
   }
   if (hasCategory(criteria, "design") || includesAny(text, ["frontend", "ui", "ux", "drawer", "onboarding", "layout", "mobile"])) {
-    uiScore.score += 3;
+    uiScore.score += keywordWeight;
     uiScore.rationale.push("Issue signals UI/UX work that needs stronger product-behavior and visual scrutiny.");
   }
 
   const workflowScore = scores.find((entry) => entry.name === "workflow-fsm")!;
   if (hasPath(paths, /src\/persistence\/plugins\/fsm-|src\/commands\/|src\/domains\/issues\.ts|src\/agents\//)) {
-    workflowScore.score += 5;
+    workflowScore.score += pathWeight;
     workflowScore.rationale.push("Touched workflow/FSM/orchestration code where lifecycle invariants and retry semantics are fragile.");
   }
   if (includesAny(text, ["fsm", "workflow", "queue", "review gate", "lifecycle", "orchestration", "agent"])) {
-    workflowScore.score += 3;
+    workflowScore.score += keywordWeight;
     workflowScore.rationale.push("Issue description or labels indicate orchestration semantics rather than isolated implementation.");
   }
 
   const integrationScore = scores.find((entry) => entry.name === "integration-safety")!;
   if (hasPath(paths, /workspace|merge|push|rebase|git|dirty-tracker|services?|store\.ts/)) {
-    integrationScore.score += 5;
+    integrationScore.score += pathWeight;
     integrationScore.rationale.push("Touched integration or git/workspace code where destructive behavior and state drift must be caught.");
   }
   if (hasCategory(criteria, "integration") || hasCategory(criteria, "regression")) {
-    integrationScore.score += 2;
+    integrationScore.score += broadKeywordWeight;
     integrationScore.rationale.push("Acceptance criteria explicitly call out integration or regression guarantees.");
   }
 
   const apiScore = scores.find((entry) => entry.name === "api-contract")!;
   if (hasPath(paths, /src\/routes\/|src\/persistence\/resources\/|src\/mcp\//)) {
-    apiScore.score += 4;
+    apiScore.score += lowScope ? 2 : 4;
     apiScore.rationale.push("Touched API/resource surface that can drift from contract or persistence schema.");
   }
   if (includesAny(text, ["api", "route", "http", "endpoint", "resource", "schema"])) {
-    apiScore.score += 2;
+    apiScore.score += broadKeywordWeight;
     apiScore.rationale.push("Issue language implies request/response or schema contract changes.");
   }
 
   const securityScore = scores.find((entry) => entry.name === "security-hardening")!;
-  if (hasCategory(criteria, "security") || includesAny(text, ["auth", "security", "token", "permission", "secret"])) {
+  // For security: only full-weight if there's an explicit security AC, not just because
+  // the word "auth" appears in the title or a file path contains "auth".
+  if (hasCategory(criteria, "security")) {
     securityScore.score += 5;
-    securityScore.rationale.push("Security-sensitive behavior or criteria are present and should be treated as blocking by default.");
+    securityScore.rationale.push("Security-sensitive acceptance criteria are present and should be treated as blocking by default.");
+  } else if (includesAny(text, ["auth", "security", "token", "permission", "secret"])) {
+    securityScore.score += lowScope ? 1 : 4;
+    securityScore.rationale.push("Issue language hints at security-sensitive work.");
   }
   if (hasPath(paths, /auth|permission|secret|credential|shell|command-executor/)) {
-    securityScore.score += 3;
+    securityScore.score += lowScope ? 1 : 3;
     securityScore.rationale.push("Touched code paths that can introduce auth, privilege, or command-execution risk.");
   }
 
