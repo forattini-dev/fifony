@@ -187,20 +187,21 @@ export async function runCommandWithTimeout(
 
     const daemonArgs = JSON.stringify({
       command: effectiveCommand,
-      workspacePath,
+      workspacePath: issue.worktreePath ?? workspacePath,
       issueId: issue.id,
       startedAt: new Date(started).toISOString(),
       commandSlice: command.slice(0, 200),
     });
 
+    const effectiveCwd = issue.worktreePath ?? workspacePath;
     const daemonProcess = spawn(DAEMON_SCRIPT.command, [...DAEMON_SCRIPT.args, daemonArgs], {
       detached: true,
       stdio: "ignore",
-      cwd: workspacePath,
+      cwd: effectiveCwd,
     });
     daemonProcess.unref();
 
-    logger.debug({ issueId: issue.id, daemonPid: daemonProcess.pid, command: command.slice(0, 120), cwd: workspacePath }, "[Agent] PTY daemon spawned");
+    logger.debug({ issueId: issue.id, daemonPid: daemonProcess.pid, command: command.slice(0, 120), cwd: effectiveCwd }, "[Agent] PTY daemon spawned");
 
     // Wait for the socket to be ready (daemon creates it before PTY spawn)
     const socketReady = await waitForSocket(socketPath, 10_000);
@@ -227,18 +228,19 @@ export async function runCommandWithTimeout(
       writeFileSync(liveLogFile, "", "utf8");
 
       return new Promise((resolve) => {
+        const ptyEffectiveCwd = issue.worktreePath ?? workspacePath;
         const ptyProcess = (nodePty as NodePtyModule).spawn("sh", ["-c", effectiveCommand], {
           name: "xterm-256color",
           cols: 220,
           rows: 50,
-          cwd: workspacePath,
+          cwd: ptyEffectiveCwd,
           env: process.env as Record<string, string>,
         });
 
         const pid = ptyProcess.pid;
         const pidFile = join(workspacePath, "agent.pid");
         if (pid) {
-          logger.debug({ issueId: issue.id, pid, command: command.slice(0, 120), cwd: workspacePath }, "[Agent] Process spawned (PTY)");
+          logger.debug({ issueId: issue.id, pid, command: command.slice(0, 120), cwd: ptyEffectiveCwd }, "[Agent] Process spawned (PTY)");
           writeFileSync(pidFile, JSON.stringify({
             pid,
             issueId: issue.id,
