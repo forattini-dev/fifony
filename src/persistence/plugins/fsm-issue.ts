@@ -701,6 +701,13 @@ export async function executeTransition(
   markDirtyAndInvalidate(issue.id);
   triggerImmediatePersist();
 
+  // Emit a direct WS event for this transition so the frontend can patch
+  // the issue immediately — doesn't depend on the persist→broadcast→delta chain.
+  try {
+    const { broadcastIssueTransition } = await import("../../routes/websocket.ts");
+    broadcastIssueTransition(issue);
+  } catch { /* non-critical — persist broadcast is the fallback */ }
+
   return { previousState: previous };
 }
 

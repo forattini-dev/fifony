@@ -82,6 +82,19 @@ export function DashboardProvider({ children }) {
       return;
     }
 
+    // Direct issue transition push — instant patch, no full state needed
+    if (msg?.type === "issue:transition" && msg.issue) {
+      qc.setQueriesData({ queryKey: ["runtime-state"] }, (cur) => {
+        if (!cur || !Array.isArray(cur.issues)) return cur;
+        const exists = cur.issues.some((i) => i.id === msg.issue.id);
+        const issues = exists
+          ? cur.issues.map((i) => i.id === msg.issue.id ? msg.issue : i)
+          : [...cur.issues, msg.issue];
+        return { ...cur, issues };
+      });
+      return;
+    }
+
     // Full state broadcast: initial WS connection or periodic full push from persistState
     if (msg?.type === "connected" || msg?.type === "state:update") {
       if (Array.isArray(msg.issues)) {

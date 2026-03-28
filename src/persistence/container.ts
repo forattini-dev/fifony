@@ -48,7 +48,12 @@ export function createContainer(state: RuntimeState): Container {
   setEnqueueFn((issue, job) => enqueue(issue, job));
 
   // Wire immediate-persist so every FSM transition pushes state to WS clients right away
-  setPersistNowFn(() => { persistState(state).catch(() => {}); });
+  setPersistNowFn(() => {
+    persistState(state).catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error("[PersistNow] Failed to persist state after FSM transition:", err);
+    });
+  });
 
   // Wire issue transition executor to keep domain orchestration dependency-free
   setIssueTransitionExecutor((issue, event, context) => executeTransition(issue, event, context));

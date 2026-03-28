@@ -126,6 +126,19 @@ export function sendToAllClients(data: string): void {
   }
 }
 
+/** Direct WS push when an issue transitions state.
+ *  Bypasses the persist→broadcast→delta chain for instant frontend updates. */
+export function broadcastIssueTransition(issue: { id: string; state: string; [k: string]: unknown }): void {
+  if (wsClients.size === 0) return;
+  const data = JSON.stringify({
+    type: "issue:transition",
+    id: issue.id,
+    state: issue.state,
+    issue,
+  });
+  sendToAllClients(data);
+}
+
 export function broadcastToWebSocketClients(message: Record<string, unknown>): void {
   if (wsClients.size === 0) return;
 
