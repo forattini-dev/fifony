@@ -266,7 +266,9 @@ async function main() {
     logger.warn({ workspace: TARGET_ROOT, branch: gitStatus.branch }, "[Boot] Target workspace has no commits. Create an initial commit before running issues because git worktree needs a base commit.");
   }
 
-  if (!state.config.testCommand) {
+  // Auto-detect test command only if not explicitly set. Empty string means
+  // the user intentionally disabled it — respect that and don't re-detect.
+  if (state.config.testCommand == null) {
     try {
       const pkg = JSON.parse(readFileSync(join(TARGET_ROOT, "package.json"), "utf8"));
       if (pkg?.scripts?.test && !pkg.scripts.test.includes("no test specified")) {
