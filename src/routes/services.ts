@@ -16,6 +16,8 @@ import {
   startServiceLogBroadcasting,
   stopServiceLogBroadcasting,
 } from "../persistence/plugins/service-log-broadcaster.ts";
+import { getTrafficProxyPort } from "../persistence/plugins/traffic-proxy-server.ts";
+import { buildProxyEnvVars } from "../domains/traffic-proxy.ts";
 import {
   replaceServiceConfigs,
   upsertServiceConfig,
@@ -203,6 +205,12 @@ export function registerServiceRoutes(
         (state.variables ?? []).filter((v) => v.scope === entry.id).map((v) => [v.key, v.value]),
       );
       const mergedEnv = { ...entry.env, ...globalVars, ...serviceVars };
+      // Inject mesh proxy env if running
+      const proxyPort = getTrafficProxyPort();
+      if (proxyPort) {
+        const dashPort = Number(state.config.dashboardPort ?? 4000);
+        Object.assign(mergedEnv, buildProxyEnvVars(proxyPort, entry.id, dashPort));
+      }
       const t = startManagedService(entry, TARGET_ROOT, STATE_ROOT, mergedEnv);
       broadcastTransition(t);
       startServiceLogBroadcasting(entry.id, STATE_ROOT);

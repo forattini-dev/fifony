@@ -3,11 +3,20 @@ import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import {
   Server, Play, Square, Terminal, Circle, Loader2, X,
   AlertTriangle, ChevronRight, Folder, Scan, Wrench, CheckCircle2,
+  Network, Trash2, ArrowRight, Zap,
 } from "lucide-react";
+import {
+  forceSimulation,
+  forceLink,
+  forceManyBody,
+  forceCenter,
+  forceCollide,
+} from "d3-force";
 import { api } from "../api.js";
 import { useDashboard } from "../context/DashboardContext";
 import { CreateIssueDrawer } from "../components/CreateIssueForm.jsx";
 import { useServices, onServiceLog, dispatchServiceLog } from "../hooks/useServices.js";
+import { useMesh } from "../hooks/useMesh.js";
 import { subscribeServiceLog, unsubscribeServiceLog } from "../hooks.js";
 import { formatDuration } from "../utils.js";
 import {
@@ -644,12 +653,194 @@ function SkeletonCard() {
   );
 }
 
+// ── Mesh Graph ────────────────────────────────────────────────────────────────
+
+function MeshGraph({ graph, onSelectEdge, selectedEdge }) {
+  const svgRef = useRef(null);
+  const simRef = useRef(null);
+  const nodesRef = useRef([]);
+  const linksRef = useRef([]);
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    if (!graph || !graph.nodes.length) return;
+
+    const prevById = new Map(nodesRef.current.map((n) => [n.id, n]));
+    const nodes = graph.nodes.map((n) => {
+      const prev = prevById.get(n.id);
+      return { ...n, x: prev?.x, y: prev?.y, vx: prev?.vx ?? 0, vy: prev?.vy ?? 0 };
+    });
+
+    const nodeIds = new Set(nodes.map((n) => n.id));
+    const links = graph.edges
+      .filter((e) => nodeIds.has(typeof e.source === "object" ? e.source.id : e.source))
+      .map((e) => ({
+        ...e,
+        source: typeof e.source === "object" ? e.source.id : e.source,
+        target: typeof e.target === "object" ? e.target.id : e.target,
+      }));
+
+    nodesRef.current = nodes;
+    linksRef.current = links;
+    simRef.current?.stop();
+
+    const sim = forceSimulation(nodes)
+      .force("link", forceLink(links).id((d) => d.id).distance(160))
+      .force("charge", forceManyBody().strength(-350))
+      .force("center", forceCenter(350, 150))
+      .force("collide", forceCollide(45))
+      .alphaDecay(0.04)
+      .on("tick", () => setTick((t) => t + 1));
+
+    simRef.current = sim;
+    return () => sim.stop();
+  }, [graph]);
+
+  const stateColor = (state) => {
+    if (state === "running" || state === "starting") return "#22c55e";
+    if (state === "crashed") return "#ef4444";
+    return "#6b7280";
+  };
+  const edgeColor = (edge) => {
+    if (edge.errorCount > 0 && edge.errorCount / edge.requestCount > 0.3) return "#ef4444";
+    if (edge.avgLatencyMs > 200) return "#eab308";
+    return "#22c55e";
+  };
+
+  const nodes = nodesRef.current;
+  const links = linksRef.current;
+
+  if (!graph || !graph.nodes.length) {
+    return (
+      <div className="flex items-center justify-center h-full opacity-20 gap-2">
+        <Zap className="size-4" />
+        <span className="text-xs">Waiting for services to communicate...</span>
+      </div>
+    );
+  }
+
+  return (
+    <svg ref={svgRef} className="w-full h-full" viewBox="0 0 700 300" preserveAspectRatio="xMidYMid meet">
+      <defs>
+        <marker id="mesh-arrow" viewBox="0 0 10 6" refX="26" refY="3" markerWidth="7" markerHeight="5" orient="auto">
+          <path d="M0,0 L10,3 L0,6 Z" fill="currentColor" className="opacity-25" />
+        </marker>
+      </defs>
+      {links.map((link, i) => {
+        const src = typeof link.source === "object" ? link.source : nodes.find((n) => n.id === link.source);
+        const tgt = typeof link.target === "object" ? link.target : nodes.find((n) => n.id === link.target);
+        if (!src?.x || !tgt?.x) return null;
+        const thickness = Math.min(1 + Math.log2(1 + link.requestCount), 5);
+        const color = edgeColor(link);
+        const isSelected = selectedEdge?.source === link.source && selectedEdge?.target === link.target;
+        return (
+          <g key={`e-${i}`}>
+            <line x1={src.x} y1={src.y} x2={tgt.x} y2={tgt.y}
+              stroke={color} strokeWidth={thickness} strokeOpacity={isSelected ? 0.8 : 0.3}
+              markerEnd="url(#mesh-arrow)"
+              className="cursor-pointer hover:stroke-opacity-70 transition-all"
+              onClick={() => onSelectEdge?.(isSelected ? null : link)}
+            />
+            <text x={(src.x + tgt.x) / 2} y={(src.y + tgt.y) / 2 - 5}
+              textAnchor="middle" className="fill-current text-[8px] opacity-25 select-none pointer-events-none">
+              {link.requestCount} · {link.avgLatencyMs}ms
+              {link.errorCount > 0 ? ` · ${link.errorCount}err` : ""}
+            </text>
+          </g>
+        );
+      })}
+      {nodes.map((node) => node.x != null && (
+        <g key={node.id} transform={`translate(${node.x},${node.y})`}>
+          <circle r={18} fill={stateColor(node.state)} fillOpacity={0.12}
+            stroke={stateColor(node.state)} strokeWidth={1.5} strokeOpacity={0.4} />
+          <circle r={3.5} fill={stateColor(node.state)} />
+          <text y={28} textAnchor="middle"
+            className="fill-current text-[9px] font-medium opacity-60 select-none pointer-events-none">
+            {node.name}
+          </text>
+          {node.port && (
+            <text y={38} textAnchor="middle"
+              className="fill-current text-[7px] opacity-25 font-mono select-none pointer-events-none">
+              :{node.port}
+            </text>
+          )}
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+// ── Traffic Log ───────────────────────────────────────────────────────────────
+
+function TrafficLog({ entries, selectedEdge }) {
+  const logRef = useRef(null);
+
+  const filtered = useMemo(() => {
+    if (!selectedEdge) return entries;
+    const src = typeof selectedEdge.source === "object" ? selectedEdge.source.id : selectedEdge.source;
+    const tgt = typeof selectedEdge.target === "object" ? selectedEdge.target.id : selectedEdge.target;
+    return entries.filter((e) => e.sourceServiceId === src && e.targetServiceId === tgt);
+  }, [entries, selectedEdge]);
+
+  const display = filtered.slice(-80);
+
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [display.length]);
+
+  const statusColor = (code) => {
+    if (code < 300) return "text-success";
+    if (code < 400) return "text-warning";
+    return "text-error";
+  };
+
+  if (display.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-full opacity-20 text-[11px]">
+        {selectedEdge ? "No traffic for this connection" : "No traffic captured yet"}
+      </div>
+    );
+  }
+
+  return (
+    <div ref={logRef} className="overflow-y-auto flex-1 min-h-0">
+      <table className="w-full text-[11px]">
+        <thead className="sticky top-0 bg-base-200/90 backdrop-blur-sm">
+          <tr className="text-left opacity-40">
+            <th className="px-2 py-1 font-medium">Source</th>
+            <th className="px-2 py-1 font-medium">Target</th>
+            <th className="px-2 py-1 font-medium">Method</th>
+            <th className="px-2 py-1 font-medium">Path</th>
+            <th className="px-2 py-1 font-medium text-right">Status</th>
+            <th className="px-2 py-1 font-medium text-right">Latency</th>
+          </tr>
+        </thead>
+        <tbody>
+          {display.map((entry) => (
+            <tr key={entry.id} className="border-t border-base-content/[0.04] hover:bg-base-200/30">
+              <td className="px-2 py-0.5 font-mono opacity-50 truncate max-w-[100px]">{entry.sourceServiceId ?? "?"}</td>
+              <td className="px-2 py-0.5 font-mono opacity-50 truncate max-w-[100px]">{entry.targetServiceId ?? "ext"}</td>
+              <td className="px-2 py-0.5 font-mono font-medium opacity-60">{entry.method}</td>
+              <td className="px-2 py-0.5 font-mono opacity-40 truncate max-w-[200px]">{entry.path}</td>
+              <td className={`px-2 py-0.5 text-right font-mono ${statusColor(entry.statusCode)}`}>{entry.statusCode}</td>
+              <td className="px-2 py-0.5 text-right font-mono opacity-40 tabular-nums">{entry.durationMs}ms</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 // ── ServicesPage ───────────────────────────────────────────────────────────────
 
 function ServicesPage() {
   const { liveMode } = useDashboard();
-  const { services, loading, refresh } = useServices({ pollInterval: liveMode ? false : 3_000 });
+  const { services, loading, refresh } = useServices({ pollInterval: liveMode ? false : 15_000 });
+  const { graph, traffic, status: meshStatus, clearMesh } = useMesh();
   const [selectedId, setSelectedId] = useState(null);
+  const [selectedEdge, setSelectedEdge] = useState(null);
+  const meshRunning = meshStatus?.running;
 
   const selectedService = services.find((s) => s.id === selectedId) ?? null;
 
@@ -701,6 +892,24 @@ function ServicesPage() {
           )}
         </div>
         <div className="flex items-center gap-1">
+          {meshRunning && (
+            <div className="flex items-center gap-1.5 mr-2">
+              <Network className="size-3 text-success/60" />
+              <span className="text-[10px] opacity-30">
+                {graph?.totalRequests ?? 0} req · {graph?.edges?.length ?? 0} connections
+              </span>
+              {selectedEdge && (
+                <button className="btn btn-xs btn-ghost opacity-40 hover:opacity-80 h-4 min-h-0 px-1 text-[10px]"
+                  onClick={() => setSelectedEdge(null)}>
+                  clear filter
+                </button>
+              )}
+              <button className="btn btn-xs btn-ghost opacity-30 hover:opacity-70 h-4 min-h-0 px-1"
+                onClick={clearMesh} title="Clear traffic data">
+                <Trash2 className="size-2.5" />
+              </button>
+            </div>
+          )}
           {services.length > 0 && !allRunning && (
             <button className="btn btn-xs btn-ghost opacity-50 hover:opacity-90" onClick={handleStartAll}>
               Start all
@@ -771,6 +980,55 @@ function ServicesPage() {
               </section>
             )}
           </div>
+        )}
+
+        {/* ── Mesh section ──────────────────────────────────────────── */}
+        {meshRunning && services.length > 0 && (
+          <section className="mt-6">
+            <div className="flex items-center gap-2.5 mb-2.5">
+              <span className="text-[11px] font-medium opacity-30 uppercase tracking-wider">Mesh</span>
+              <div className="flex-1 h-px bg-base-content/5" />
+              {selectedEdge && (
+                <span className="flex items-center gap-1.5 text-[10px] opacity-40 font-mono">
+                  {typeof selectedEdge.source === "object" ? selectedEdge.source.id : selectedEdge.source}
+                  <ArrowRight className="size-2.5" />
+                  {typeof selectedEdge.target === "object" ? selectedEdge.target.id : selectedEdge.target}
+                  <span className="opacity-60">
+                    {selectedEdge.requestCount}req · {selectedEdge.avgLatencyMs}ms
+                    {selectedEdge.errorCount > 0 && <span className="text-error"> · {selectedEdge.errorCount}err</span>}
+                  </span>
+                </span>
+              )}
+            </div>
+
+            {/* Graph */}
+            <div className="h-[260px] rounded-md border border-base-content/[0.06] bg-base-200/20 relative">
+              <MeshGraph graph={graph} onSelectEdge={setSelectedEdge} selectedEdge={selectedEdge} />
+              {/* Edge detail overlay */}
+              {selectedEdge && selectedEdge.topPaths?.length > 0 && (
+                <div className="absolute bottom-2 left-2 bg-base-200/90 backdrop-blur-sm rounded border border-base-content/[0.06] px-2.5 py-1.5 text-[10px]">
+                  <div className="space-y-0.5">
+                    {selectedEdge.topPaths.map((p) => (
+                      <div key={p.path} className="flex items-center gap-2 opacity-40 font-mono">
+                        <span className="truncate max-w-[180px]">{p.path}</span>
+                        <span className="shrink-0">{p.count}x</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Traffic log */}
+            <div className="mt-3 h-[220px] rounded-md border border-base-content/[0.06] bg-base-200/20 flex flex-col overflow-hidden">
+              <div className="flex items-center gap-2 px-3 py-1.5 border-b border-base-content/[0.04] shrink-0">
+                <span className="text-[10px] font-medium opacity-25 uppercase tracking-widest">Traffic</span>
+                <span className="flex-1" />
+                <span className="text-[10px] opacity-20 tabular-nums">{traffic.length} entries</span>
+              </div>
+              <TrafficLog entries={traffic} selectedEdge={selectedEdge} />
+            </div>
+          </section>
         )}
       </div>
 

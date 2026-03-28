@@ -20,6 +20,7 @@ import {
 import { useNotifications } from "../hooks/useNotifications";
 import { dispatchServiceLog, dispatchServiceUpdate } from "../hooks/useServices.js";
 import { dispatchIssueLog } from "../hooks/useIssueLog.js";
+import { dispatchMeshEntry } from "../hooks/useMesh.js";
 import { STATES } from "../utils";
 import { resolveProjectMeta } from "../project-meta.js";
 
@@ -79,6 +80,10 @@ export function DashboardProvider({ children }) {
     }
     if (msg?.type === "issue:log") {
       dispatchIssueLog(msg.id, msg.chunk);
+      return;
+    }
+    if (msg?.type === "mesh:entry" && msg.entry) {
+      dispatchMeshEntry(msg.entry);
       return;
     }
 

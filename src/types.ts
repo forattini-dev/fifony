@@ -549,6 +549,41 @@ export type ServiceStatus = {
   nextRetryAt?: string;
 };
 
+// ── Mesh (inter-service traffic proxy) ───────────────────────────
+
+export type TrafficEntry = {
+  id: string;
+  sourceServiceId: string | null;
+  targetServiceId: string | null;
+  method: string;
+  url: string;
+  path: string;
+  statusCode: number;
+  requestSize: number;
+  responseSize: number;
+  startedAt: string;
+  durationMs: number;
+  error?: string;
+};
+
+export type ServiceGraphEdge = {
+  source: string;
+  target: string;
+  requestCount: number;
+  errorCount: number;
+  avgLatencyMs: number;
+  p95LatencyMs: number;
+  lastSeenAt: string;
+  topPaths: { path: string; count: number }[];
+};
+
+export type ServiceGraph = {
+  nodes: { id: string; name: string; state: string; port?: number }[];
+  edges: ServiceGraphEdge[];
+  capturedSince: string;
+  totalRequests: number;
+};
+
 export type RuntimeConfig = {
   pollIntervalMs: number;
   workerConcurrency: number;
@@ -601,6 +636,12 @@ export type RuntimeConfig = {
   maxContextResets?: number;
   /** Context window usage % that triggers an automatic context reset. Default: 85 */
   contextResetThresholdPct?: number;
+  /** When true, start a local HTTP forward proxy to capture inter-service traffic. Default: false */
+  meshEnabled?: boolean;
+  /** Port for the mesh proxy server. 0 = OS auto-assign. Default: 0 */
+  meshProxyPort?: number;
+  /** Max traffic entries kept in the in-memory ring buffer. Default: 1000 */
+  meshBufferSize?: number;
 };
 
 export type ProjectNameSource = "saved" | "detected" | "missing";

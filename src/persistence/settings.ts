@@ -51,6 +51,9 @@ export const SETTING_ID_ADAPTIVE_HARNESS_SELECTION = "runtime.adaptiveHarnessSel
 export const SETTING_ID_ADAPTIVE_REVIEW_ROUTING = "runtime.adaptiveReviewRouting";
 export const SETTING_ID_ADAPTIVE_POLICY_MIN_SAMPLES = "runtime.adaptivePolicyMinSamples";
 export const SETTING_ID_SERVICE_ENV = "runtime.serviceEnv";
+export const SETTING_ID_MESH_ENABLED = "runtime.meshEnabled";
+export const SETTING_ID_MESH_PROXY_PORT = "runtime.meshProxyPort";
+export const SETTING_ID_MESH_BUFFER_SIZE = "runtime.meshBufferSize";
 
 export async function loadRuntimeSettings(): Promise<RuntimeSettingRecord[]> {
   return loadPersistedSettings();
@@ -83,6 +86,9 @@ export const RUNTIME_CONFIG_SETTING_IDS = new Set<string>([
   SETTING_ID_ADAPTIVE_REVIEW_ROUTING,
   SETTING_ID_ADAPTIVE_POLICY_MIN_SAMPLES,
   SETTING_ID_SERVICE_ENV,
+  SETTING_ID_MESH_ENABLED,
+  SETTING_ID_MESH_PROXY_PORT,
+  SETTING_ID_MESH_BUFFER_SIZE,
 ]);
 
 const VALID_REASONING_EFFORTS = new Set<ReasoningEffort>(["low", "medium", "high", "extra-high"]);
@@ -174,6 +180,9 @@ function buildRuntimeConfigSettings(
     { id: SETTING_ID_ADAPTIVE_REVIEW_ROUTING, scope: "runtime", value: config.adaptiveReviewRouting !== false, source, updatedAt },
     { id: SETTING_ID_ADAPTIVE_POLICY_MIN_SAMPLES, scope: "runtime", value: config.adaptivePolicyMinSamples ?? DEFAULT_ADAPTIVE_POLICY_MIN_SAMPLES, source, updatedAt },
     { id: SETTING_ID_SERVICE_ENV, scope: "runtime", value: config.serviceEnv ?? {}, source, updatedAt },
+    { id: SETTING_ID_MESH_ENABLED, scope: "runtime", value: config.meshEnabled ?? false, source, updatedAt },
+    { id: SETTING_ID_MESH_PROXY_PORT, scope: "runtime", value: config.meshProxyPort ?? 0, source, updatedAt },
+    { id: SETTING_ID_MESH_BUFFER_SIZE, scope: "runtime", value: config.meshBufferSize ?? 1000, source, updatedAt },
   ];
 }
 
@@ -339,6 +348,24 @@ export function applyPersistedSettings(config: RuntimeConfig, settings: RuntimeS
         const parsed = normalizeServiceEnvironment(setting.value);
         if (parsed.errors.length === 0) {
           nextConfig.serviceEnv = parsed.env;
+        }
+        break;
+      }
+      case SETTING_ID_MESH_ENABLED: {
+        nextConfig.meshEnabled = setting.value === true || setting.value === "true";
+        break;
+      }
+      case SETTING_ID_MESH_PROXY_PORT: {
+        const parsed = Number(setting.value);
+        if (!Number.isNaN(parsed) && parsed >= 0 && parsed <= 65535) {
+          nextConfig.meshProxyPort = parsed;
+        }
+        break;
+      }
+      case SETTING_ID_MESH_BUFFER_SIZE: {
+        const parsed = Number(setting.value);
+        if (!Number.isNaN(parsed) && parsed >= 100 && parsed <= 10000) {
+          nextConfig.meshBufferSize = parsed;
         }
         break;
       }

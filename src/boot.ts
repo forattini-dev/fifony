@@ -39,6 +39,12 @@ import {
 } from "./domains/agents.ts";
 import { broadcastToWebSocketClients } from "./routes/websocket.ts";
 import {
+  startTrafficProxy,
+  stopTrafficProxy,
+  setServicesAccessor,
+} from "./persistence/plugins/traffic-proxy-server.ts";
+import { sendToMeshRoom } from "./routes/websocket.ts";
+import {
   startServiceLogBroadcasting,
   stopServiceLogBroadcasting,
 } from "./persistence/plugins/service-log-broadcaster.ts";
@@ -339,6 +345,20 @@ async function main() {
     logger.warn({ err: error }, "[Boot] Queue workers failed to initialize — continuing without queue-based dispatch");
   }
 
+  // Start mesh traffic proxy if enabled
+  if (apiState.config.meshEnabled) {
+    try {
+      setServicesAccessor(() => listServiceStatuses(apiState.config.services ?? [], STATE_ROOT));
+      await startTrafficProxy({
+        port: apiState.config.meshProxyPort ?? 0,
+        bufferSize: apiState.config.meshBufferSize ?? 1000,
+        onEntry: (entry) => sendToMeshRoom({ type: "mesh:entry", entry }),
+      });
+    } catch (err) {
+      logger.warn({ err }, "[Boot] Mesh traffic proxy failed to start — continuing without mesh");
+    }
+  }
+
   serviceWatcher = initManagedServiceWatcher(
     () => apiState.config.services ?? [],
     () => apiState.config.serviceEnv ?? {},
@@ -378,6 +398,10 @@ async function main() {
       });
     },
   );
+
+  // Stop mesh proxy on shutdown
+  process.once("SIGINT", () => { stopTrafficProxy().catch(() => {}); });
+  process.once("SIGTERM", () => { stopTrafficProxy().catch(() => {}); });
 
   installGracefulShutdown(state);
 

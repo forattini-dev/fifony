@@ -97,10 +97,38 @@ export function sendToIssueLogRoom(issueId: string, data: string): void {
   }
 }
 
+// ── Mesh traffic room ─────────────────────────────────────────────────────────
+// Clients subscribe to real-time inter-service traffic captured by the mesh proxy.
+
+const meshRoom = new Set<string>(); // socketIds
+
+export function subscribeMeshRoom(socketId: string): void {
+  meshRoom.add(socketId);
+}
+
+export function unsubscribeMeshRoom(socketId: string): void {
+  meshRoom.delete(socketId);
+}
+
+export function sendToMeshRoom(data: Record<string, unknown>): void {
+  if (meshRoom.size === 0) return;
+  const msg = JSON.stringify(data);
+  for (const socketId of [...meshRoom]) {
+    const send = wsClients.get(socketId);
+    if (!send) { meshRoom.delete(socketId); continue; }
+    try { send(msg); } catch { wsClients.delete(socketId); meshRoom.delete(socketId); }
+  }
+}
+
+export function meshRoomHasSubscribers(): boolean {
+  return meshRoom.size > 0;
+}
+
 export function unsubscribeFromAllRooms(socketId: string): void {
   for (const room of serviceLogRooms.values()) room.delete(socketId);
   for (const room of analyticsRooms.values()) room.delete(socketId);
   for (const room of issueLogRooms.values()) room.delete(socketId);
+  meshRoom.delete(socketId);
 }
 
 export function serviceLogRoomSize(serviceId: string): number {
@@ -250,6 +278,12 @@ export function makeWebSocketConfig(state: RuntimeState) {
         } else if (msg.type === "issue:log:unsubscribe" && typeof msg.id === "string") {
           unsubscribeIssueLogRoom(socketId, msg.id);
           logger.debug({ socketId, issueId: msg.id }, "[WebSocket] Unsubscribed from issue log room");
+        } else if (msg.type === "mesh:subscribe") {
+          subscribeMeshRoom(socketId);
+          logger.debug({ socketId }, "[WebSocket] Subscribed to mesh traffic room");
+        } else if (msg.type === "mesh:unsubscribe") {
+          unsubscribeMeshRoom(socketId);
+          logger.debug({ socketId }, "[WebSocket] Unsubscribed from mesh traffic room");
         }
       } catch {}
     },

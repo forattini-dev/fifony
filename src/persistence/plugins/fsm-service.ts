@@ -16,6 +16,8 @@ import { now } from "../../concerns/helpers.ts";
 import type { ServiceEntry, ServiceState, ServiceStatus } from "../../types.ts";
 import { buildServiceCommand } from "../../domains/service-env.ts";
 import type { ServiceEnvironment } from "../../domains/service-env.ts";
+import { getTrafficProxyPort } from "./traffic-proxy-server.ts";
+import { buildProxyEnvVars } from "../../domains/traffic-proxy.ts";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -98,7 +100,14 @@ function spawnProcess(
 ): { pid: number; command: string } {
   const cwd = entry.cwd ? resolve(targetRoot, entry.cwd) : targetRoot;
   const log = serviceLogPath(fifonyDir, entry.id);
-  const command = buildServiceCommand(entry.command, globalEnv, entry.env);
+  // Merge mesh proxy env vars if the proxy is running
+  let mergedGlobalEnv = globalEnv;
+  const proxyPort = getTrafficProxyPort();
+  if (proxyPort) {
+    const dashPort = Number(process.env.FIFONY_PORT ?? 4000);
+    mergedGlobalEnv = { ...(globalEnv ?? {}), ...buildProxyEnvVars(proxyPort, entry.id, dashPort) };
+  }
+  const command = buildServiceCommand(entry.command, mergedGlobalEnv, entry.env);
   // Truncate log on each start so the viewer shows a clean session
   try { writeFileSync(log, ""); } catch {}
   // Use fd inheritance — OS redirects child stdout/stderr to file.
