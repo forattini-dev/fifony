@@ -187,11 +187,12 @@ export function buildProxyEnvVars(
   serviceId: string,
   dashboardPort: number,
 ): Record<string, string> {
+  const proxyUrl = `http://${encodeURIComponent(serviceId)}:fifony@localhost:${proxyPort}`;
   return {
-    HTTP_PROXY: `http://${encodeURIComponent(serviceId)}:fifony@127.0.0.1:${proxyPort}`,
-    http_proxy: `http://${encodeURIComponent(serviceId)}:fifony@127.0.0.1:${proxyPort}`,
-    NO_PROXY: `127.0.0.1:${dashboardPort},localhost:${dashboardPort}`,
-    no_proxy: `127.0.0.1:${dashboardPort},localhost:${dashboardPort}`,
+    HTTP_PROXY: proxyUrl,
+    http_proxy: proxyUrl,
+    NO_PROXY: `localhost:${dashboardPort}`,
+    no_proxy: `localhost:${dashboardPort}`,
   };
 }
 

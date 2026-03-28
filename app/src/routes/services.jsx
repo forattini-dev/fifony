@@ -6,12 +6,15 @@ import {
   Network, Trash2, ArrowRight, Zap,
 } from "lucide-react";
 import {
-  forceSimulation,
-  forceLink,
-  forceManyBody,
-  forceCenter,
-  forceCollide,
-} from "d3-force";
+  ReactFlow,
+  Background,
+  MiniMap,
+  Handle,
+  Position,
+  useNodesState,
+  useEdgesState,
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
 import { api } from "../api.js";
 import { useDashboard } from "../context/DashboardContext";
 import { CreateIssueDrawer } from "../components/CreateIssueForm.jsx";
@@ -283,10 +286,96 @@ function LogViewer({ id, running, state }) {
   );
 }
 
+// ── Service Traffic Panel (for drawer) ────────────────────────────────────────
+
+function ServiceTrafficPanel({ serviceId, traffic, graph }) {
+  const entries = useMemo(() => {
+    if (!traffic?.length) return [];
+    return traffic.filter(
+      (e) => e.sourceServiceId === serviceId || e.targetServiceId === serviceId,
+    ).slice(-30);
+  }, [traffic, serviceId]);
+
+  const connections = useMemo(() => {
+    if (!graph?.edges?.length) return { inbound: [], outbound: [] };
+    const inbound = graph.edges.filter((e) => {
+      const tgt = typeof e.target === "object" ? e.target.id : e.target;
+      return tgt === serviceId;
+    });
+    const outbound = graph.edges.filter((e) => {
+      const src = typeof e.source === "object" ? e.source.id : e.source;
+      return src === serviceId;
+    });
+    return { inbound, outbound };
+  }, [graph, serviceId]);
+
+  const hasData = entries.length > 0 || connections.inbound.length > 0 || connections.outbound.length > 0;
+  if (!hasData) return null;
+
+  const statusColor = (code) => {
+    if (code < 300) return "text-success";
+    if (code < 400) return "text-warning";
+    return "text-error";
+  };
+
+  return (
+    <div className="border-t border-base-200/60 shrink-0">
+      <div className="flex items-center gap-2 px-3 py-1.5 bg-base-200/30">
+        <Network className="size-3 opacity-30" />
+        <span className="text-[10px] font-medium opacity-35 uppercase tracking-widest">Traffic</span>
+        <span className="flex-1" />
+        <span className="text-[10px] opacity-20 tabular-nums">{entries.length} requests</span>
+      </div>
+
+      {/* Connection summary */}
+      {(connections.inbound.length > 0 || connections.outbound.length > 0) && (
+        <div className="px-3 py-2 border-t border-base-200/40 flex flex-wrap gap-x-4 gap-y-1">
+          {connections.inbound.map((edge) => {
+            const src = typeof edge.source === "object" ? edge.source.id : edge.source;
+            return (
+              <div key={`in-${src}`} className="flex items-center gap-1.5 text-[10px]">
+                <ArrowRight className="size-2.5 opacity-30 rotate-180" />
+                <span className="font-mono opacity-50">{src}</span>
+                <span className="opacity-25">{edge.requestCount}req</span>
+                {edge.errorCount > 0 && <span className="text-error/70">{edge.errorCount}err</span>}
+              </div>
+            );
+          })}
+          {connections.outbound.map((edge) => {
+            const tgt = typeof edge.target === "object" ? edge.target.id : edge.target;
+            return (
+              <div key={`out-${tgt}`} className="flex items-center gap-1.5 text-[10px]">
+                <ArrowRight className="size-2.5 opacity-30" />
+                <span className="font-mono opacity-50">{tgt}</span>
+                <span className="opacity-25">{edge.requestCount}req</span>
+                {edge.errorCount > 0 && <span className="text-error/70">{edge.errorCount}err</span>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Recent requests */}
+      {entries.length > 0 && (
+        <div className="max-h-[140px] overflow-y-auto border-t border-base-200/40">
+          {entries.map((entry) => (
+            <div key={entry.id} className="flex items-center gap-2 px-3 py-0.5 text-[10px] border-b border-base-content/[0.03] hover:bg-base-200/20">
+              <span className="font-mono opacity-40 w-8 shrink-0">{entry.method}</span>
+              <span className="font-mono opacity-35 truncate flex-1">{entry.path}</span>
+              <span className={`font-mono shrink-0 ${statusColor(entry.statusCode)}`}>{entry.statusCode}</span>
+              <span className="font-mono opacity-30 shrink-0 tabular-nums w-10 text-right">{entry.durationMs}ms</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── ServiceDrawerBody ──────────────────────────────────────────────────────────
 // Pure content — works both as an inline desktop pane and inside a mobile overlay.
 
-function ServiceDrawerBody({ service, onClose, onRefresh }) {
+function ServiceDrawerBody({ service, onClose, onRefresh, traffic, graph }) {
   const [busy, setBusy] = useState(false);
   const [detecting, setDetecting] = useState(false);
   const [detectResult, setDetectResult] = useState(null); // null | { found, healthcheck } | "error"
@@ -489,6 +578,9 @@ function ServiceDrawerBody({ service, onClose, onRefresh }) {
         </div>
       </div>
 
+      {/* Traffic for this service */}
+      <ServiceTrafficPanel serviceId={service.id} traffic={traffic} graph={graph} />
+
       {/* Log viewer */}
       <LogViewer id={service.id} running={service.running} state={state} />
 
@@ -506,7 +598,7 @@ function ServiceDrawerBody({ service, onClose, onRefresh }) {
 
 // ── ServiceDrawer (mobile overlay) ────────────────────────────────────────────
 
-function ServiceDrawer({ service, onClose, onRefresh }) {
+function ServiceDrawer({ service, onClose, onRefresh, traffic, graph }) {
   const [closing, setClosing] = useState(false);
 
   const handleClose = useCallback(() => {
@@ -531,7 +623,7 @@ function ServiceDrawer({ service, onClose, onRefresh }) {
         width="w-full sm:w-[500px] lg:w-[40vw] lg:min-w-[520px] xl:min-w-[600px]"
         onClick={(e) => e.stopPropagation()}
       >
-        <ServiceDrawerBody service={service} onClose={handleClose} onRefresh={onRefresh} />
+        <ServiceDrawerBody service={service} onClose={handleClose} onRefresh={onRefresh} traffic={traffic} graph={graph} />
       </DrawerPanel>
     </>
   );
@@ -548,7 +640,7 @@ function formatLogSize(bytes) {
 
 // ── ServiceCard ─────────────────────────────────────────────────────────────────
 
-function ServiceCard({ service, selected, onSelect }) {
+function ServiceCard({ service, selected, onSelect, onRefresh }) {
   const [busy, setBusy] = useState(false);
   const state = service.state ?? (service.running ? "running" : "stopped");
   const info = stateInfo(state);
@@ -558,9 +650,12 @@ function ServiceCard({ service, selected, onSelect }) {
   const handleAction = useCallback(async (e, action) => {
     e.stopPropagation();
     setBusy(true);
-    try { await api.post(`/services/${service.id}/${action}`, {}); }
-    finally { setBusy(false); }
-  }, [service.id]);
+    try {
+      await api.post(`/services/${service.id}/${action}`, {});
+      // Small delay to let the FSM transition settle before refreshing
+      setTimeout(() => onRefresh?.(), 500);
+    } finally { setBusy(false); }
+  }, [service.id, onRefresh]);
 
   const logSizeStr = formatLogSize(service.logSize);
 
@@ -653,120 +748,132 @@ function SkeletonCard() {
   );
 }
 
-// ── Mesh Graph ────────────────────────────────────────────────────────────────
+// ── Mesh Graph (ReactFlow) ────────────────────────────────────────────────────
 
-function MeshGraph({ graph, onSelectEdge, selectedEdge }) {
-  const svgRef = useRef(null);
-  const simRef = useRef(null);
-  const nodesRef = useRef([]);
-  const linksRef = useRef([]);
-  const [, setTick] = useState(0);
+const stateColor = (state) => {
+  if (state === "running" || state === "starting") return "#22c55e";
+  if (state === "crashed") return "#ef4444";
+  return "#6b7280";
+};
 
-  useEffect(() => {
-    if (!graph || !graph.nodes.length) return;
+function ServiceNode({ data }) {
+  const color = stateColor(data.state);
+  return (
+    <div className="relative px-4 py-2.5 rounded-md border bg-base-200/80 min-w-[120px] text-center"
+      style={{ borderColor: `color-mix(in srgb, ${color} 40%, transparent)` }}>
+      <Handle type="target" position={Position.Left} className="!bg-base-content/20 !w-1.5 !h-1.5 !border-0" />
+      <div className="flex items-center justify-center gap-1.5 mb-0.5">
+        <div className="size-2 rounded-full" style={{ backgroundColor: color }} />
+        <span className="text-xs font-medium opacity-80">{data.name}</span>
+      </div>
+      {data.port && (
+        <span className="text-[10px] font-mono opacity-30">:{data.port}</span>
+      )}
+      <Handle type="source" position={Position.Right} className="!bg-base-content/20 !w-1.5 !h-1.5 !border-0" />
+    </div>
+  );
+}
 
-    const prevById = new Map(nodesRef.current.map((n) => [n.id, n]));
-    const nodes = graph.nodes.map((n) => {
-      const prev = prevById.get(n.id);
-      return { ...n, x: prev?.x, y: prev?.y, vx: prev?.vx ?? 0, vy: prev?.vy ?? 0 };
-    });
+const meshNodeTypes = { service: ServiceNode };
 
-    const nodeIds = new Set(nodes.map((n) => n.id));
-    const links = graph.edges
-      .filter((e) => nodeIds.has(typeof e.source === "object" ? e.source.id : e.source))
-      .map((e) => ({
-        ...e,
-        source: typeof e.source === "object" ? e.source.id : e.source,
-        target: typeof e.target === "object" ? e.target.id : e.target,
-      }));
+function buildFlowElements(graph, selectedEdge) {
+  if (!graph?.nodes?.length) return { nodes: [], edges: [] };
 
-    nodesRef.current = nodes;
-    linksRef.current = links;
-    simRef.current?.stop();
+  // Simple grid layout — arrange nodes in a horizontal line with spacing
+  const spacing = 220;
+  const nodes = graph.nodes.map((n, i) => ({
+    id: n.id,
+    type: "service",
+    position: { x: (i % 4) * spacing + 40, y: Math.floor(i / 4) * 120 + 40 },
+    data: { name: n.name, state: n.state, port: n.port },
+  }));
 
-    const sim = forceSimulation(nodes)
-      .force("link", forceLink(links).id((d) => d.id).distance(160))
-      .force("charge", forceManyBody().strength(-350))
-      .force("center", forceCenter(350, 150))
-      .force("collide", forceCollide(45))
-      .alphaDecay(0.04)
-      .on("tick", () => setTick((t) => t + 1));
-
-    simRef.current = sim;
-    return () => sim.stop();
-  }, [graph]);
-
-  const stateColor = (state) => {
-    if (state === "running" || state === "starting") return "#22c55e";
-    if (state === "crashed") return "#ef4444";
-    return "#6b7280";
-  };
   const edgeColor = (edge) => {
     if (edge.errorCount > 0 && edge.errorCount / edge.requestCount > 0.3) return "#ef4444";
     if (edge.avgLatencyMs > 200) return "#eab308";
     return "#22c55e";
   };
 
-  const nodes = nodesRef.current;
-  const links = linksRef.current;
+  const edges = graph.edges.map((e, i) => {
+    const src = typeof e.source === "object" ? e.source.id : e.source;
+    const tgt = typeof e.target === "object" ? e.target.id : e.target;
+    const isSelected = selectedEdge && (
+      (typeof selectedEdge.source === "object" ? selectedEdge.source.id : selectedEdge.source) === src &&
+      (typeof selectedEdge.target === "object" ? selectedEdge.target.id : selectedEdge.target) === tgt
+    );
+    const color = edgeColor(e);
+    return {
+      id: `e-${i}`,
+      source: src,
+      target: tgt,
+      animated: e.requestCount > 0,
+      label: `${e.requestCount} req · ${e.avgLatencyMs}ms${e.errorCount > 0 ? ` · ${e.errorCount} err` : ""}`,
+      labelStyle: { fontSize: 10, fill: "currentColor", opacity: 0.4 },
+      style: {
+        stroke: color,
+        strokeWidth: Math.min(1 + Math.log2(1 + e.requestCount), 5),
+        opacity: isSelected ? 0.9 : 0.4,
+      },
+      data: e,
+    };
+  });
+
+  return { nodes, edges };
+}
+
+function MeshGraph({ graph, onSelectEdge, selectedEdge }) {
+  const { nodes: flowNodes, edges: flowEdges } = useMemo(
+    () => buildFlowElements(graph, selectedEdge),
+    [graph, selectedEdge],
+  );
+
+  const [nodes, setNodes, onNodesChange] = useNodesState(flowNodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(flowEdges);
+
+  // Sync when graph data changes
+  useEffect(() => { setNodes(flowNodes); }, [flowNodes, setNodes]);
+  useEffect(() => { setEdges(flowEdges); }, [flowEdges, setEdges]);
+
+  const onEdgeClick = useCallback((_event, edge) => {
+    const graphEdge = graph?.edges?.find((e) => {
+      const src = typeof e.source === "object" ? e.source.id : e.source;
+      const tgt = typeof e.target === "object" ? e.target.id : e.target;
+      return src === edge.source && tgt === edge.target;
+    });
+    onSelectEdge?.(graphEdge ?? null);
+  }, [graph, onSelectEdge]);
 
   if (!graph || !graph.nodes.length) {
     return (
-      <div className="flex items-center justify-center h-full opacity-20 gap-2">
-        <Zap className="size-4" />
-        <span className="text-xs">Waiting for services to communicate...</span>
+      <div className="flex flex-col items-center justify-center h-full gap-2 opacity-20">
+        <Zap className="size-5" />
+        <span className="text-xs">Start services and trigger inter-service HTTP calls to see the mesh</span>
       </div>
     );
   }
 
   return (
-    <svg ref={svgRef} className="w-full h-full" viewBox="0 0 700 300" preserveAspectRatio="xMidYMid meet">
-      <defs>
-        <marker id="mesh-arrow" viewBox="0 0 10 6" refX="26" refY="3" markerWidth="7" markerHeight="5" orient="auto">
-          <path d="M0,0 L10,3 L0,6 Z" fill="currentColor" className="opacity-25" />
-        </marker>
-      </defs>
-      {links.map((link, i) => {
-        const src = typeof link.source === "object" ? link.source : nodes.find((n) => n.id === link.source);
-        const tgt = typeof link.target === "object" ? link.target : nodes.find((n) => n.id === link.target);
-        if (!src?.x || !tgt?.x) return null;
-        const thickness = Math.min(1 + Math.log2(1 + link.requestCount), 5);
-        const color = edgeColor(link);
-        const isSelected = selectedEdge?.source === link.source && selectedEdge?.target === link.target;
-        return (
-          <g key={`e-${i}`}>
-            <line x1={src.x} y1={src.y} x2={tgt.x} y2={tgt.y}
-              stroke={color} strokeWidth={thickness} strokeOpacity={isSelected ? 0.8 : 0.3}
-              markerEnd="url(#mesh-arrow)"
-              className="cursor-pointer hover:stroke-opacity-70 transition-all"
-              onClick={() => onSelectEdge?.(isSelected ? null : link)}
-            />
-            <text x={(src.x + tgt.x) / 2} y={(src.y + tgt.y) / 2 - 5}
-              textAnchor="middle" className="fill-current text-[8px] opacity-25 select-none pointer-events-none">
-              {link.requestCount} · {link.avgLatencyMs}ms
-              {link.errorCount > 0 ? ` · ${link.errorCount}err` : ""}
-            </text>
-          </g>
-        );
-      })}
-      {nodes.map((node) => node.x != null && (
-        <g key={node.id} transform={`translate(${node.x},${node.y})`}>
-          <circle r={18} fill={stateColor(node.state)} fillOpacity={0.12}
-            stroke={stateColor(node.state)} strokeWidth={1.5} strokeOpacity={0.4} />
-          <circle r={3.5} fill={stateColor(node.state)} />
-          <text y={28} textAnchor="middle"
-            className="fill-current text-[9px] font-medium opacity-60 select-none pointer-events-none">
-            {node.name}
-          </text>
-          {node.port && (
-            <text y={38} textAnchor="middle"
-              className="fill-current text-[7px] opacity-25 font-mono select-none pointer-events-none">
-              :{node.port}
-            </text>
-          )}
-        </g>
-      ))}
-    </svg>
+    <ReactFlow
+      nodes={nodes}
+      edges={edges}
+      onNodesChange={onNodesChange}
+      onEdgesChange={onEdgesChange}
+      onEdgeClick={onEdgeClick}
+      nodeTypes={meshNodeTypes}
+      fitView
+      fitViewOptions={{ padding: 0.3 }}
+      proOptions={{ hideAttribution: true }}
+      className="[&_.react-flow__edge]:cursor-pointer"
+    >
+      <Background gap={20} size={1} color="currentColor" className="opacity-[0.03]" />
+      <MiniMap
+        nodeColor={(n) => stateColor(n.data?.state)}
+        maskColor="rgba(0,0,0,0.7)"
+        className="!bg-base-200/80 !border-base-content/10 !rounded"
+        pannable
+        zoomable
+      />
+    </ReactFlow>
   );
 }
 
@@ -837,10 +944,11 @@ function TrafficLog({ entries, selectedEdge }) {
 function ServicesPage() {
   const { liveMode } = useDashboard();
   const { services, loading, refresh } = useServices({ pollInterval: liveMode ? false : 15_000 });
-  const { graph, traffic, status: meshStatus, clearMesh } = useMesh();
+  const { graph, traffic, status: meshStatus, clearMesh, toggleMesh } = useMesh();
   const [selectedId, setSelectedId] = useState(null);
   const [selectedEdge, setSelectedEdge] = useState(null);
-  const meshRunning = meshStatus?.running;
+  const meshEnabled = meshStatus?.enabled ?? false;
+  const meshRunning = meshStatus?.running ?? false;
 
   const selectedService = services.find((s) => s.id === selectedId) ?? null;
 
@@ -892,11 +1000,23 @@ function ServicesPage() {
           )}
         </div>
         <div className="flex items-center gap-1">
-          {meshRunning && (
-            <div className="flex items-center gap-1.5 mr-2">
-              <Network className="size-3 text-success/60" />
-              <span className="text-[10px] opacity-30">
-                {graph?.totalRequests ?? 0} req · {graph?.edges?.length ?? 0} connections
+          {/* Mesh toggle */}
+          {meshStatus && (
+            <label className="flex items-center gap-1.5 mr-2 cursor-pointer" title={meshEnabled ? "Mesh proxy is active — capturing inter-service traffic" : "Enable mesh proxy to capture inter-service traffic"}>
+              <Network className={`size-3 ${meshRunning ? "text-success/70" : "opacity-25"}`} />
+              <span className="text-[10px] opacity-35">Mesh</span>
+              <input
+                type="checkbox"
+                className="toggle toggle-xs toggle-success"
+                checked={meshEnabled}
+                onChange={(e) => toggleMesh(e.target.checked)}
+              />
+            </label>
+          )}
+          {meshRunning && (graph?.totalRequests ?? 0) > 0 && (
+            <div className="flex items-center gap-1.5 mr-1">
+              <span className="text-[10px] opacity-25 tabular-nums">
+                {graph.totalRequests} req · {graph.edges?.length ?? 0} conn
               </span>
               {selectedEdge && (
                 <button className="btn btn-xs btn-ghost opacity-40 hover:opacity-80 h-4 min-h-0 px-1 text-[10px]"
@@ -904,7 +1024,7 @@ function ServicesPage() {
                   clear filter
                 </button>
               )}
-              <button className="btn btn-xs btn-ghost opacity-30 hover:opacity-70 h-4 min-h-0 px-1"
+              <button className="btn btn-xs btn-ghost opacity-25 hover:opacity-60 h-4 min-h-0 px-1"
                 onClick={clearMesh} title="Clear traffic data">
                 <Trash2 className="size-2.5" />
               </button>
@@ -961,7 +1081,7 @@ function ServicesPage() {
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2.5 items-start">
                   {activeServices.map((service) => (
-                    <ServiceCard key={service.id} service={service} selected={service.id === selectedId} onSelect={handleSelect} />
+                    <ServiceCard key={service.id} service={service} selected={service.id === selectedId} onSelect={handleSelect} onRefresh={refresh} />
                   ))}
                 </div>
               </section>
@@ -974,7 +1094,7 @@ function ServicesPage() {
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2 items-start">
                   {idleServices.map((service) => (
-                    <ServiceCard key={service.id} service={service} selected={service.id === selectedId} onSelect={handleSelect} />
+                    <ServiceCard key={service.id} service={service} selected={service.id === selectedId} onSelect={handleSelect} onRefresh={refresh} />
                   ))}
                 </div>
               </section>
@@ -1002,7 +1122,7 @@ function ServicesPage() {
             </div>
 
             {/* Graph */}
-            <div className="h-[260px] rounded-md border border-base-content/[0.06] bg-base-200/20 relative">
+            <div className="h-[400px] rounded-md border border-base-content/[0.06] bg-base-200/20 relative">
               <MeshGraph graph={graph} onSelectEdge={setSelectedEdge} selectedEdge={selectedEdge} />
               {/* Edge detail overlay */}
               {selectedEdge && selectedEdge.topPaths?.length > 0 && (
@@ -1039,6 +1159,8 @@ function ServicesPage() {
           service={selectedService}
           onClose={handleClose}
           onRefresh={refresh}
+          traffic={traffic}
+          graph={graph}
         />
       )}
     </div>

@@ -62,8 +62,8 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",
+    "@xyflow/react": "^12.10.2",
     "cli-args-parser": "^1.0.6",
-    "d3-force": "^3.0.0",
     "node-cron": "^4.2.1",
     "node-pty": "1.2.0-beta.12",
     "pino": "^10.3.1",

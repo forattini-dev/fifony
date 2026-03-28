@@ -82,5 +82,19 @@ export function useMesh() {
     return () => clearInterval(id);
   }, [fetchGraph]);
 
-  return { graph, traffic, status, loading, refresh: fetchGraph, clearMesh };
+  const toggleMesh = useCallback(async (enabled) => {
+    try {
+      const res = await api.post("/mesh/toggle", { enabled });
+      setStatus((prev) => ({ ...prev, enabled, running: res.running, port: res.port }));
+      if (enabled) {
+        fetchGraph();
+        fetchTraffic();
+      } else {
+        setGraph(null);
+        setTraffic([]);
+      }
+    } catch {}
+  }, [fetchGraph, fetchTraffic]);
+
+  return { graph, traffic, status, loading, refresh: fetchGraph, clearMesh, toggleMesh };
 }
