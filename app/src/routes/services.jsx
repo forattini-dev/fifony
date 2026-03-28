@@ -559,24 +559,39 @@ function ServiceCard({ service, selected, onSelect }) {
     <button
       type="button"
       onClick={() => onSelect(service.id)}
-      className={`group relative text-left border-l-2 ${info.strip} rounded-sm bg-base-100 transition-all duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30
-        ${selected ? "ring-1 ring-primary/40 bg-base-200/60" : "hover:bg-base-200/40"}`}
+      className={`group relative text-left rounded border border-base-200/40 bg-base-100 transition-all duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30
+        ${selected ? "ring-1 ring-primary/40 bg-base-200/40" : "hover:bg-base-200/30"}${state === "crashed" ? " border-error/20" : ""}`}
     >
       <div className="px-3 py-2.5">
-        {/* Row 1: name + state badge */}
-        <div className="flex items-center gap-2 mb-1.5">
-          <span className="font-semibold text-sm leading-none truncate flex-1 min-w-0">{service.name}</span>
-          <span className={`badge badge-xs shrink-0 ${info.badge} leading-none`}>
-            {info.spinning && <Loader2 className="size-2.5 animate-spin mr-0.5" />}
-            {info.label}
-          </span>
+        {/* Row 1: dot + name + action */}
+        <div className="flex items-center gap-2">
+          <Circle className={`size-1.5 shrink-0 ${info.dot}${info.spinning ? " animate-pulse" : ""}`} />
+          <span className="font-medium text-sm leading-none truncate flex-1 min-w-0">{service.name}</span>
+          {canStart && (
+            <span role="button" tabIndex={-1}
+              className="btn btn-xs btn-ghost h-5 min-h-0 gap-1 px-1.5 text-success/70 hover:text-success hover:bg-success/10"
+              onClick={(e) => handleAction(e, "start")}
+            >
+              {busy ? <Loader2 className="size-3 animate-spin" /> : <Play className="size-3" />}
+              Start
+            </span>
+          )}
+          {canStop && (
+            <span role="button" tabIndex={-1}
+              className="btn btn-xs btn-ghost h-5 min-h-0 px-1 opacity-0 group-hover:opacity-100 text-error/50 hover:text-error hover:bg-error/10 transition-opacity"
+              onClick={(e) => handleAction(e, "stop")}
+            >
+              {busy ? <Loader2 className="size-3 animate-spin" /> : <Square className="size-2.5" />}
+            </span>
+          )}
         </div>
 
         {/* Row 2: command */}
-        <div className="font-mono text-[10px] opacity-25 truncate mb-2 leading-none">{service.command}</div>
+        <div className="font-mono text-[11px] opacity-35 truncate mt-1.5 leading-none">{service.command}</div>
 
-        {/* Row 3: stats */}
-        <div className="flex items-center gap-x-3 gap-y-0.5 flex-wrap text-[10px] tabular-nums opacity-40 leading-tight">
+        {/* Row 3: stats — only for active services */}
+        {(state === "running" || state === "starting" || state === "crashed") && (
+        <div className="flex items-center gap-x-3 gap-y-0.5 flex-wrap text-[11px] tabular-nums opacity-40 mt-2 leading-tight">
           {service.running && service.startedAt && (
             <span className="flex items-center gap-1">
               <span className="opacity-60">up</span>
@@ -601,33 +616,9 @@ function ServiceCard({ service, selected, onSelect }) {
             <span className="opacity-40">auto</span>
           )}
         </div>
+        )}
       </div>
 
-      {/* Quick actions — visible on hover */}
-      <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-100">
-        {canStart && (
-          <span
-            role="button"
-            tabIndex={-1}
-            className="btn btn-xs btn-ghost h-5 min-h-0 w-5 p-0 text-success hover:bg-success/10"
-            onClick={(e) => handleAction(e, "start")}
-            title="Start"
-          >
-            {busy ? <Loader2 className="size-3 animate-spin" /> : <Play className="size-3" />}
-          </span>
-        )}
-        {canStop && (
-          <span
-            role="button"
-            tabIndex={-1}
-            className="btn btn-xs btn-ghost h-5 min-h-0 w-5 p-0 text-error hover:bg-error/10"
-            onClick={(e) => handleAction(e, "stop")}
-            title="Stop"
-          >
-            {busy ? <Loader2 className="size-3 animate-spin" /> : <Square className="size-3" />}
-          </span>
-        )}
-      </div>
     </button>
   );
 }
@@ -685,6 +676,10 @@ function ServicesPage() {
   const anyRunning   = services.some((s) => s.running);
   const allRunning   = services.length > 0 && services.every((s) => s.running);
   const runningCount = services.filter((s) => s.running).length;
+
+  const isActive = (s) => s.running || s.state === "starting" || s.state === "crashed";
+  const activeServices = services.filter(isActive);
+  const idleServices = services.filter((s) => !isActive(s));
 
   return (
     <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
@@ -746,17 +741,35 @@ function ServicesPage() {
           </div>
         )}
 
-        {/* Cards grid */}
+        {/* Cards grouped by state */}
         {!loading && services.length > 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
-            {services.map((service) => (
-              <ServiceCard
-                key={service.id}
-                service={service}
-                selected={service.id === selectedId}
-                onSelect={handleSelect}
-              />
-            ))}
+          <div className="space-y-6">
+            {activeServices.length > 0 && (
+              <section>
+                <div className="flex items-center gap-2.5 mb-2.5">
+                  <span className="text-[11px] font-medium opacity-30 uppercase tracking-wider">Active</span>
+                  <div className="flex-1 h-px bg-base-content/5" />
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2.5 items-start">
+                  {activeServices.map((service) => (
+                    <ServiceCard key={service.id} service={service} selected={service.id === selectedId} onSelect={handleSelect} />
+                  ))}
+                </div>
+              </section>
+            )}
+            {idleServices.length > 0 && (
+              <section>
+                <div className="flex items-center gap-2.5 mb-2.5">
+                  <span className="text-[11px] font-medium opacity-30 uppercase tracking-wider">Stopped</span>
+                  <div className="flex-1 h-px bg-base-content/5" />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2 items-start">
+                  {idleServices.map((service) => (
+                    <ServiceCard key={service.id} service={service} selected={service.id === selectedId} onSelect={handleSelect} />
+                  ))}
+                </div>
+              </section>
+            )}
           </div>
         )}
       </div>
