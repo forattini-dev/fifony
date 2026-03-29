@@ -82,7 +82,7 @@ export const ISSUE_STATE_MACHINE = {
   Running:   ["Reviewing", "Queued", "Blocked"],
   Reviewing: ["PendingDecision", "Queued", "Blocked"],
   PendingDecision:  ["Approved", "Queued", "Planning", "Cancelled"],
-  Blocked:   ["Queued", "Planning", "Cancelled"],
+  Blocked:   ["Queued", "Reviewing", "Planning", "Cancelled"],
   Approved:      ["Merged", "Planning"],
   Merged:    ["Archived", "Planning"],
   Cancelled: ["Archived", "Planning"],

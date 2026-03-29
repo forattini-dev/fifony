@@ -38,6 +38,7 @@ const TRANSITION_META = {
 
   // Blocked
   "Blocked→Queued":             { label: "Retry",            icon: RotateCcw,    shortcut: "⌃↵", handler: "retry" },
+  "Blocked→Reviewing":          { label: "Force Review",     icon: Eye },
   "Blocked→Planning":           { label: "Replan",           icon: RotateCcw,    shortcut: "⌃P", handler: "replan" },
   "Blocked→Cancelled":          { label: "Cancel",           icon: XCircle, danger: true, handler: "cancel" },
 
