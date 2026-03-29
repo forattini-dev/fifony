@@ -142,8 +142,9 @@ export function DashboardProvider({ children }) {
   const wsStatus = useRuntimeWebSocket(handleRuntimeSocketMessage);
   const liveMode = wsStatus === "connected";
 
-  // In live mode, WS pushes updates — keep a slow fallback poll to catch any missed messages.
-  const runtime = useRuntimeState({ pollInterval: liveMode ? 10000 : 3000, showAll: completionFilter === "all" });
+  // In live mode, WS pushes all state updates — no HTTP polling needed.
+  // Fallback poll only when WS is disconnected.
+  const runtime = useRuntimeState({ pollInterval: liveMode ? false : 3000, showAll: completionFilter === "all" });
   const events = useRuntimeEvents(eventKind, eventIssueId, liveMode ? false : 2500);
   const providers = useProviders({ pollInterval: liveMode ? false : 15000 });
   const parallelism = useParallelism({ pollInterval: liveMode ? false : 15000 });
