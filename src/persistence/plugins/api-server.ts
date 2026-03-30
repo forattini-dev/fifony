@@ -120,7 +120,12 @@ export async function startApiServer(
     }
     const html = readFileSync(FRONTEND_INDEX, "utf8")
       .replace('href="/assets/manifest.webmanifest"', 'href="/manifest.webmanifest"')
-      .replaceAll('href="/assets/icon.svg"', 'href="/icon.svg"');
+      .replaceAll('href="/assets/icon.svg"', 'href="/icon.svg"')
+      .replaceAll('href="/assets/favicon.png"', 'href="/favicon.png"')
+      .replaceAll('href="/assets/icon-16.png"', 'href="/icon-16.png"')
+      .replaceAll('href="/assets/icon-32.png"', 'href="/icon-32.png"')
+      .replaceAll('href="/assets/apple-touch-icon.png"', 'href="/apple-touch-icon.png"')
+      .replaceAll('content="/assets/og-image.png"', 'content="/og-image.png"');
     return new Response(html, {
       headers: {
         "content-type": "text/html; charset=utf-8",
@@ -128,6 +133,32 @@ export async function startApiServer(
       },
     });
   };
+
+  const rootStaticAssets = Object.fromEntries(
+    [
+      "favicon.png",
+      "apple-touch-icon.png",
+      "og-image.png",
+      "dinofffaur.png",
+      "dinofffaur.webp",
+      "icon-16.png",
+      "icon-32.png",
+      "icon-48.png",
+      "icon-72.png",
+      "icon-96.png",
+      "icon-128.png",
+      "icon-144.png",
+      "icon-152.png",
+      "icon-192.png",
+      "icon-384.png",
+      "icon-512.png",
+      "icon-maskable-192.png",
+      "icon-maskable-512.png",
+    ].map((file) => [
+      `GET /${file}`,
+      () => serveTextFile(`${FRONTEND_DIR}/${file}`, "image/png", "public, max-age=604800, immutable"),
+    ]),
+  );
 
   const appShellRoutes = Object.fromEntries(
     APP_SHELL_ROUTES.map((path) => [`GET ${path}`, () => serveAppShell(path)]),
@@ -199,6 +230,7 @@ export async function startApiServer(
         serveTextFile(FRONTEND_ICON_SVG, "image/svg+xml", "public, max-age=604800, immutable"),
       "GET /icon-maskable.svg": () =>
         serveTextFile(FRONTEND_MASKABLE_ICON_SVG, "image/svg+xml", "public, max-age=604800, immutable"),
+      ...rootStaticAssets,
       ...appShellRoutes,
       "GET /api/health": (c) =>
         c.json({ status: state.booting ? "booting" : "ready" }),

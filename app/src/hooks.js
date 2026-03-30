@@ -45,6 +45,20 @@ function applyWsPayload(current, payload) {
 
 let _activeSend = null;
 
+const PWA_DISPLAY_MODE_QUERIES = [
+  "(display-mode: fullscreen)",
+  "(display-mode: standalone)",
+  "(display-mode: minimal-ui)",
+  "(display-mode: window-controls-overlay)",
+];
+
+function isInstalledPwa() {
+  if (typeof window === "undefined") return false;
+  if (window.navigator.standalone === true) return true;
+  if (document.referrer.startsWith("android-app://")) return true;
+  return PWA_DISPLAY_MODE_QUERIES.some((query) => window.matchMedia(query).matches);
+}
+
 /** Send a message on the shared runtime WebSocket. No-op if not connected. */
 export function sendWsMessage(msg) {
   if (_activeSend) {
@@ -553,9 +567,7 @@ export function usePwa() {
   const [installPrompt, setInstallPrompt] = useState(null);
   const [canInstall, setCanInstall] = useState(false);
   const [updateAvailable, setUpdateAvailable] = useState(false);
-  const [isInstalled, setIsInstalled] = useState(() =>
-    window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true,
-  );
+  const [isInstalled, setIsInstalled] = useState(() => isInstalledPwa());
 
   useEffect(() => {
     const onOnline = () => setIsOnline(true);
@@ -570,7 +582,7 @@ export function usePwa() {
   }, []);
 
   useEffect(() => {
-    const displayMode = window.matchMedia("(display-mode: standalone)");
+    const displayModes = PWA_DISPLAY_MODE_QUERIES.map((query) => window.matchMedia(query));
     const onBeforeInstallPrompt = (event) => {
       event.preventDefault();
       setInstallPrompt(event);
@@ -582,7 +594,7 @@ export function usePwa() {
       setIsInstalled(true);
     };
     const onDisplayModeChange = () => {
-      setIsInstalled(displayMode.matches || window.navigator.standalone === true);
+      setIsInstalled(isInstalledPwa());
     };
 
     // Check if prompt was captured before React mounted (in main.jsx)
@@ -594,12 +606,16 @@ export function usePwa() {
 
     window.addEventListener("beforeinstallprompt", onBeforeInstallPrompt);
     window.addEventListener("appinstalled", onAppInstalled);
-    displayMode.addEventListener("change", onDisplayModeChange);
+    for (const displayMode of displayModes) {
+      displayMode.addEventListener("change", onDisplayModeChange);
+    }
 
     return () => {
       window.removeEventListener("beforeinstallprompt", onBeforeInstallPrompt);
       window.removeEventListener("appinstalled", onAppInstalled);
-      displayMode.removeEventListener("change", onDisplayModeChange);
+      for (const displayMode of displayModes) {
+        displayMode.removeEventListener("change", onDisplayModeChange);
+      }
     };
   }, []);
 

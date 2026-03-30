@@ -91,16 +91,25 @@ self.addEventListener("fetch", (event) => {
 
   if (request.mode === "navigate") {
     event.respondWith((async () => {
+      const cache = await caches.open(CORE_CACHE);
+
       try {
         const response = await fetch(request);
-        const cache = await caches.open(CORE_CACHE);
-        await cache.put(request, response.clone());
+        if (response.ok) {
+          await cache.put(request, response.clone());
+          return response;
+        }
+
+        const cached =
+          await cache.match(request) ||
+          await cache.match("/kanban") ||
+          await cache.match("/offline.html");
+        if (cached) return cached;
         return response;
       } catch {
         // Offline: notify clients
         notifyClientsOffline();
 
-        const cache = await caches.open(CORE_CACHE);
         return (
           await cache.match(request) ||
           await cache.match("/kanban") ||
