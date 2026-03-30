@@ -333,7 +333,9 @@ function SidebarContent({ issues, selectedIssueId, onToggle, search, onSearchCha
 
     return COLUMNS.map((col) => ({
       ...col,
-      issues: filtered.filter((i) => col.states.includes(i.state)),
+      issues: filtered
+        .filter((i) => col.states.includes(i.state))
+        .sort((a, b) => (b.updatedAt || b.createdAt || "").localeCompare(a.updatedAt || a.createdAt || "")),
     })).filter((g) => g.issues.length > 0);
   }, [issues, search]);
 
