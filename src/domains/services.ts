@@ -1,13 +1,11 @@
 import type { ServiceEntry, ServiceStatus } from "../types.ts";
 import type { ServiceEnvironment } from "./service-env.ts";
 import {
-  cmdStart,
-  cmdStop,
   getAllServiceStatuses,
   getServiceStatus,
-  initServiceWatcher,
   readServiceLogTail,
   reconcileServiceStates,
+  sendServiceEvent,
   serviceLogPath,
   type ServiceTransition,
 } from "../persistence/plugins/fsm-service.ts";
@@ -40,42 +38,45 @@ export function getManagedServiceLogPath(id: string, fifonyDir: string): string 
 }
 
 /**
- * Start a managed service instance (idempotent through plugin behavior).
+ * Start a managed service via the state machine (sends START event).
+ * The spawnService entry action handles the actual process spawn.
  */
-export function startManagedService(
-  entry: ServiceEntry,
-  targetRoot: string,
-  fifonyDir: string,
-  globalEnv?: ServiceEnvironment,
-): ServiceTransition {
-  return cmdStart(entry, targetRoot, fifonyDir, globalEnv);
+export async function startManagedService(
+  id: string,
+): Promise<void> {
+  await sendServiceEvent(id, "START");
 }
 
 /**
- * Stop a managed service instance (idempotent through plugin behavior).
+ * Stop a managed service via the state machine (sends STOP event).
+ * The sendSigterm entry action handles SIGTERM delivery.
  */
-export function stopManagedService(
+export async function stopManagedService(
   id: string,
-  fifonyDir: string,
-): ServiceTransition | null {
-  return cmdStop(id, fifonyDir);
+): Promise<void> {
+  await sendServiceEvent(id, "STOP");
 }
 
 /**
  * Bootstrap auto-start configured services at boot time.
+ * Sends START events via the state machine for each autoStart entry.
  */
-export function startAutoConfiguredServices(
+export async function startAutoConfiguredServices(
   entries: ServiceEntry[],
-  targetRoot: string,
-  fifonyDir: string,
-  globalEnv?: ServiceEnvironment,
-): ServiceTransition[] {
-  const transitions: ServiceTransition[] = [];
+): Promise<string[]> {
+  const started: string[] = [];
   for (const entry of entries) {
     if (!entry.autoStart) continue;
-    transitions.push(startManagedService(entry, targetRoot, fifonyDir, globalEnv));
+    try {
+      await sendServiceEvent(entry.id, "START");
+      started.push(entry.id);
+    } catch (err) {
+      // Non-critical — log and continue with other services
+      const { logger } = await import("../concerns/logger.ts");
+      logger.warn({ err, id: entry.id }, "[Service] Auto-start failed");
+    }
   }
-  return transitions;
+  return started;
 }
 
 /**
@@ -86,14 +87,4 @@ export function reconcileManagedServiceStates(
   fifonyDir: string,
 ): void {
   reconcileServiceStates(entries, fifonyDir);
-}
-
-export function initManagedServiceWatcher(
-  getEntries: () => ServiceEntry[],
-  getGlobalEnv: () => ServiceEnvironment,
-  fifonyDir: string,
-  targetRoot: string,
-  onTransition: (t: ServiceTransition) => void,
-): { stop: () => void } {
-  return initServiceWatcher(getEntries, getGlobalEnv, fifonyDir, targetRoot, onTransition);
 }

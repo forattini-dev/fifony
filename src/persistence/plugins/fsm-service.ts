@@ -175,6 +175,13 @@ function spawnProcess(
   return { pid: child.pid, command };
 }
 
+// ── Auto-restart helpers ──────────────────────────────────────────────────────
+
+function autoRestartBackoffMs(crashCount: number): number {
+  // Exponential: 1s, 2s, 4s, 8s, 16s, 32s … capped at 60s
+  return Math.min(Math.pow(2, crashCount) * 1_000, 60_000);
+}
+
 // ── Status derivation ─────────────────────────────────────────────────────────
 
 export function getServiceStatus(entry: ServiceEntry, fifonyDir: string): ServiceStatus {
@@ -230,253 +237,6 @@ export function getAllServiceStatuses(
   fifonyDir: string,
 ): ServiceStatus[] {
   return entries.map((e) => getServiceStatus(e, fifonyDir));
-}
-
-// ── FSM Commands (user-initiated) ─────────────────────────────────────────────
-
-/**
- * START — idempotent.
- *
- * From any state: kills existing process if alive, spawns new process,
- * resets crash count (manual start always gets a fresh slate).
- */
-export function cmdStart(
-  entry: ServiceEntry,
-  targetRoot: string,
-  fifonyDir: string,
-  globalEnv?: ServiceEnvironment,
-): ServiceTransition {
-  const existing = readPidInfo(fifonyDir, entry.id);
-  const fromState: ServiceState | "none" = existing?.state ?? "none";
-
-  // Kill existing process group + direct PID (detached: true makes the shell a group leader;
-  // -pid kills the entire group so child processes like node don't orphan the port.
-  // Fallback direct kill covers the case where the shell already died but a child survived.)
-  if (existing && isProcessAlive(existing.pid)) {
-    try { process.kill(-existing.pid, "SIGKILL"); } catch {}
-    try { process.kill(existing.pid, "SIGKILL"); } catch {}
-  }
-
-  const spawned = spawnProcess(entry, targetRoot, fifonyDir, globalEnv);
-  writePidInfo(fifonyDir, entry.id, {
-    pid: spawned.pid,
-    command: spawned.command,
-    startedAt: now(),
-    state: "starting",
-    crashCount: 0, // manual start always resets crash count
-  });
-
-  logger.info({ id: entry.id, pid: spawned.pid, from: fromState }, "[Service] FSM: → starting (manual start)");
-  return { id: entry.id, from: fromState, to: "starting", pid: spawned.pid, reason: "manual start" };
-}
-
-/**
- * STOP — idempotent.
- *
- * Sends SIGTERM, transitions to "stopping".
- * The watcher handles SIGKILL after STOPPING_KILL_MS and cleans up the pid file.
- */
-export function cmdStop(id: string, fifonyDir: string): ServiceTransition | null {
-  const existing = readPidInfo(fifonyDir, id);
-  if (!existing || existing.state === "stopped") return null;
-
-  const fromState = existing.state;
-
-  if (isProcessAlive(existing.pid)) {
-    try { process.kill(-existing.pid, "SIGTERM"); } catch {}
-  }
-
-  writePidInfo(fifonyDir, id, {
-    ...existing,
-    state: "stopping",
-    stoppingAt: now(),
-  });
-
-  logger.info({ id, pid: existing.pid, from: fromState }, "[Service] FSM: → stopping (manual stop)");
-  return { id, from: fromState, to: "stopping", pid: existing.pid, reason: "manual stop" };
-}
-
-// ── Auto-restart helpers ──────────────────────────────────────────────────────
-
-function autoRestartBackoffMs(crashCount: number): number {
-  // Exponential: 1s, 2s, 4s, 8s, 16s, 32s … capped at 60s
-  return Math.min(Math.pow(2, crashCount) * 1_000, 60_000);
-}
-
-// ── FSM Watcher Tick (LEGACY — being replaced by serviceStateMachineConfig) ──
-
-function tickOne(
-  entry: ServiceEntry,
-  globalEnv: ServiceEnvironment,
-  fifonyDir: string,
-  targetRoot: string,
-): ServiceTransition | null {
-  const info = readPidInfo(fifonyDir, entry.id);
-  if (!info) return null; // "stopped" — no pid file, nothing to do
-
-  const alive = isProcessAlive(info.pid);
-  const nowMs = Date.now();
-
-  switch (info.state) {
-    case "starting": {
-      if (!alive) {
-        // Died during startup → crashed
-        const crashCount = (info.crashCount ?? 0) + 1;
-        const maxCrashes = entry.maxCrashes ?? 5;
-        const autoRestart = entry.autoRestart ?? false;
-        const nextRetryAt =
-          autoRestart && crashCount < maxCrashes
-            ? new Date(nowMs + autoRestartBackoffMs(crashCount)).toISOString()
-            : undefined;
-
-        writePidInfo(fifonyDir, entry.id, {
-          ...info,
-          state: "crashed",
-          crashCount,
-          lastCrashAt: now(),
-          nextRetryAt,
-        });
-        logger.warn({ id: entry.id, crashCount, nextRetryAt }, "[Service] FSM: starting → crashed");
-        return {
-          id: entry.id, from: "starting", to: "crashed",
-          pid: null, reason: `died during startup (crash #${crashCount})`,
-        };
-      }
-
-      const ageMs = nowMs - Date.parse(info.startedAt);
-      if (ageMs >= STARTING_GRACE_MS) {
-        writePidInfo(fifonyDir, entry.id, { ...info, state: "running" });
-        logger.info({ id: entry.id, pid: info.pid }, "[Service] FSM: starting → running");
-        return {
-          id: entry.id, from: "starting", to: "running",
-          pid: info.pid, reason: "startup grace period elapsed",
-        };
-      }
-      return null; // still in grace period
-    }
-
-    case "running": {
-      if (!alive) {
-        const crashCount = (info.crashCount ?? 0) + 1;
-        const maxCrashes = entry.maxCrashes ?? 5;
-        const autoRestart = entry.autoRestart ?? false;
-        const nextRetryAt =
-          autoRestart && crashCount < maxCrashes
-            ? new Date(nowMs + autoRestartBackoffMs(crashCount)).toISOString()
-            : undefined;
-
-        writePidInfo(fifonyDir, entry.id, {
-          ...info,
-          state: "crashed",
-          crashCount,
-          lastCrashAt: now(),
-          nextRetryAt,
-        });
-        logger.warn({ id: entry.id, crashCount, nextRetryAt }, "[Service] FSM: running → crashed");
-        return {
-          id: entry.id, from: "running", to: "crashed",
-          pid: null, reason: `process died unexpectedly (crash #${crashCount})`,
-        };
-      }
-      return null; // healthy
-    }
-
-    case "stopping": {
-      if (!alive) {
-        removePidInfo(fifonyDir, entry.id);
-        logger.info({ id: entry.id }, "[Service] FSM: stopping → stopped (process exited)");
-        return {
-          id: entry.id, from: "stopping", to: "stopped",
-          pid: null, reason: "process exited gracefully",
-        };
-      }
-
-      const stoppingAgeMs = info.stoppingAt
-        ? nowMs - Date.parse(info.stoppingAt)
-        : STOPPING_KILL_MS + 1;
-
-      if (stoppingAgeMs >= STOPPING_KILL_MS) {
-        try { process.kill(-info.pid, "SIGKILL"); } catch {}
-        try { process.kill(info.pid, "SIGKILL"); } catch {}
-        removePidInfo(fifonyDir, entry.id);
-        logger.info({ id: entry.id, pid: info.pid }, "[Service] FSM: stopping → stopped (SIGKILL)");
-        return {
-          id: entry.id, from: "stopping", to: "stopped",
-          pid: null, reason: "SIGKILL after stop timeout",
-        };
-      }
-      return null; // waiting for graceful exit
-    }
-
-    case "crashed": {
-      const maxCrashes = entry.maxCrashes ?? 5;
-      if (!(entry.autoRestart ?? false) || (info.crashCount ?? 0) >= maxCrashes) return null;
-
-      const nextRetryMs = info.nextRetryAt ? Date.parse(info.nextRetryAt) : 0;
-      if (nowMs < nextRetryMs) return null; // backoff not elapsed
-
-      // Auto-restart
-      const spawned = spawnProcess(entry, targetRoot, fifonyDir, globalEnv);
-      writePidInfo(fifonyDir, entry.id, {
-        pid: spawned.pid,
-        command: spawned.command,
-        startedAt: now(),
-        state: "starting",
-        crashCount: info.crashCount, // preserve crash count on auto-restart
-      });
-      logger.info(
-        { id: entry.id, pid: spawned.pid, crashCount: info.crashCount },
-        "[Service] FSM: crashed → starting (auto-restart)",
-      );
-      return {
-        id: entry.id, from: "crashed", to: "starting",
-        pid: spawned.pid, reason: `auto-restart after backoff (crash #${info.crashCount})`,
-      };
-    }
-
-    case "stopped":
-      return null;
-
-    default:
-      return null;
-  }
-}
-
-export function tickServiceWatcher(
-  entries: ServiceEntry[],
-  globalEnv: ServiceEnvironment,
-  fifonyDir: string,
-  targetRoot: string,
-): ServiceTransition[] {
-  const transitions: ServiceTransition[] = [];
-  for (const entry of entries) {
-    try {
-      const t = tickOne(entry, globalEnv, fifonyDir, targetRoot);
-      if (t) transitions.push(t);
-    } catch (err) {
-      logger.warn({ err, id: entry.id }, "[Service] Watcher tick error");
-    }
-  }
-  return transitions;
-}
-
-// ── Watcher lifecycle (LEGACY — being replaced by serviceStateMachineConfig) ──
-
-export function initServiceWatcher(
-  getEntries: () => ServiceEntry[],
-  getGlobalEnv: () => ServiceEnvironment,
-  fifonyDir: string,
-  targetRoot: string,
-  onTransition: (t: ServiceTransition) => void,
-): { stop: () => void } {
-  const intervalId = setInterval(() => {
-    const entries = getEntries();
-    if (entries.length === 0) return;
-    const transitions = tickServiceWatcher(entries, getGlobalEnv(), fifonyDir, targetRoot);
-    for (const t of transitions) onTransition(t);
-  }, SERVICE_WATCHER_INTERVAL_MS);
-
-  return { stop: () => clearInterval(intervalId) };
 }
 
 // ── Log reader ────────────────────────────────────────────────────────────────
@@ -552,6 +312,44 @@ export function getServiceRuntime(): ServiceRuntimeContext | null {
   return serviceRuntime;
 }
 
+// ── Resource-level state API (set after plugin binds to service resource) ────
+
+type ServiceResourceStateApi = {
+  send: (entityId: string, event: string, context?: Record<string, unknown>) => Promise<unknown>;
+  get: (entityId: string) => Promise<string>;
+  initialize: (entityId: string, context?: Record<string, unknown>) => Promise<unknown>;
+};
+
+let serviceResourceStateApi: ServiceResourceStateApi | null = null;
+
+export function setServiceResourceStateApi(api: ServiceResourceStateApi | null): void {
+  serviceResourceStateApi = api;
+}
+
+/**
+ * Send an FSM event for a service entity via the StateMachinePlugin.
+ * Auto-initializes the entity if it hasn't been seen by the plugin yet.
+ */
+export async function sendServiceEvent(
+  entityId: string,
+  event: string,
+  context: Record<string, unknown> = {},
+): Promise<void> {
+  if (!serviceResourceStateApi) {
+    throw new Error("Service state machine not initialized");
+  }
+  try {
+    await serviceResourceStateApi.send(entityId, event, context);
+  } catch (err) {
+    if (String(err).includes("not found") || String(err).includes("not initialized")) {
+      await serviceResourceStateApi.initialize(entityId, { state: "stopped" });
+      await serviceResourceStateApi.send(entityId, event, context);
+    } else {
+      throw err;
+    }
+  }
+}
+
 /** Shape injected by StateMachinePlugin into action/guard callbacks. */
 type ServiceMachine = {
   database: any;
@@ -585,6 +383,7 @@ export const serviceStateMachineConfig = {
       states: {
         stopped: {
           on: { START: "starting" },
+          entry: "onEnterStopped",
         },
 
         starting: {
@@ -623,6 +422,7 @@ export const serviceStateMachineConfig = {
             PROCESS_DIED: "crashed",
             STOP: "stopping",
           },
+          entry: "onEnterRunning",
           triggers: [{
             type: "function" as const,
             interval: TRIGGER_INTERVAL_MS,
@@ -816,22 +616,52 @@ export const serviceStateMachineConfig = {
       });
     },
 
-    cleanupStopped: async (_context: Record<string, unknown>, _event: string, machine: ServiceMachine) => {
+    onEnterStopped: async (context: Record<string, unknown>, _event: string, machine: ServiceMachine) => {
       if (!serviceRuntime) return;
-      removePidInfo(serviceRuntime.fifonyDir, machine.entityId);
-      logger.info({ id: machine.entityId }, "[ServiceFSM] cleanupStopped — pid file removed");
+      const { fifonyDir } = serviceRuntime;
+
+      // KILL_TIMEOUT: force kill the process before cleanup
+      if (_event === "KILL_TIMEOUT") {
+        const info = readPidInfo(fifonyDir, machine.entityId);
+        if (info && isProcessAlive(info.pid)) {
+          try { process.kill(-info.pid, "SIGKILL"); } catch {}
+          try { process.kill(info.pid, "SIGKILL"); } catch {}
+        }
+        logger.info({ id: machine.entityId }, "[ServiceFSM] onEnterStopped — SIGKILL after stop timeout");
+      }
+
+      // Clean up pid file
+      removePidInfo(fifonyDir, machine.entityId);
+      logger.info({ id: machine.entityId, event: _event }, "[ServiceFSM] onEnterStopped — pid file removed");
+
+      serviceRuntime.onTransition?.({
+        id: machine.entityId,
+        from: (context as any).previousState ?? "stopping",
+        to: "stopped",
+        pid: null,
+        reason: _event === "KILL_TIMEOUT" ? "SIGKILL after stop timeout" : "process exited",
+      });
     },
 
-    forceKill: async (_context: Record<string, unknown>, _event: string, machine: ServiceMachine) => {
+    onEnterRunning: async (context: Record<string, unknown>, _event: string, machine: ServiceMachine) => {
       if (!serviceRuntime) return;
       const { fifonyDir } = serviceRuntime;
       const info = readPidInfo(fifonyDir, machine.entityId);
-      if (info && isProcessAlive(info.pid)) {
-        try { process.kill(-info.pid, "SIGKILL"); } catch {}
-        try { process.kill(info.pid, "SIGKILL"); } catch {}
+
+      // Update pid file state to "running"
+      if (info) {
+        writePidInfo(fifonyDir, machine.entityId, { ...info, state: "running" });
       }
-      removePidInfo(fifonyDir, machine.entityId);
-      logger.info({ id: machine.entityId }, "[ServiceFSM] forceKill → SIGKILL sent, pid file removed");
+
+      logger.info({ id: machine.entityId, pid: info?.pid }, "[ServiceFSM] onEnterRunning — grace period elapsed");
+
+      serviceRuntime.onTransition?.({
+        id: machine.entityId,
+        from: "starting",
+        to: "running",
+        pid: info?.pid ?? null,
+        reason: "startup grace period elapsed",
+      });
     },
   },
 

@@ -30,9 +30,9 @@ import { recoverPlanningSession } from "./agents/planning/issue-planner.ts";
 import {
   reconcileManagedServiceStates,
   startAutoConfiguredServices,
-  initManagedServiceWatcher,
   listServiceStatuses,
 } from "./domains/services.ts";
+import { setServiceRuntime } from "./persistence/plugins/fsm-service.ts";
 import {
   reconcileAgentStateTransitions,
   startManagedAgentWatcher,
@@ -88,7 +88,6 @@ function usage() {
 }
 
 async function main() {
-  let serviceWatcher: { stop: () => void } | null = null;
   let agentWatcher: { stop: () => void } | null = null;
   debugBoot("main:start");
 
@@ -306,18 +305,34 @@ async function main() {
     logger.warn({ err }, "[Boot] Agent state reconciliation failed — continuing");
   }
 
-  // Services: reconcile states, auto-start, then launch watcher
+  // Services: inject runtime context, reconcile states, auto-start
   try {
     const services = state.config.services ?? [];
+
+    // Wire the service FSM runtime context so actions can access fifonyDir, targetRoot, etc.
+    setServiceRuntime({
+      fifonyDir: STATE_ROOT,
+      targetRoot: TARGET_ROOT,
+      getEntries: () => apiState.config.services ?? [],
+      getGlobalEnv: () => apiState.config.serviceEnv ?? {},
+      onTransition: (t) => {
+        logger.info({ id: t.id, from: t.from, to: t.to, reason: t.reason }, "[Service] FSM transition");
+        broadcastToWebSocketClients({
+          type: "service",
+          id: t.id,
+          state: t.to,
+          running: t.to === "starting" || t.to === "running",
+          pid: t.pid ?? null,
+        });
+        if (t.to === "starting") startServiceLogBroadcasting(t.id, STATE_ROOT);
+        else if (t.to === "stopped" || t.to === "crashed") stopServiceLogBroadcasting(t.id);
+      },
+    });
+
     reconcileManagedServiceStates(services, STATE_ROOT);
-    const autoStartTransitions = startAutoConfiguredServices(
-      services,
-      TARGET_ROOT,
-      STATE_ROOT,
-      state.config.serviceEnv,
-    );
-    for (const t of autoStartTransitions) {
-      logger.info({ id: t.id, command: t.to }, "[Boot] Service auto-started");
+    const autoStarted = await startAutoConfiguredServices(services);
+    for (const id of autoStarted) {
+      logger.info({ id }, "[Boot] Service auto-started");
     }
     // Start log broadcaster for every currently-running service
     // (covers both auto-started and services already running from a prior session)
@@ -361,28 +376,7 @@ async function main() {
     }
   }
 
-  serviceWatcher = initManagedServiceWatcher(
-    () => apiState.config.services ?? [],
-    () => apiState.config.serviceEnv ?? {},
-    STATE_ROOT,
-    TARGET_ROOT,
-    (t) => {
-      logger.info({ id: t.id, from: t.from, to: t.to, reason: t.reason }, "[Service] FSM transition");
-      broadcastToWebSocketClients({
-        type: "service",
-        id: t.id,
-        state: t.to,
-        running: t.to === "starting" || t.to === "running",
-        pid: t.pid ?? null,
-      });
-      // Manage log broadcaster lifecycle alongside FSM transitions
-      if (t.to === "starting") {
-        startServiceLogBroadcasting(t.id, STATE_ROOT);
-      } else if (t.to === "stopped" || t.to === "crashed") {
-        stopServiceLogBroadcasting(t.id);
-      }
-    },
-  );
+  // Service watcher is handled by StateMachinePlugin function triggers — no manual watcher needed.
 
   agentWatcher = startManagedAgentWatcher(
     () => apiState.issues,
@@ -459,7 +453,6 @@ async function main() {
     state.updatedAt = now();
     state.metrics = computeMetrics(state.issues);
     await persistStateFull(state);
-    try { serviceWatcher?.stop(); } catch {}
     try { agentWatcher?.stop(); } catch {}
     try { await stopQueueWorkers(); } catch {}
     await closeStateStore();

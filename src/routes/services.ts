@@ -9,15 +9,7 @@ import {
   stopManagedService,
   readServiceLogTail,
   getManagedServiceLogPath,
-  type ServiceTransition,
 } from "../domains/services.ts";
-import { broadcastToWebSocketClients } from "./websocket.ts";
-import {
-  startServiceLogBroadcasting,
-  stopServiceLogBroadcasting,
-} from "../persistence/plugins/service-log-broadcaster.ts";
-import { getTrafficProxyPort } from "../persistence/plugins/traffic-proxy-server.ts";
-import { buildProxyEnvVars } from "../domains/traffic-proxy.ts";
 import {
   replaceServiceConfigs,
   upsertServiceConfig,
@@ -148,18 +140,6 @@ function detectServices(targetRoot: string): DetectedService[] {
   return suggestions;
 }
 
-// ── Broadcast helper ──────────────────────────────────────────────────────────
-
-function broadcastTransition(t: ServiceTransition): void {
-  broadcastToWebSocketClients({
-    type: "service",
-    id: t.id,
-    state: t.to,
-    running: t.to === "starting" || t.to === "running",
-    pid: t.pid ?? null,
-  });
-}
-
 // ── Route registration ────────────────────────────────────────────────────────
 
 export function registerServiceRoutes(
@@ -193,62 +173,33 @@ export function registerServiceRoutes(
   });
 
   // POST /api/services/:id/start
-  app.post("/api/services/:id/start", (c) => {
+  app.post("/api/services/:id/start", async (c) => {
     const id = c.req.param("id");
     const entry = (state.config.services ?? []).find((e) => e.id === id);
     if (!entry) return c.json({ ok: false, error: "Service not found." }, 404);
     try {
-      const globalVars = Object.fromEntries(
-        (state.variables ?? []).filter((v) => v.scope === "global").map((v) => [v.key, v.value]),
-      );
-      const serviceVars = Object.fromEntries(
-        (state.variables ?? []).filter((v) => v.scope === entry.id).map((v) => [v.key, v.value]),
-      );
-      const mergedEnv = { ...entry.env, ...globalVars, ...serviceVars };
-      // Inject mesh proxy env if running
-      const proxyPort = getTrafficProxyPort();
-      if (proxyPort) {
-        const dashPort = Number(state.config.dashboardPort ?? 4000);
-        Object.assign(mergedEnv, buildProxyEnvVars(proxyPort, entry.id, dashPort));
-      }
-      const t = startManagedService(entry, TARGET_ROOT, STATE_ROOT, mergedEnv);
-      broadcastTransition(t);
-      startServiceLogBroadcasting(entry.id, STATE_ROOT);
-      return c.json({ ok: true, pid: t.pid, state: t.to });
+      await startManagedService(id);
+      // Log broadcasting is started by the onTransition callback
+      const status = getServiceRuntimeStatus(entry, STATE_ROOT);
+      return c.json({ ok: true, pid: status.pid, state: status.state });
     } catch (err) {
       logger.error({ err }, `[Service] Failed to start ${id}`);
       return c.json({ ok: false, error: String(err) }, 500);
     }
   });
 
-  // POST /api/services/:id/restart — stop + start atomically
-  app.post("/api/services/:id/restart", (c) => {
+  // POST /api/services/:id/restart — stop + start via state machine
+  app.post("/api/services/:id/restart", async (c) => {
     const id = c.req.param("id");
     const entry = (state.config.services ?? []).find((e) => e.id === id);
     if (!entry) return c.json({ ok: false, error: "Service not found." }, 404);
     try {
-      // Stop first
-      const tStop = stopManagedService(id, STATE_ROOT);
-      if (tStop) broadcastTransition(tStop);
-      stopServiceLogBroadcasting(id);
-
-      // Start with merged env (same logic as the start endpoint)
-      const globalVars = Object.fromEntries(
-        (state.variables ?? []).filter((v) => v.scope === "global").map((v) => [v.key, v.value]),
-      );
-      const serviceVars = Object.fromEntries(
-        (state.variables ?? []).filter((v) => v.scope === entry.id).map((v) => [v.key, v.value]),
-      );
-      const mergedEnv = { ...entry.env, ...globalVars, ...serviceVars };
-      const proxyPort = getTrafficProxyPort();
-      if (proxyPort) {
-        const dashPort = Number(state.config.dashboardPort ?? 4000);
-        Object.assign(mergedEnv, buildProxyEnvVars(proxyPort, entry.id, dashPort));
-      }
-      const tStart = startManagedService(entry, TARGET_ROOT, STATE_ROOT, mergedEnv);
-      broadcastTransition(tStart);
-      startServiceLogBroadcasting(entry.id, STATE_ROOT);
-      return c.json({ ok: true, pid: tStart.pid, state: tStart.to });
+      // Stop first (ignore errors if already stopped)
+      try { await stopManagedService(id); } catch { /* may already be stopped */ }
+      // Start via state machine
+      await startManagedService(id);
+      const status = getServiceRuntimeStatus(entry, STATE_ROOT);
+      return c.json({ ok: true, pid: status.pid, state: status.state });
     } catch (err) {
       logger.error({ err }, `[Service] Failed to restart ${id}`);
       return c.json({ ok: false, error: String(err) }, 500);
@@ -256,14 +207,16 @@ export function registerServiceRoutes(
   });
 
   // POST /api/services/:id/stop
-  app.post("/api/services/:id/stop", (c) => {
+  app.post("/api/services/:id/stop", async (c) => {
     const id = c.req.param("id");
     const entry = (state.config.services ?? []).find((e) => e.id === id);
     if (!entry) return c.json({ ok: false, error: "Service not found." }, 404);
-    const t = stopManagedService(id, STATE_ROOT);
-    if (t) broadcastTransition(t);
-    stopServiceLogBroadcasting(id);
-    return c.json({ ok: true, state: t?.to ?? "stopped" });
+    try {
+      await stopManagedService(id);
+    } catch { /* may already be stopped */ }
+    // Log broadcasting is stopped by the onTransition callback
+    const status = getServiceRuntimeStatus(entry, STATE_ROOT);
+    return c.json({ ok: true, state: status.state });
   });
 
   // GET /api/services/:id/health — quick HTTP ping if port configured
@@ -439,8 +392,7 @@ export function registerServiceRoutes(
   app.delete("/api/services/:id", async (c) => {
     const id = c.req.param("id");
     try {
-      const t = stopManagedService(id, STATE_ROOT);
-      if (t) broadcastTransition(t);
+      await stopManagedService(id);
     } catch { /* ignore if not running */ }
     return deleteServiceConfig(c, {
       deletePersistedService: async (serviceId) => {

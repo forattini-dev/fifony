@@ -30,7 +30,7 @@ import {
   setIssueResourceStateApi,
   issueStateMachineConfig,
 } from "./plugins/fsm-issue.ts";
-import { serviceStateMachineConfig } from "./plugins/fsm-service.ts";
+import { serviceStateMachineConfig, setServiceResourceStateApi } from "./plugins/fsm-service.ts";
 
 let loadedS3dbModule: S3dbModule | null = null;
 let stateDb: S3dbDatabase | null = null;
@@ -323,6 +323,17 @@ export async function initStateStore(): Promise<void> {
       delete: stateApi.delete?.bind(stateApi),
     });
     debugBoot("initStateStore:resource-state-api-bound");
+  }
+
+  // Capture service resource.state API injected by Service StateMachinePlugin
+  if (serviceResource && (serviceResource as any).state) {
+    const svcStateApi = (serviceResource as any).state;
+    setServiceResourceStateApi({
+      send: svcStateApi.send?.bind(svcStateApi),
+      get: svcStateApi.get?.bind(svcStateApi),
+      initialize: svcStateApi.initialize?.bind(svcStateApi),
+    });
+    debugBoot("initStateStore:service-resource-state-api-bound");
   }
 
   debugBoot("initStateStore:resources-ready");
