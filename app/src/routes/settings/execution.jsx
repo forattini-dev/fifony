@@ -252,7 +252,7 @@ function ExecutionSettings() {
       <SettingsSection
         icon={Container}
         title={<span className="flex items-center gap-2">Execution Sandbox <SavedBadge show={sandboxSaved} /></span>}
-        description="Where agent code runs — directly on your system, inside ai-jail, or in a Docker container."
+        description="Where agent code runs — directly on your system, in a sandbox, or in a Docker container."
       >
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
           <label className={`flex items-start gap-2.5 p-3 rounded-lg border cursor-pointer transition-colors ${!dockerExecution && !sandboxExecution ? "border-base-content/30 bg-base-300" : "border-base-content/10 bg-base-100/50 opacity-60"}`}>
@@ -284,10 +284,10 @@ function ExecutionSettings() {
               onChange={() => handleSandboxChange(true)}
             />
             <div className="space-y-1">
-              <p className="text-xs font-medium flex items-center gap-1"><ShieldCheck className="size-3" /> ai-jail</p>
+              <p className="text-xs font-medium flex items-center gap-1"><ShieldCheck className="size-3" /> Sandbox</p>
               <p className="text-xs opacity-50 leading-relaxed">
-                Isolates agent execution using ai-jail. Only the issue worktree is writable.
-                Auto-downloads on first use. Lightweight, no Docker required.
+                Isolates agent execution in a lightweight sandbox. Only the issue worktree is writable.
+                Auto-configures on first use. No Docker required.
               </p>
             </div>
           </label>
