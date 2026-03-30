@@ -166,8 +166,8 @@ export type IssueEntry = {
 export type AttemptSummary = {
   planVersion: number;
   executeAttempt: number;
-  /** Which phase failed: plan, execute, review, or unknown */
-  phase?: "plan" | "execute" | "review" | "crash";
+  /** Which phase failed: plan, execute, review, merge, or crash */
+  phase?: "plan" | "execute" | "review" | "merge" | "crash";
   error: string;
   outputTail?: string;
   outputFile?: string;

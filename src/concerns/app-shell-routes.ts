@@ -13,7 +13,7 @@ export const APP_SHELL_ROUTES = [
   "/settings/notifications",
   "/settings/execution",
   "/settings/quality",
-  "/settings/pipeline",
+  "/settings/assets",
   "/settings/services",
   "/settings/appearance",
   "/settings/providers",

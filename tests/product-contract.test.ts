@@ -20,6 +20,7 @@ describe("product contract: SPA routes", () => {
   // Frontend routes declared in TanStack Router (file-based)
   const FRONTEND_ROUTES = [
     "/onboarding",
+    "/chat",
     "/kanban",
     "/issues",
     "/milestones",
@@ -30,10 +31,10 @@ describe("product contract: SPA routes", () => {
     "/settings/project",
     "/settings/system",
     "/settings/agents",
+    "/settings/assets",
     "/settings/notifications",
     "/settings/execution",
     "/settings/quality",
-    "/settings/pipeline",
     "/settings/services",
     "/settings/appearance",
     "/settings/providers",
@@ -52,6 +53,7 @@ describe("product contract: SPA routes", () => {
     // Map routes to expected file paths
     const routeFiles: Record<string, string> = {
       "/onboarding": join(routeDir, "onboarding.jsx"),
+      "/chat": join(routeDir, "chat", "index.jsx"),
       "/kanban": join(routeDir, "kanban.jsx"),
       "/issues": join(routeDir, "issues.jsx"),
       "/milestones": join(routeDir, "milestones.jsx"),
@@ -62,10 +64,10 @@ describe("product contract: SPA routes", () => {
       "/settings/project": join(settingsDir, "project.jsx"),
       "/settings/system": join(settingsDir, "system.jsx"),
       "/settings/agents": join(settingsDir, "agents.jsx"),
+      "/settings/assets": join(settingsDir, "assets.jsx"),
       "/settings/notifications": join(settingsDir, "notifications.jsx"),
       "/settings/execution": join(settingsDir, "execution.jsx"),
       "/settings/quality": join(settingsDir, "quality.jsx"),
-      "/settings/pipeline": join(settingsDir, "pipeline.jsx"),
       "/settings/services": join(settingsDir, "services.jsx"),
       "/settings/appearance": join(settingsDir, "appearance.jsx"),
       "/settings/providers": join(settingsDir, "providers.jsx"),

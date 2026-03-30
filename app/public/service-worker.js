@@ -16,10 +16,11 @@ const APP_SHELL_ROUTES = [
   "/settings/notifications",
   "/settings/execution",
   "/settings/quality",
-  "/settings/pipeline",
+  "/settings/assets",
   "/settings/services",
   "/settings/appearance",
   "/settings/providers",
+  "/chat",
 ];
 const APP_SHELL_FILES = ["/offline.html", "/manifest.webmanifest", "/favicon.png", "/icon-192.png", "/icon-512.png"];
 const API_PREFIXES = ["/api/", "/docs", "/ws"];
