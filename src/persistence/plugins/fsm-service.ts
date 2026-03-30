@@ -67,22 +67,46 @@ export function serviceLogPath(fifonyDir: string, id: string): string {
 
 const ERROR_PATTERN = /\b(ERROR|Exception|FATAL|FAIL)\b/gi;
 
+/** Cached error count per log file — only re-scans when file size changes. */
+const errorCountCache = new Map<string, { size: number; count: number }>();
+
 /**
- * Count error-like occurrences in the last `bytes` of a service log.
+ * Count error-like occurrences in a service log.
+ * Uses file size as a cursor — only reads new bytes since last check.
+ * O(1) stat + O(delta) read instead of O(8KB) every call.
  */
-function countLogErrors(logFile: string, bytes = 8192): number {
+function countLogErrors(logFile: string): number {
   if (!existsSync(logFile)) return 0;
   try {
     const size = statSync(logFile).size;
-    if (size === 0) return 0;
-    const readSize = Math.min(size, bytes);
+    if (size === 0) { errorCountCache.delete(logFile); return 0; }
+
+    const cached = errorCountCache.get(logFile);
+
+    // File truncated (service restarted) — re-scan from scratch
+    if (cached && size < cached.size) {
+      errorCountCache.delete(logFile);
+      return countLogErrors(logFile);
+    }
+
+    // No new bytes — return cached count
+    if (cached && size === cached.size) return cached.count;
+
+    // Read only the new bytes since last check (or last 8KB on first scan)
+    const readFrom = cached ? cached.size : Math.max(0, size - 8192);
+    const readSize = size - readFrom;
+    if (readSize <= 0) return cached?.count ?? 0;
+
     const fd = openSync(logFile, "r");
     const buf = Buffer.alloc(readSize);
-    readSync(fd, buf, 0, readSize, Math.max(0, size - readSize));
+    readSync(fd, buf, 0, readSize, readFrom);
     closeSync(fd);
-    const text = buf.toString("utf8");
-    const matches = text.match(ERROR_PATTERN);
-    return matches ? matches.length : 0;
+    const matches = buf.toString("utf8").match(ERROR_PATTERN);
+    const delta = matches ? matches.length : 0;
+    const total = (cached?.count ?? 0) + delta;
+
+    errorCountCache.set(logFile, { size, count: total });
+    return total;
   } catch {
     return 0;
   }
