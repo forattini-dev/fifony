@@ -85,7 +85,31 @@ export async function downloadAiJail(): Promise<void> {
  * Ensures ai-jail is available — downloads it if missing.
  * Returns the absolute path to the binary.
  */
+/**
+ * Detect the Linux distro's package manager for install hints.
+ */
+function detectInstallCommand(): string {
+  try {
+    execSync("which apt", { stdio: "pipe", timeout: 2_000 });
+    return "sudo apt install bubblewrap";
+  } catch {}
+  try {
+    execSync("which dnf", { stdio: "pipe", timeout: 2_000 });
+    return "sudo dnf install bubblewrap";
+  } catch {}
+  try {
+    execSync("which pacman", { stdio: "pipe", timeout: 2_000 });
+    return "sudo pacman -S bubblewrap";
+  } catch {}
+  return "Install bubblewrap via your package manager";
+}
+
 export async function ensureAiJail(): Promise<string> {
+  // On Linux, bwrap is a system dependency — check before downloading ai-jail
+  if (platform() === "linux" && !isBwrapAvailable()) {
+    const cmd = detectInstallCommand();
+    throw new Error(`Sandbox requires bubblewrap (bwrap) which is not installed.\nInstall it with: ${cmd}`);
+  }
   if (isAiJailInstalled()) return AI_JAIL_BIN;
   await downloadAiJail();
   return AI_JAIL_BIN;
