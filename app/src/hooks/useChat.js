@@ -25,6 +25,7 @@ const sessionKey = (id) => ["chat-session", id];
 export function useChat() {
   const qc = useQueryClient();
   const [currentSessionId, setCurrentSessionId] = useState(null);
+  const [optimisticMessages, setOptimisticMessages] = useState([]);
 
   // ── Queries ────────────────────────────────────────────────────────────────
 
@@ -51,9 +52,13 @@ export function useChat() {
   const currentSession = sessionQuery.data?.session ?? null;
 
   const messages = useMemo(() => {
-    if (!currentSession) return [];
-    return Array.isArray(currentSession.turns) ? currentSession.turns : [];
-  }, [currentSession]);
+    const persisted = currentSession && Array.isArray(currentSession.turns) ? currentSession.turns : [];
+    // Merge persisted + optimistic (dedup by checking if last persisted matches)
+    if (optimisticMessages.length === 0) return persisted;
+    // If persisted already has the optimistic messages, return persisted
+    if (persisted.length >= optimisticMessages.length) return persisted;
+    return [...persisted, ...optimisticMessages.slice(persisted.length)];
+  }, [currentSession, optimisticMessages]);
 
   // ── Mutations ──────────────────────────────────────────────────────────────
 
@@ -112,7 +117,26 @@ export function useChat() {
   const sendMessage = useCallback(
     (text) => {
       if (!text?.trim()) return;
-      sendMessageMut.mutate({ sessionId: currentSessionId, message: text.trim() });
+      const trimmed = text.trim();
+      // Optimistic: show user message immediately
+      setOptimisticMessages((prev) => [
+        ...prev,
+        { role: "user", content: trimmed, timestamp: new Date().toISOString() },
+      ]);
+      sendMessageMut.mutate(
+        { sessionId: currentSessionId, message: trimmed },
+        {
+          onSuccess: (res) => {
+            // Add AI response to optimistic messages
+            if (res.response) {
+              setOptimisticMessages((prev) => [
+                ...prev,
+                { role: "assistant", content: res.response, actions: res.actions, timestamp: new Date().toISOString() },
+              ]);
+            }
+          },
+        },
+      );
     },
     [currentSessionId, sendMessageMut],
   );
@@ -141,7 +165,10 @@ export function useChat() {
   );
 
   const selectSession = useCallback(
-    (id) => setCurrentSessionId(id ?? null),
+    (id) => {
+      setCurrentSessionId(id ?? null);
+      setOptimisticMessages([]);
+    },
     [],
   );
 

@@ -123,6 +123,53 @@ Respond concisely and helpfully. Focus on the issue context.`;
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
+/**
+ * Strip CLI chrome (headers, metadata, prompt echo) from provider output.
+ * Each provider dumps different metadata around the actual response.
+ */
+function stripProviderChrome(raw: string, provider: string): string {
+  let text = raw;
+
+  if (provider === "codex") {
+    // Codex outputs: headers → "user\n<prompt>" → "codex\n<response>" → "tokens used N"
+    // Extract only the response between last "codex" marker and "tokens used"
+    const codexMarker = text.lastIndexOf("\ncodex\n");
+    if (codexMarker >= 0) {
+      text = text.slice(codexMarker + "\ncodex\n".length);
+    }
+    // Remove trailing "tokens used N,NNN" line
+    text = text.replace(/\n?tokens used[\s\d,]+$/i, "");
+  }
+
+  if (provider === "claude") {
+    // Claude with --output-format json wraps in { "result": "..." }
+    // Try to extract the result field
+    try {
+      const parsed = JSON.parse(text.trim());
+      if (parsed && typeof parsed === "object" && typeof parsed.result === "string") {
+        return parsed.result;
+      }
+    } catch { /* not JSON, use as-is */ }
+  }
+
+  if (provider === "gemini") {
+    // Gemini may prefix with metadata lines before the actual response
+    // Strip everything before the first non-metadata line
+    const lines = text.split("\n");
+    const contentStart = lines.findIndex((l) =>
+      l.trim() && !l.startsWith("Model:") && !l.startsWith("Thinking") && !l.startsWith("─"),
+    );
+    if (contentStart > 0) {
+      text = lines.slice(contentStart).join("\n");
+    }
+  }
+
+  // Generic cleanup: remove ANSI escape codes
+  text = text.replace(/\x1b\[[0-9;]*m/g, "");
+
+  return text.trim();
+}
+
 export async function chatWithIssue(
   payload: {
     issueId: string;
@@ -159,8 +206,8 @@ export async function chatWithIssue(
 
   const raw = await runOneShot(command, selectedProvider, prompt, timeoutMs);
 
-  // Return raw text — no JSON parsing needed for chat
-  const response = raw.trim();
+  // Strip CLI chrome (headers, metadata, prompt echo) from the raw output
+  const response = stripProviderChrome(raw, selectedProvider).trim();
   if (!response) {
     throw new Error("AI provider returned an empty response.");
   }
