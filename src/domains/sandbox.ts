@@ -99,13 +99,38 @@ export async function ensureAiJail(): Promise<string> {
  * @param extraRwPaths Additional paths to allow read-write access (e.g. temp dirs).
  * @returns The wrapped command string.
  */
+/**
+ * Check whether bubblewrap (bwrap) is available — required by ai-jail on Linux.
+ */
+export function isBwrapAvailable(): boolean {
+  if (platform() !== "linux") return true; // macOS uses sandbox-exec, no bwrap needed
+  try {
+    execSync("which bwrap", { stdio: "pipe", timeout: 3_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function buildSandboxCommand(
   command: string,
   worktreePath: string,
   extraRwPaths?: string[],
 ): string {
-  const rwMaps = [worktreePath, ...(extraRwPaths ?? [])];
-  const rwFlags = rwMaps.map((p) => `--rw-map ${p}`).join(" ");
+  const rwMaps = [...(extraRwPaths ?? [])];
+  const rwFlags = rwMaps.map((p) => `--rw-map "${p}"`).join(" ");
   const escapedCommand = command.replace(/'/g, "'\\''");
-  return `"${AI_JAIL_BIN}" ${rwFlags} -- sh -c '${escapedCommand}'`;
+  // --exec: direct execution, no PTY proxy (we have our own via node-pty)
+  // --no-docker --no-display --no-gpu: not needed for code execution
+  // --no-status-bar: we have our own UI
+  // CWD = worktreePath, which ai-jail auto-mounts as the project dir (RW)
+  const flags = [
+    "--exec",
+    "--no-docker",
+    "--no-display",
+    "--no-gpu",
+    "--no-status-bar",
+    rwFlags,
+  ].filter(Boolean).join(" ");
+  return `cd "${worktreePath}" && "${AI_JAIL_BIN}" ${flags} -- sh -c '${escapedCommand}'`;
 }
