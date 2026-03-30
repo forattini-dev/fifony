@@ -3,7 +3,7 @@ import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import {
   Server, Play, Square, Terminal, Circle, Loader2, X,
   AlertTriangle, ChevronRight, Folder, Scan, Wrench, CheckCircle2,
-  Network, Trash2, ArrowRight, Zap,
+  Network, Trash2, ArrowRight, Zap, RotateCcw,
 } from "lucide-react";
 import {
   ReactFlow,
@@ -675,10 +675,28 @@ function formatLogSize(bytes) {
 
 function ServiceCard({ service, selected, onSelect, onRefresh }) {
   const [busy, setBusy] = useState(false);
+  const [health, setHealth] = useState(null); // null | { ok, healthy, latencyMs }
   const state = service.state ?? (service.running ? "running" : "stopped");
   const info = stateInfo(state);
   const canStart = state === "stopped" || state === "crashed";
   const canStop = state === "running" || state === "starting";
+
+  // Health check — fetch on mount and every 30s for running services with a port
+  useEffect(() => {
+    if (!service.running || !service.port) { setHealth(null); return; }
+    let cancelled = false;
+    const ping = async () => {
+      try {
+        const res = await api.get(`/services/${encodeURIComponent(service.id)}/health`);
+        if (!cancelled) setHealth(res);
+      } catch {
+        if (!cancelled) setHealth(null);
+      }
+    };
+    ping();
+    const id = setInterval(ping, 30_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [service.id, service.running, service.port]);
 
   const handleAction = useCallback(async (e, action) => {
     e.stopPropagation();
@@ -692,6 +710,27 @@ function ServiceCard({ service, selected, onSelect, onRefresh }) {
 
   const logSizeStr = formatLogSize(service.logSize);
 
+  // Health dot rendering
+  const healthDot = (() => {
+    if (!service.running) return null;
+    if (!service.port) return null;
+    if (!health) return <Circle className="size-1.5 text-base-content/20 fill-base-content/20" title="Checking..." />;
+    if (health.healthy) {
+      return (
+        <span className="flex items-center gap-0.5 text-success/70" title={`Healthy — ${health.latencyMs}ms`}>
+          <Circle className="size-1.5 fill-current" />
+          <span className="text-[10px] tabular-nums">{health.latencyMs}ms</span>
+        </span>
+      );
+    }
+    return (
+      <span className="flex items-center gap-0.5 text-error/70" title="Unhealthy">
+        <Circle className="size-1.5 fill-current" />
+        <span className="text-[10px]">down</span>
+      </span>
+    );
+  })();
+
   return (
     <button
       type="button"
@@ -700,7 +739,7 @@ function ServiceCard({ service, selected, onSelect, onRefresh }) {
         ${selected ? "ring-1 ring-primary/30 bg-base-200/70" : "hover:bg-base-200/60"}${state === "crashed" ? " border-error/20" : ""}`}
     >
       <div className="px-3.5 py-3">
-        {/* Row 1: dot + name + action */}
+        {/* Row 1: dot + name + actions */}
         <div className="flex items-center gap-2">
           <Circle className={`size-1.5 shrink-0 ${info.dot}${info.spinning ? " animate-pulse" : ""}`} />
           <span className="font-medium text-sm leading-none truncate flex-1 min-w-0">{service.name}</span>
@@ -711,6 +750,15 @@ function ServiceCard({ service, selected, onSelect, onRefresh }) {
             >
               {busy ? <Loader2 className="size-3 animate-spin" /> : <Play className="size-3" />}
               Start
+            </span>
+          )}
+          {canStop && (
+            <span role="button" tabIndex={-1}
+              className="btn btn-xs btn-ghost h-5 min-h-0 px-1 opacity-0 group-hover:opacity-100 hover:bg-base-300/50 transition-opacity"
+              onClick={(e) => handleAction(e, "restart")}
+              title="Restart"
+            >
+              {busy ? <Loader2 className="size-3 animate-spin" /> : <RotateCcw className="size-2.5 opacity-50" />}
             </span>
           )}
           {canStop && (
@@ -741,12 +789,18 @@ function ServiceCard({ service, selected, onSelect, onRefresh }) {
           {service.port && (
             <span><span className="opacity-60">:</span>{service.port}</span>
           )}
+          {healthDot}
           {logSizeStr && (
             <span><span className="opacity-60">log</span> {logSizeStr}</span>
           )}
           {service.crashCount > 0 && (
             <span className="text-error/70 flex items-center gap-0.5">
               <AlertTriangle className="size-2.5" />{service.crashCount}
+            </span>
+          )}
+          {service.errorCount > 0 && (
+            <span className="text-error/70 flex items-center gap-0.5">
+              <AlertTriangle className="size-2.5" />{service.errorCount} err
             </span>
           )}
           {service.autoStart && (

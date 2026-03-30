@@ -221,6 +221,40 @@ export function registerServiceRoutes(
     }
   });
 
+  // POST /api/services/:id/restart — stop + start atomically
+  app.post("/api/services/:id/restart", (c) => {
+    const id = c.req.param("id");
+    const entry = (state.config.services ?? []).find((e) => e.id === id);
+    if (!entry) return c.json({ ok: false, error: "Service not found." }, 404);
+    try {
+      // Stop first
+      const tStop = stopManagedService(id, STATE_ROOT);
+      if (tStop) broadcastTransition(tStop);
+      stopServiceLogBroadcasting(id);
+
+      // Start with merged env (same logic as the start endpoint)
+      const globalVars = Object.fromEntries(
+        (state.variables ?? []).filter((v) => v.scope === "global").map((v) => [v.key, v.value]),
+      );
+      const serviceVars = Object.fromEntries(
+        (state.variables ?? []).filter((v) => v.scope === entry.id).map((v) => [v.key, v.value]),
+      );
+      const mergedEnv = { ...entry.env, ...globalVars, ...serviceVars };
+      const proxyPort = getTrafficProxyPort();
+      if (proxyPort) {
+        const dashPort = Number(state.config.dashboardPort ?? 4000);
+        Object.assign(mergedEnv, buildProxyEnvVars(proxyPort, entry.id, dashPort));
+      }
+      const tStart = startManagedService(entry, TARGET_ROOT, STATE_ROOT, mergedEnv);
+      broadcastTransition(tStart);
+      startServiceLogBroadcasting(entry.id, STATE_ROOT);
+      return c.json({ ok: true, pid: tStart.pid, state: tStart.to });
+    } catch (err) {
+      logger.error({ err }, `[Service] Failed to restart ${id}`);
+      return c.json({ ok: false, error: String(err) }, 500);
+    }
+  });
+
   // POST /api/services/:id/stop
   app.post("/api/services/:id/stop", (c) => {
     const id = c.req.param("id");
@@ -230,6 +264,36 @@ export function registerServiceRoutes(
     if (t) broadcastTransition(t);
     stopServiceLogBroadcasting(id);
     return c.json({ ok: true, state: t?.to ?? "stopped" });
+  });
+
+  // GET /api/services/:id/health — quick HTTP ping if port configured
+  app.get("/api/services/:id/health", async (c) => {
+    const id = c.req.param("id");
+    const entry = (state.config.services ?? []).find((e) => e.id === id);
+    if (!entry) return c.json({ ok: false, error: "Service not found." }, 404);
+
+    const status = getServiceRuntimeStatus(entry, STATE_ROOT);
+    if (!status.running) {
+      return c.json({ ok: false, error: "Service is not running." });
+    }
+
+    const port = entry.port;
+    if (!port) {
+      return c.json({ ok: false, error: "No port configured." });
+    }
+
+    const url = entry.healthcheck?.endpoint ?? `http://localhost:${port}`;
+    const start = Date.now();
+    try {
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(3_000),
+      });
+      const latencyMs = Date.now() - start;
+      return c.json({ ok: true, healthy: res.ok, latencyMs, status: res.status });
+    } catch (err) {
+      const latencyMs = Date.now() - start;
+      return c.json({ ok: true, healthy: false, latencyMs, error: String(err) });
+    }
   });
 
   // GET /api/services/:id/log — tail (last 16KB) or new bytes since ?after=N

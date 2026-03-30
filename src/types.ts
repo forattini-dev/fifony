@@ -546,6 +546,8 @@ export type ServiceStatus = {
   uptime: number;
   logSize: number;
   crashCount: number;
+  /** Count of ERROR/Exception/FATAL/FAIL occurrences in the last 8KB of the log */
+  errorCount: number;
   nextRetryAt?: string;
 };
 

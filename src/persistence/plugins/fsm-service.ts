@@ -65,6 +65,29 @@ export function serviceLogPath(fifonyDir: string, id: string): string {
   return join(fifonyDir, `service-${id}.log`);
 }
 
+const ERROR_PATTERN = /\b(ERROR|Exception|FATAL|FAIL)\b/gi;
+
+/**
+ * Count error-like occurrences in the last `bytes` of a service log.
+ */
+function countLogErrors(logFile: string, bytes = 8192): number {
+  if (!existsSync(logFile)) return 0;
+  try {
+    const size = statSync(logFile).size;
+    if (size === 0) return 0;
+    const readSize = Math.min(size, bytes);
+    const fd = openSync(logFile, "r");
+    const buf = Buffer.alloc(readSize);
+    readSync(fd, buf, 0, readSize, Math.max(0, size - readSize));
+    closeSync(fd);
+    const text = buf.toString("utf8");
+    const matches = text.match(ERROR_PATTERN);
+    return matches ? matches.length : 0;
+  } catch {
+    return 0;
+  }
+}
+
 function readPidInfo(fifonyDir: string, id: string): ServicePidInfo | null {
   const path = pidPath(fifonyDir, id);
   if (!existsSync(path)) return null;
@@ -172,6 +195,7 @@ export function getServiceStatus(entry: ServiceEntry, fifonyDir: string): Servic
     uptime: Number.isFinite(uptime) ? uptime : 0,
     logSize,
     crashCount: info?.crashCount ?? 0,
+    errorCount: countLogErrors(logFile),
     nextRetryAt: info?.nextRetryAt,
   };
 }
