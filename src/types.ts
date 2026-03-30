@@ -1362,6 +1362,22 @@ export type ChatTurn = {
   timestamp: string;
 };
 
+/** CLI session reference for resume support. */
+export type ChatCliSession = {
+  provider: string;
+  sessionId?: string;  // Claude --session-id, Codex session UUID
+};
+
+/** Persisted chat linked to an issue. File: .fifony/chat-sessions/issue-{id}.json */
+export type ChatSessionFile = {
+  issueId: string;
+  cli: ChatCliSession;
+  turns: ChatTurn[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** @deprecated Use ChatSessionFile for new code */
 export type ChatSessionMeta = {
   id: string;
   name: string;

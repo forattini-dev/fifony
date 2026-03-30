@@ -1,81 +1,80 @@
-import type { ChatSessionMeta, ChatTurn } from "../../types.ts";
-import { getAgentSessionResource } from "../../persistence/store.ts";
+import type { ChatSessionFile, ChatCliSession, ChatTurn, ChatSessionMeta } from "../../types.ts";
 import { now } from "../../concerns/helpers.ts";
 import { logger } from "../../concerns/logger.ts";
-import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { STATE_ROOT } from "../../concerns/constants.ts";
 
-const CHAT_PREFIX = "chat-";
 const CHAT_DIR = join(STATE_ROOT, "chat-sessions");
 
 function ensureChatDir(): void {
   mkdirSync(CHAT_DIR, { recursive: true });
 }
 
-function sessionPath(id: string): string {
-  return join(CHAT_DIR, `${id}.json`);
+function sessionPath(issueId: string): string {
+  return join(CHAT_DIR, `issue-${issueId}.json`);
 }
 
-function newSessionId(): string {
-  return `${CHAT_PREFIX}${randomUUID()}`;
-}
+// ── Issue-linked sessions (persisted to disk) ───────────────────────────────
 
-export async function createChatSession(
-  provider: string,
-  name?: string,
-): Promise<ChatSessionMeta> {
-  ensureChatDir();
-  const id = newSessionId();
-  const ts = now();
-  const session: ChatSessionMeta = {
-    id,
-    name: name || `Chat ${new Date().toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}`,
-    status: "active",
-    provider,
-    turns: [],
-    createdAt: ts,
-    updatedAt: ts,
-  };
-
-  writeFileSync(sessionPath(id), JSON.stringify(session), "utf8");
-  logger.debug({ id, name: session.name }, "[Chat] Session created");
-  return session;
-}
-
-export async function loadChatSession(id: string): Promise<ChatSessionMeta | null> {
-  const path = sessionPath(id);
+/** Load a chat session for an issue. Returns null if no session exists. */
+export async function loadChatSession(issueId: string): Promise<ChatSessionFile | null> {
+  const path = sessionPath(issueId);
   if (!existsSync(path)) return null;
   try {
-    const raw = readFileSync(path, "utf8");
-    const session = JSON.parse(raw) as ChatSessionMeta;
-    session.id = id;
-    return session;
+    return JSON.parse(readFileSync(path, "utf8")) as ChatSessionFile;
   } catch {
     return null;
   }
 }
 
-export async function persistChatSession(session: ChatSessionMeta): Promise<void> {
+/** Persist a chat session for an issue. */
+export async function persistChatSession(session: ChatSessionFile): Promise<void> {
   ensureChatDir();
   session.updatedAt = now();
-  writeFileSync(sessionPath(session.id), JSON.stringify(session), "utf8");
+  writeFileSync(sessionPath(session.issueId), JSON.stringify(session, null, 2), "utf8");
 }
 
-export async function listChatSessions(): Promise<ChatSessionMeta[]> {
+/** Create a new session file for an issue, optionally importing turns from a temporary chat. */
+export async function createIssueChat(
+  issueId: string,
+  cli: ChatCliSession,
+  existingTurns?: ChatTurn[],
+): Promise<ChatSessionFile> {
+  const ts = now();
+  const session: ChatSessionFile = {
+    issueId,
+    cli,
+    turns: existingTurns ?? [],
+    createdAt: ts,
+    updatedAt: ts,
+  };
+  await persistChatSession(session);
+  logger.debug({ issueId, provider: cli.provider }, "[Chat] Issue chat created");
+  return session;
+}
+
+/** Delete a chat session for an issue. */
+export async function deleteChatSession(issueId: string): Promise<boolean> {
+  try {
+    rmSync(sessionPath(issueId), { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** List all issue-linked chat sessions. */
+export async function listChatSessions(): Promise<ChatSessionFile[]> {
   ensureChatDir();
   try {
-    const files = readdirSync(CHAT_DIR).filter((f) => f.startsWith(CHAT_PREFIX) && f.endsWith(".json"));
-    const sessions: ChatSessionMeta[] = [];
+    const files = readdirSync(CHAT_DIR).filter((f) => f.startsWith("issue-") && f.endsWith(".json"));
+    const sessions: ChatSessionFile[] = [];
     for (const file of files) {
       try {
         const raw = readFileSync(join(CHAT_DIR, file), "utf8");
-        const session = JSON.parse(raw) as ChatSessionMeta;
-        if (session.status === "archived") continue;
-        session.id = file.replace(".json", "");
-        sessions.push(session);
-      } catch { /* skip corrupt files */ }
+        sessions.push(JSON.parse(raw) as ChatSessionFile);
+      } catch { /* skip corrupt */ }
     }
     return sessions.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   } catch (err) {
@@ -84,19 +83,37 @@ export async function listChatSessions(): Promise<ChatSessionMeta[]> {
   }
 }
 
-export async function deleteChatSession(id: string): Promise<boolean> {
-  const path = sessionPath(id);
-  try {
-    rmSync(path, { force: true });
-    return true;
-  } catch {
-    return false;
-  }
+// ── Turn helpers ─────────────────────────────────────────────────────────────
+
+export function appendTurn(session: ChatSessionFile, turn: Omit<ChatTurn, "timestamp">): void {
+  session.turns.push({ ...turn, timestamp: now() });
 }
 
-export function appendTurn(session: ChatSessionMeta, turn: Omit<ChatTurn, "timestamp">): void {
-  session.turns.push({
-    ...turn,
-    timestamp: now(),
-  });
+// ── Backward compat: ChatSessionMeta adapters ────────────────────────────────
+// Routes that still use the old API get adapters here
+
+export function sessionFileToMeta(session: ChatSessionFile): ChatSessionMeta {
+  return {
+    id: session.issueId,
+    name: `Issue ${session.issueId}`,
+    status: "active",
+    provider: session.cli.provider,
+    turns: session.turns,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+  };
+}
+
+/** @deprecated Use createIssueChat */
+export async function createChatSession(provider: string, name?: string): Promise<ChatSessionMeta> {
+  const ts = now();
+  return {
+    id: `temp-${Date.now()}`,
+    name: name || "Temporary",
+    status: "active",
+    provider,
+    turns: [],
+    createdAt: ts,
+    updatedAt: ts,
+  };
 }
