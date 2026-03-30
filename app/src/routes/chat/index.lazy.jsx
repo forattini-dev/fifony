@@ -128,13 +128,25 @@ function renderContent(text) {
 
 // ── TypingDots ──────────────────────────────────────────────────────────────
 
-function TypingDots() {
+function TypingDots({ startedAt }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!startedAt) return;
+    const tick = () => setElapsed(Math.round((Date.now() - startedAt) / 1000));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [startedAt]);
+
   return (
     <div className="flex items-start gap-3 chat-msg-in">
-      <div className="flex items-center gap-1 px-3 py-2.5 rounded-2xl rounded-tl-md bg-base-200/60">
+      <div className="flex items-center gap-1.5 px-3 py-2.5 rounded-2xl rounded-tl-md bg-base-200/60">
         <span className="typing-dot size-1.5 rounded-full bg-base-content/40" style={{ animationDelay: "0ms" }} />
         <span className="typing-dot size-1.5 rounded-full bg-base-content/40" style={{ animationDelay: "150ms" }} />
         <span className="typing-dot size-1.5 rounded-full bg-base-content/40" style={{ animationDelay: "300ms" }} />
+        {elapsed > 3 && (
+          <span className="text-[10px] text-base-content/30 ml-1 tabular-nums">{elapsed}s</span>
+        )}
       </div>
     </div>
   );
@@ -797,7 +809,7 @@ function ChatPage() {
                         showTime={shouldShowTimestamp(msg, normalizedMessages[i - 1])}
                       />
                     ))}
-                    {isSending && <TypingDots />}
+                    {isSending && <TypingDots startedAt={chat.sendingStartedAt} />}
                     {error && <InlineError error={error} onRetry={handleRetry} />}
                   </>
                 ) : chat.isSessionLoading ? (

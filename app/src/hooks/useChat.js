@@ -26,6 +26,7 @@ export function useChat() {
   const qc = useQueryClient();
   const [currentSessionId, setCurrentSessionId] = useState(null);
   const [optimisticMessages, setOptimisticMessages] = useState([]);
+  const [sendingStartedAt, setSendingStartedAt] = useState(null);
 
   // ── Queries ────────────────────────────────────────────────────────────────
 
@@ -63,8 +64,27 @@ export function useChat() {
   // ── Mutations ──────────────────────────────────────────────────────────────
 
   const sendMessageMut = useMutation({
-    mutationFn: ({ sessionId, message, history }) =>
-      api.post("/chat", { sessionId: sessionId || undefined, message, history }),
+    mutationFn: ({ sessionId, message, history }) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 90_000);
+      return fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ sessionId: sessionId || undefined, message, history }),
+        signal: controller.signal,
+      })
+        .then(async (res) => {
+          clearTimeout(timer);
+          const data = await res.json().catch(() => null);
+          if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+          return data;
+        })
+        .catch((err) => {
+          clearTimeout(timer);
+          if (err.name === "AbortError") throw new Error("Response took too long. The AI might be busy — try again.");
+          throw err;
+        });
+    },
   });
 
   const executeActionMut = useMutation({
@@ -116,17 +136,21 @@ export function useChat() {
       const history = optimisticMessages
         .filter((m) => m.role === "user" || m.role === "assistant")
         .map((m) => ({ role: m.role, content: m.content }));
+      setSendingStartedAt(Date.now());
       sendMessageMut.mutate(
         { sessionId: currentSessionId, message: trimmed, history },
         {
           onSuccess: (res) => {
-            // Add AI response to optimistic messages
+            setSendingStartedAt(null);
             if (res.response) {
               setOptimisticMessages((prev) => [
                 ...prev,
                 { role: "assistant", content: res.response, actions: res.actions, timestamp: new Date().toISOString() },
               ]);
             }
+          },
+          onError: () => {
+            setSendingStartedAt(null);
           },
         },
       );
@@ -174,6 +198,7 @@ export function useChat() {
     // Loading
     isLoading: sendMessageMut.isPending,
     isSending: sendMessageMut.isPending,
+    sendingStartedAt,
     isSessionsLoading: sessionsQuery.isLoading,
     isSessionLoading: sessionQuery.isLoading && !!currentSessionId,
     // Error
