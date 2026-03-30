@@ -131,14 +131,50 @@ function stripProviderChrome(raw: string, provider: string): string {
   let text = raw;
 
   if (provider === "codex") {
-    // Codex outputs: headers → "user\n<prompt>" → "codex\n<response>" → "tokens used N"
-    // Extract only the response between last "codex" marker and "tokens used"
+    // Codex PTY output: headers → "user\n<prompt>" → "codex\n<response>" → "tokens used N"
+    // The response often appears TWICE (once in stream, once in final summary).
+    // Strategy: find the LAST "codex\n" marker, extract to "tokens used", then
+    // if result is duplicated (first half === second half), deduplicate.
+
+    // Remove everything before the last "codex\n" marker
     const codexMarker = text.lastIndexOf("\ncodex\n");
     if (codexMarker >= 0) {
       text = text.slice(codexMarker + "\ncodex\n".length);
+    } else {
+      // Try without leading newline (might be at start)
+      const altMarker = text.lastIndexOf("codex\n");
+      if (altMarker >= 0) {
+        text = text.slice(altMarker + "codex\n".length);
+      }
     }
-    // Remove trailing "tokens used N,NNN" line
-    text = text.replace(/\n?tokens used[\s\d,]+$/i, "");
+
+    // Remove "tokens used N,NNN" anywhere in the text (not just trailing)
+    text = text.replace(/tokens used[\s\d,]+/gi, "");
+
+    // Remove Codex metadata lines
+    text = text.replace(/^Reading prompt from stdin.*$/gm, "");
+    text = text.replace(/^OpenAI Codex v[\d.]+.*$/gm, "");
+    text = text.replace(/^-+$/gm, "");
+    text = text.replace(/^workdir:.*$/gm, "");
+    text = text.replace(/^model:.*$/gm, "");
+    text = text.replace(/^provider:.*$/gm, "");
+    text = text.replace(/^approval:.*$/gm, "");
+    text = text.replace(/^sandbox:.*$/gm, "");
+    text = text.replace(/^reasoning effort:.*$/gm, "");
+    text = text.replace(/^reasoning summaries:.*$/gm, "");
+    text = text.replace(/^session id:.*$/gm, "");
+    text = text.replace(/^user\n/gm, "");
+
+    // Deduplicate if the text is repeated (Codex sometimes echoes response twice)
+    const trimmed = text.trim();
+    const half = Math.floor(trimmed.length / 2);
+    if (half > 50) {
+      const first = trimmed.slice(0, half).trim();
+      const second = trimmed.slice(half).trim();
+      if (first === second) {
+        text = first;
+      }
+    }
   }
 
   if (provider === "claude") {

@@ -12,6 +12,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
+import Markdown from "react-markdown";
 import { useChat } from "../hooks/useChat.js";
 import { ChatActionCard } from "../components/ChatActionCard.jsx";
 import { useDashboard } from "../context/DashboardContext.jsx";
@@ -97,27 +98,32 @@ function shouldShowTimestamp(msg, prevMsg) {
 }
 
 /** Very basic markdown-ish code block detection */
+const MD_COMPONENTS = {
+  p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+  ul: ({ children }) => <ul className="list-disc list-inside mb-2 space-y-0.5">{children}</ul>,
+  ol: ({ children }) => <ol className="list-decimal list-inside mb-2 space-y-0.5">{children}</ol>,
+  li: ({ children }) => <li>{children}</li>,
+  strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+  code: ({ inline, children }) =>
+    inline
+      ? <code className="bg-base-300/60 px-1 py-0.5 rounded text-[0.85em] font-mono">{children}</code>
+      : <code>{children}</code>,
+  pre: ({ children }) => (
+    <pre className="my-2 rounded-lg bg-base-300/60 px-3 py-2 text-xs leading-relaxed overflow-x-auto font-mono">
+      {children}
+    </pre>
+  ),
+  h1: ({ children }) => <h3 className="font-bold text-base mb-1">{children}</h3>,
+  h2: ({ children }) => <h3 className="font-bold text-sm mb-1">{children}</h3>,
+  h3: ({ children }) => <h4 className="font-semibold text-sm mb-1">{children}</h4>,
+  blockquote: ({ children }) => <blockquote className="border-l-2 border-base-content/20 pl-3 italic opacity-70 mb-2">{children}</blockquote>,
+  hr: () => <hr className="border-base-content/10 my-2" />,
+  a: ({ href, children }) => <a href={href} className="underline opacity-80 hover:opacity-100" target="_blank" rel="noopener noreferrer">{children}</a>,
+};
+
 function renderContent(text) {
   if (!text) return null;
-  const parts = text.split(/(```[\s\S]*?```)/g);
-  if (parts.length === 1) return text;
-
-  return parts.map((part, i) => {
-    if (part.startsWith("```") && part.endsWith("```")) {
-      const inner = part.slice(3, -3);
-      const newlineIdx = inner.indexOf("\n");
-      const code = newlineIdx > -1 ? inner.slice(newlineIdx + 1) : inner;
-      return (
-        <pre
-          key={i}
-          className="my-2 rounded-lg bg-base-300/60 px-3 py-2 text-xs leading-relaxed overflow-x-auto font-mono"
-        >
-          <code>{code}</code>
-        </pre>
-      );
-    }
-    return <span key={i}>{part}</span>;
-  });
+  return <Markdown components={MD_COMPONENTS}>{text}</Markdown>;
 }
 
 // ── TypingDots ──────────────────────────────────────────────────────────────
