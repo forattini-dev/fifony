@@ -458,6 +458,7 @@ function ChatPage() {
   const [selectedIssueId, setSelectedIssueId] = useState(null);
   const [isSendingWithIssue, setIsSendingWithIssue] = useState(false);
   const [sendError, setSendError] = useState(null);
+  const [issueMessages, setIssueMessages] = useState([]);
   const [mobileTab, setMobileTab] = useState("chat");
   const [showScrollBtn, setShowScrollBtn] = useState(false);
 
@@ -518,6 +519,7 @@ function ChatPage() {
       }
       chat.selectSession(null);
       setSendError(null);
+      setIssueMessages([]);
     },
     [selectedIssueId, chat],
   );
@@ -526,6 +528,7 @@ function ChatPage() {
     setSelectedIssueId(null);
     chat.selectSession(null);
     setSendError(null);
+    setIssueMessages([]);
   }, [chat]);
 
   // ── Send message ───────────────────────────────────────────────────────
@@ -539,20 +542,27 @@ function ChatPage() {
         return;
       }
 
+      // Optimistic: show user message immediately
+      setIssueMessages((prev) => [
+        ...prev,
+        { role: "user", content: trimmed, timestamp: new Date().toISOString() },
+      ]);
       setIsSendingWithIssue(true);
       setSendError(null);
       try {
         const res = await api.post("/chat", {
-          sessionId: chat.currentSessionId || undefined,
           message: trimmed,
           issueId: selectedIssueId,
+          history: issueMessages
+            .filter((m) => m.role === "user" || m.role === "assistant")
+            .map((m) => ({ role: m.role, content: m.content })),
         });
-        if (res.sessionId && res.sessionId !== chat.currentSessionId) {
-          chat.selectSession(res.sessionId);
-        }
-        qc.invalidateQueries({ queryKey: ["chat-sessions"] });
-        if (res.sessionId) {
-          qc.invalidateQueries({ queryKey: ["chat-session", res.sessionId] });
+        // Append AI response
+        if (res.response) {
+          setIssueMessages((prev) => [
+            ...prev,
+            { role: "assistant", content: res.response, actions: res.actions, timestamp: new Date().toISOString() },
+          ]);
         }
       } catch (err) {
         setSendError(err instanceof Error ? err.message : String(err));
@@ -625,14 +635,15 @@ function ChatPage() {
   const provider = chat.lastResponse?.provider ?? null;
 
   // ── Normalize messages ─────────────────────────────────────────────────
+  const rawMessages = selectedIssueId ? issueMessages : chat.messages;
   const normalizedMessages = useMemo(() => {
-    return chat.messages.map((m) => ({
+    return rawMessages.map((m) => ({
       role: m.role,
       content: m.content,
       timestamp: m.timestamp || m.createdAt || m.updatedAt,
       actions: m.actions,
     }));
-  }, [chat.messages]);
+  }, [rawMessages]);
 
   const hasMessages = normalizedMessages.length > 0;
 
