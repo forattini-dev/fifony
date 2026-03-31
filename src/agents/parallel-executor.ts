@@ -31,8 +31,9 @@ export async function spawnParallelSubTasks(
 
   const mainWorktree = issue.workspacePath!;
 
-  // Create sub-worktrees (up to maxDelegationFanout = 3)
-  const maxFanout = Math.min(subTaskDefs.length, 3);
+  // Dynamic fanout — configurable, adapts to capacity
+  const configuredFanout = state.config.maxParallelSubTasks ?? 3;
+  const maxFanout = Math.min(subTaskDefs.length, configuredFanout);
   const activeTasks = issue.parallelSubTasks.slice(0, maxFanout);
 
   for (const subTask of activeTasks) {

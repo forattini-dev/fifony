@@ -654,6 +654,8 @@ export type RuntimeConfig = {
   autoReplanStallThreshold?: number;
   /** Agent output style: 'concise' (default) keeps responses short, 'verbose' adds reasoning and context. */
   agentOutputStyle?: "concise" | "verbose";
+  /** Maximum parallel sub-tasks per issue (default: 3, max: 5). */
+  maxParallelSubTasks?: number;
   /** When true, planner output can be upgraded/downgraded to a stronger harness mode using historical lift. Default: true */
   adaptiveHarnessSelection?: boolean;
   /** When true, reviewer provider/model routing can adapt to historical lift by review profile. Default: true */

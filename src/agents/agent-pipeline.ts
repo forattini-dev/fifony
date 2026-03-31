@@ -483,6 +483,36 @@ export async function runAgentPipeline(
     }
   }
 
+  // Pre-execution context prefetch: read suggested files in parallel and inject
+  // into the prompt so the executor starts informed (saves exploration turns).
+  // Inspired by Claude Code's parallel research phase.
+  if (issue.plan?.suggestedPaths?.length && issue.attempts === 0) {
+    const { readFileSync: readFs, existsSync: existsFs } = await import("node:fs");
+    const codePath = existsFs(join(workspacePath, "worktree")) ? join(workspacePath, "worktree") : workspacePath;
+    const MAX_PREFETCH_FILES = 5;
+    const MAX_PREFETCH_CHARS = 8000;
+    const prefetchParts: string[] = [];
+    let totalChars = 0;
+
+    for (const relPath of issue.plan.suggestedPaths.slice(0, MAX_PREFETCH_FILES)) {
+      if (totalChars >= MAX_PREFETCH_CHARS) break;
+      const absPath = join(codePath, relPath);
+      if (!existsFs(absPath)) continue;
+      try {
+        const content = readFs(absPath, "utf8");
+        const budget = MAX_PREFETCH_CHARS - totalChars;
+        const truncated = content.length > budget ? content.slice(0, budget) + "\n[...truncated]" : content;
+        prefetchParts.push(`### ${relPath}\n\`\`\`\n${truncated}\n\`\`\``);
+        totalChars += truncated.length;
+      } catch { /* skip unreadable files */ }
+    }
+
+    if (prefetchParts.length > 0) {
+      providerPrompt = `${providerPrompt}\n\n## Pre-fetched File Contents\n\nThese files were identified as relevant by the planner. Use them as context — avoid re-reading these files unless you need lines beyond what's shown.\n\n${prefetchParts.join("\n\n")}`;
+      addEvent(state, issue.id, "info", `Pre-fetched ${prefetchParts.length} file(s) into execution context.`);
+    }
+  }
+
   // Inject handoff from previous context reset session
   if (issue.lastHandoffFile && (issue.contextResetCount ?? 0) > 0) {
     const { readFileSync, existsSync } = await import("node:fs");
@@ -587,10 +617,42 @@ export async function runAgentPipeline(
     if (blueprint && blueprintRun) {
       updateBlueprintNodeRun(blueprintRun, BLUEPRINT_EXECUTION_NODE_IDS.implement, "completed", {});
     }
+
+    // Post-parallel synthesis: verify merged result is coherent across subtask boundaries.
+    // Inspired by Claude Code's coordinator pattern — "never delegate understanding".
+    const subResults = (issue.parallelSubTasks ?? [])
+      .filter((t) => t.status === "done")
+      .map((t) => `- **${t.label}**: ${t.result?.slice(0, 200) ?? "completed"}`)
+      .join("\n");
+
+    const synthPrompt = [
+      `## Post-Parallel Synthesis Check`,
+      ``,
+      `${issue.parallelSubTasks?.length ?? 0} parallel sub-agents just completed for ${issue.identifier}.`,
+      `Their results were cherry-picked into the main workspace at: ${workspacePath}`,
+      ``,
+      `Sub-task results:`,
+      subResults,
+      ``,
+      `Your job: verify the merged result is coherent.`,
+      `1. Check that imports/exports across subtask boundaries are consistent.`,
+      `2. Check for merge conflicts or duplicate code from cherry-picks.`,
+      `3. Run the build or typecheck if a build command is available.`,
+      `4. If there are issues, fix them. If everything is clean, report done.`,
+      ``,
+      `Keep it minimal — only fix actual problems, don't refactor or improve.`,
+      `FIFONY_STATUS=done when the merged code is clean.`,
+    ].join("\n");
+
+    addEvent(state, issue.id, "info", "Running post-parallel synthesis check...");
+    const synthResult = await runAgentSession(state, issue, effectiveProvider, pipeline.cycle, workspacePath, synthPrompt, basePromptFile);
+    if (!synthResult.success && !synthResult.continueRequested) {
+      addEvent(state, issue.id, "warn", `Synthesis check failed: ${synthResult.output?.slice(-200) ?? "unknown error"}`);
+    }
   }
 
   const result = parallelExecuted
-    ? { success: true, blocked: false, continueRequested: false, code: 0, output: "Parallel sub-agents completed.", turns: 0 } as AgentSessionResult
+    ? { success: true, blocked: false, continueRequested: false, code: 0, output: "Parallel sub-agents completed and synthesis verified.", turns: 0 } as AgentSessionResult
     : await runAgentSession(state, issue, effectiveProvider, pipeline.cycle, workspacePath, providerPrompt, basePromptFile);
 
   if (blueprint && blueprintRun && !parallelExecuted) {
