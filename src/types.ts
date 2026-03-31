@@ -524,6 +524,8 @@ export type ServiceEntry = {
   maxCrashes?: number;
   /** Optional port hint (informational) */
   port?: number;
+  /** Optional stop command (e.g. "docker compose down"). If absent, kills the PID. */
+  stopCommand?: string;
   /** Optional healthcheck config — detected automatically or set manually */
   healthcheck?: ServiceHealthcheck;
 };

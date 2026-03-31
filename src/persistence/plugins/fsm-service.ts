@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 import { isProcessAlive } from "../../agents/pid-manager.ts";
 import { logger } from "../../concerns/logger.ts";
 import { now } from "../../concerns/helpers.ts";
@@ -554,11 +554,24 @@ export const serviceStateMachineConfig = {
 
     sendSigterm: async (context: Record<string, unknown>, _event: string, machine: ServiceMachine) => {
       if (!serviceRuntime) return;
-      const { fifonyDir } = serviceRuntime;
+      const { fifonyDir, targetRoot } = serviceRuntime;
+      const entry = resolveServiceEntry(machine.entityId);
       const info = readPidInfo(fifonyDir, machine.entityId);
       if (!info) return;
 
-      if (isProcessAlive(info.pid)) {
+      // If the service has a custom stop command, run it instead of killing the PID
+      if (entry?.stopCommand) {
+        try {
+          const cwd = entry.cwd ? join(targetRoot, entry.cwd) : targetRoot;
+          execSync(entry.stopCommand, { cwd, stdio: "pipe", timeout: 15_000 });
+          logger.info({ id: machine.entityId, stopCommand: entry.stopCommand }, "[ServiceFSM] stopCommand executed");
+        } catch (err) {
+          logger.warn({ err, id: machine.entityId }, "[ServiceFSM] stopCommand failed, falling back to SIGTERM");
+          if (isProcessAlive(info.pid)) {
+            try { process.kill(-info.pid, "SIGTERM"); } catch {}
+          }
+        }
+      } else if (isProcessAlive(info.pid)) {
         try { process.kill(-info.pid, "SIGTERM"); } catch {}
       }
 
@@ -568,7 +581,7 @@ export const serviceStateMachineConfig = {
         stoppingAt: now(),
       });
 
-      logger.info({ id: machine.entityId, pid: info.pid }, "[ServiceFSM] sendSigterm → stopping");
+      logger.info({ id: machine.entityId, pid: info.pid, hasStopCommand: !!entry?.stopCommand }, "[ServiceFSM] sendSigterm → stopping");
 
       serviceRuntime.onTransition?.({
         id: machine.entityId,
