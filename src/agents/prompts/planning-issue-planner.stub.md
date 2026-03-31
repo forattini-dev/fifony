@@ -77,7 +77,19 @@ Effort suggestion:
 
 ## Instructions
 
-You are encouraged to explore the codebase — read files, search for patterns, inspect structure — to produce an informed plan. Use any tools available to you.
+BEFORE planning, you MUST explore the codebase. Read the relevant files, search for patterns, understand the current code. Do NOT plan from assumptions — plan from evidence. A plan based on guesses about file structure or API shape will fail at execution time.
+
+Exploration checklist:
+1. Find the files that will be changed — confirm they exist and understand their current state.
+2. Identify patterns and conventions in the codebase — your plan must follow them.
+3. Check for existing tests, build commands, or CI config that constrain the solution.
+4. If the issue references specific behavior, trace the code path to understand it.
+
+Anti-patterns in plans:
+- Don't plan architectural refactors when a targeted fix will do.
+- Don't suggest adding new abstractions, layers, or files unless the issue specifically requires them.
+- Don't include "nice to have" steps that aren't required to solve the issue.
+- Don't pad the plan with analysis steps — the plan should describe WHAT TO CHANGE, not how to investigate.
 
 After your analysis, you MUST output the final plan as a single JSON code block (```json ... ```).
 The JSON block must be the LAST thing in your output. Any analysis or reasoning should come BEFORE it.
