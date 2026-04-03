@@ -2,13 +2,14 @@ import { existsSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import type {
   AgentProviderDefinition,
+  AttemptContextMetrics,
   IssueEntry,
   RetryContextBudget,
 } from "../types.ts";
 import { renderPrompt } from "./prompting.ts";
 import { buildRecurringFailureContext } from "./review-failure-history.ts";
 import { loadCrossAttemptAnalysis } from "../domains/cross-attempt-analysis.ts";
-import { traceDir, readTraceContent } from "../domains/trace-bundle.ts";
+import { traceDir, readTraceContent, type CrossAttemptAnalysis } from "../domains/trace-bundle.ts";
 import { findSimilarIssueTraces, persistSimilarTraceSelection, type SimilarTraceHit } from "../domains/trace-retrieval.ts";
 
 /** Build retry context from previous failed attempts for injection into prompts. */
@@ -351,7 +352,40 @@ export function buildRetryContext(
 
   // Hard limit to keep retry prompts bounded even with trace references.
   const full = lines.join("\n");
-  return full.length > maxChars ? full.slice(0, maxChars) + "\n[...truncated]" : full;
+  const text = full.length > maxChars ? full.slice(0, maxChars) + "\n[...truncated]" : full;
+
+  // Load cross-attempt analysis for metrics (reuse if already computed above)
+  const analysis = worktreePath ? loadCrossAttemptAnalysis(traceDir(worktreePath, issue.planVersion ?? 1, issue.executeAttempt ?? 1)) : null;
+
+  const metrics: AttemptContextMetrics = {
+    retryContextChars: text.length,
+    traceContentChars: canUseTraces ? Math.min(text.length, budget.traceContentChars) : 0,
+    crossAttemptChars: crossAttemptContext.length,
+    similarIssueChars: similarIssueTraceContext.length,
+    gradingChars: text.length - crossAttemptContext.length - similarIssueTraceContext.length,
+    budgetTotalChars: budget.totalChars,
+    budgetUtilizationPct: budget.totalChars > 0 ? Math.round((text.length / budget.totalChars) * 100) : 0,
+    modelName: options.modelName ?? null,
+  };
+
+  // Store metrics as a side-effect property for callers that need it
+  (buildRetryContext as { lastMetrics?: AttemptContextMetrics }).lastMetrics = metrics;
+  (buildRetryContext as { lastAnalysis?: typeof analysis }).lastAnalysis = analysis;
+
+  return text;
+}
+
+/** Retrieve metrics from the most recent buildRetryContext() call. */
+export function getLastRetryContextMetrics(): { metrics: AttemptContextMetrics; hypothesesGenerated: number; strategyPivotTriggered: boolean; similarIssuesUsed: number } | null {
+  const metrics = (buildRetryContext as { lastMetrics?: AttemptContextMetrics }).lastMetrics;
+  const analysis = (buildRetryContext as { lastAnalysis?: CrossAttemptAnalysis | null }).lastAnalysis;
+  if (!metrics) return null;
+  return {
+    metrics,
+    hypothesesGenerated: analysis?.hypotheses?.length ?? 0,
+    strategyPivotTriggered: Boolean(analysis?.strategyPivot),
+    similarIssuesUsed: 0, // populated by caller if needed
+  };
 }
 
 export async function buildPrompt(issue: IssueEntry, _workflowDefinition: null): Promise<string> {

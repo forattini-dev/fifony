@@ -32,7 +32,7 @@ import {
   buildProviderSessionKey,
 } from "./session-state.ts";
 import { readAgentDirective, addTokenUsage } from "./directive-parser.ts";
-import { buildTurnPrompt, buildProviderBasePrompt, buildRetryContext, resolveContextWindow } from "./prompt-builder.ts";
+import { buildTurnPrompt, buildProviderBasePrompt, buildRetryContext, getLastRetryContextMetrics, resolveContextWindow } from "./prompt-builder.ts";
 import { resolveMaxTurns } from "../persistence/plugins/fsm-agent.ts";
 import { runCommandWithTimeout, runHook, writeToDaemon } from "./command-executor.ts";
 import { writeHandoffArtifact } from "./handoff-writer.ts";
@@ -582,9 +582,19 @@ export async function runAgentPipeline(
   }
 
   if (issue.attempts > 0) {
-    const retryCtx = buildRetryContext(issue, workspacePath);
+    const retryCtx = buildRetryContext(issue, workspacePath, { modelName: effectiveProvider.model });
     if (retryCtx) {
       providerPrompt = `${providerPrompt}\n\n${retryCtx}`;
+    }
+    // Persist context metrics for Pareto tracking (Phase 4)
+    const retryMetrics = getLastRetryContextMetrics();
+    if (retryMetrics && workspacePath) {
+      try {
+        const { persistContextMetrics } = await import("../domains/trace-bundle.ts");
+        const { traceDir: td } = await import("../domains/trace-bundle.ts");
+        const metricsDir = td(workspacePath, issue.planVersion ?? 1, issue.executeAttempt ?? 1);
+        persistContextMetrics(metricsDir, retryMetrics.metrics);
+      } catch { /* non-critical */ }
     }
   }
 

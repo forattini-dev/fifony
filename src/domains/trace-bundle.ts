@@ -875,3 +875,47 @@ export function finalizeAttemptForIssue(
     },
   });
 }
+
+// ── Harness outcome metrics (Phase 4: Meta-Harness alignment) ───────────────
+
+import type { AttemptContextMetrics, HarnessOutcomeMetrics } from "../types.ts";
+
+/** Persist context metrics to the trace directory. */
+export function persistContextMetrics(traceDirectory: string, metrics: AttemptContextMetrics): void {
+  try {
+    writeFileSync(join(traceDirectory, "context-metrics.json"), JSON.stringify(metrics, null, 2), "utf8");
+  } catch (error) {
+    logger.debug({ err: String(error), traceDirectory }, "[TraceBundle] Failed to write context metrics");
+  }
+}
+
+/** Load context metrics from a trace directory. */
+export function loadContextMetrics(traceDirectory: string): AttemptContextMetrics | null {
+  const filePath = join(traceDirectory, "context-metrics.json");
+  if (!existsSync(filePath)) return null;
+  try {
+    return JSON.parse(readFileSync(filePath, "utf8")) as AttemptContextMetrics;
+  } catch {
+    return null;
+  }
+}
+
+/** Write combined outcome + context metrics for Pareto analysis. */
+export function writeHarnessOutcome(traceDirectory: string, outcome: HarnessOutcomeMetrics): void {
+  try {
+    writeFileSync(join(traceDirectory, "harness-outcome.json"), JSON.stringify(outcome, null, 2), "utf8");
+  } catch (error) {
+    logger.debug({ err: String(error), traceDirectory }, "[TraceBundle] Failed to write harness outcome");
+  }
+}
+
+/** Load harness outcome from a trace directory. */
+export function loadHarnessOutcome(traceDirectory: string): HarnessOutcomeMetrics | null {
+  const filePath = join(traceDirectory, "harness-outcome.json");
+  if (!existsSync(filePath)) return null;
+  try {
+    return JSON.parse(readFileSync(filePath, "utf8")) as HarnessOutcomeMetrics;
+  } catch {
+    return null;
+  }
+}

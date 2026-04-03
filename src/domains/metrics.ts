@@ -594,3 +594,89 @@ export function computeQualityGateMetrics(issues: IssueEntry[]) {
     },
   };
 }
+
+// ── Pareto frontier (Phase 4: Meta-Harness alignment) ───────────────────────
+
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import type { HarnessOutcomeMetrics } from "../types.ts";
+import { loadHarnessOutcome } from "./trace-bundle.ts";
+
+export type ParetoPoint = {
+  issueId: string;
+  issueIdentifier: string;
+  planVersion: number;
+  executeAttempt: number;
+  contextChars: number;
+  contextUtilizationPct: number;
+  outcomeScore: number;
+  outcome: string;
+  onFrontier: boolean;
+};
+
+function outcomeToScore(outcome: string): number {
+  if (outcome === "success") return 1.0;
+  if (outcome === "failure") return 0.0;
+  if (outcome === "timeout") return 0.0;
+  if (outcome === "crash") return 0.0;
+  return 0.25;
+}
+
+const PARETO_TRACE_DIR = "traces";
+const PARETO_TRACE_PATTERN = /^v(\d+)a(\d+)$/;
+
+/**
+ * Compute the context-vs-outcome Pareto frontier from all harness outcomes
+ * across workspaces under the given root.
+ */
+export function computeContextParetoFrontier(workspacesRoot: string): ParetoPoint[] {
+  const points: ParetoPoint[] = [];
+
+  let workspaces: string[] = [];
+  try {
+    workspaces = readdirSync(workspacesRoot)
+      .map((name) => join(workspacesRoot, name))
+      .filter((path) => existsSync(join(path, PARETO_TRACE_DIR)))
+      .slice(0, 100);
+  } catch {
+    return [];
+  }
+
+  for (const workspace of workspaces) {
+    const tracesRoot = join(workspace, PARETO_TRACE_DIR);
+    let traceNames: string[] = [];
+    try {
+      traceNames = readdirSync(tracesRoot).filter((name) => PARETO_TRACE_PATTERN.test(name));
+    } catch { continue; }
+
+    for (const traceName of traceNames) {
+      const outcome = loadHarnessOutcome(join(tracesRoot, traceName));
+      if (!outcome) continue;
+
+      points.push({
+        issueId: outcome.issueId,
+        issueIdentifier: outcome.issueIdentifier,
+        planVersion: outcome.planVersion,
+        executeAttempt: outcome.executeAttempt,
+        contextChars: outcome.contextMetrics.retryContextChars,
+        contextUtilizationPct: outcome.contextMetrics.budgetUtilizationPct,
+        outcomeScore: outcomeToScore(outcome.outcome),
+        outcome: outcome.outcome,
+        onFrontier: false,
+      });
+    }
+  }
+
+  // Pareto frontier: point is on frontier if no other point dominates it
+  for (const point of points) {
+    point.onFrontier = !points.some(
+      (other) =>
+        other !== point &&
+        other.contextChars <= point.contextChars &&
+        other.outcomeScore >= point.outcomeScore &&
+        (other.contextChars < point.contextChars || other.outcomeScore > point.outcomeScore),
+    );
+  }
+
+  return points.sort((a, b) => a.contextChars - b.contextChars);
+}

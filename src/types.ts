@@ -201,6 +201,31 @@ export type RetryContextBudget = {
   gradingChars: number;
 };
 
+/** Metrics captured from retry context construction — tracks context budget usage. */
+export type AttemptContextMetrics = {
+  retryContextChars: number;
+  traceContentChars: number;
+  crossAttemptChars: number;
+  similarIssueChars: number;
+  gradingChars: number;
+  budgetTotalChars: number;
+  budgetUtilizationPct: number;
+  modelName: string | null;
+};
+
+/** Combined outcome + context metrics for Pareto frontier analysis. */
+export type HarnessOutcomeMetrics = {
+  issueId: string;
+  issueIdentifier: string;
+  planVersion: number;
+  executeAttempt: number;
+  outcome: string;
+  contextMetrics: AttemptContextMetrics;
+  hypothesesGenerated: number;
+  strategyPivotTriggered: boolean;
+  similarIssuesUsed: number;
+};
+
 export type ValidationResult = {
   passed: boolean;
   output: string;

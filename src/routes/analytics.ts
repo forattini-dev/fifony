@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getAnalytics as getTokenAnalytics, getHourlySnapshot } from "../domains/tokens.ts";
-import { computeQualityGateMetrics } from "../domains/metrics.ts";
+import { computeQualityGateMetrics, computeContextParetoFrontier } from "../domains/metrics.ts";
 import { getEcDailyEvents, getEcDailyLines } from "../persistence/store.ts";
 import { logger } from "../concerns/logger.ts";
 import { getApiRuntimeContextOrThrow } from "../persistence/plugins/api-runtime-context.ts";
@@ -455,6 +455,33 @@ export function registerAnalyticsRoutes(app: RouteRegistrar): void {
       });
     } catch (error) {
       logger.error({ err: error }, "Failed to load stage quality trace detail");
+      return c.json({ ok: false, error: String(error) }, 500);
+    }
+  });
+
+  // GET /api/analytics/context-pareto — Pareto frontier of context usage vs outcome quality
+  app.get("/api/analytics/context-pareto", async (c) => {
+    try {
+      const { WORKSPACE_ROOT: workspacesRoot } = await import("../concerns/constants.ts");
+      const points = computeContextParetoFrontier(workspacesRoot);
+      const frontierPoints = points.filter((p) => p.onFrontier);
+      const avgContextOnFrontier = frontierPoints.length > 0
+        ? Math.round(frontierPoints.reduce((s, p) => s + p.contextChars, 0) / frontierPoints.length)
+        : null;
+      return c.json({
+        ok: true,
+        points,
+        summary: {
+          totalDataPoints: points.length,
+          frontierSize: frontierPoints.length,
+          avgContextOnFrontier,
+          successRate: points.length > 0
+            ? Math.round((points.filter((p) => p.outcome === "success").length / points.length) * 100)
+            : null,
+        },
+      });
+    } catch (error) {
+      logger.error({ err: error }, "Failed to compute context Pareto frontier");
       return c.json({ ok: false, error: String(error) }, 500);
     }
   });
