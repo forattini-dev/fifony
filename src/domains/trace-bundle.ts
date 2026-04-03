@@ -56,6 +56,19 @@ export type TraceBundle = {
   turnsDir: string;
 };
 
+export type CausalHypothesis = {
+  signal: string;
+  hypothesis: string;
+  evidence: string[];
+  suggestion: string;
+};
+
+export type StrategyPivot = {
+  reason: string;
+  consecutiveRegressions: number;
+  suggestedApproach: string;
+};
+
 export type CrossAttemptAnalysis = {
   generatedAt: string;
   repeatedFailureTypes: string[];
@@ -66,6 +79,12 @@ export type CrossAttemptAnalysis = {
     nextIssueState?: string;
   }>;
   summary: string[];
+  /** Deterministic causal hypotheses derived from trace patterns */
+  hypotheses?: CausalHypothesis[];
+  /** Strategy pivot recommendation when consecutive failures show no progress */
+  strategyPivot?: StrategyPivot | null;
+  /** Variables that changed between attempts without improving outcome */
+  confounds?: string[];
 };
 
 export const TRACE_DIR = "traces";
@@ -570,6 +589,102 @@ function writeHandoffArtifacts(
 /** Trace directory for an execution attempt: traces/v{plan}a{attempt}. */
 export function traceDir(worktreePath: string, planVersion: number, executeAttempt: number): string {
   return join(workspaceSafePath(worktreePath), TRACE_DIR, `v${planVersion}a${executeAttempt}`);
+}
+
+// ── Trace content reader (Phase 1: Meta-Harness alignment) ──────────────────
+// Reads actual trace artifacts and returns inline-ready content within a char budget.
+// Priority order: handoff > checkpoint summary > diff patch > last directive.
+
+import type { TraceContentSlice } from "../types.ts";
+
+function safeReadFileSlice(filePath: string, maxChars: number): string | null {
+  try {
+    if (!existsSync(filePath)) return null;
+    const raw = readFileSync(filePath, "utf8");
+    return raw.length > maxChars ? raw.slice(0, maxChars) + "\n[...truncated]" : raw;
+  } catch {
+    return null;
+  }
+}
+
+function extractCheckpointSummary(filePath: string, maxChars: number): string | null {
+  try {
+    if (!existsSync(filePath)) return null;
+    const raw = readFileSync(filePath, "utf8");
+    const data = JSON.parse(raw);
+    const parts: string[] = [];
+    if (data.outcome) parts.push(`**Outcome:** ${data.outcome}`);
+    if (data.error) parts.push(`**Error:** ${String(data.error).slice(0, 200)}`);
+    if (Array.isArray(data.reviewBlockers) && data.reviewBlockers.length > 0) {
+      parts.push(`**Review blockers:** ${data.reviewBlockers.map((b: { id?: string; description?: string }) => `${b.id ?? "?"}: ${b.description ?? ""}`).join("; ")}`);
+    }
+    if (Array.isArray(data.remainingWork) && data.remainingWork.length > 0) {
+      parts.push(`**Remaining work:**\n${data.remainingWork.map((w: string) => `- ${w}`).join("\n")}`);
+    }
+    if (data.lastTurn) {
+      const lt = data.lastTurn;
+      if (lt.summary) parts.push(`**Last turn:** ${lt.summary}`);
+    }
+    const result = parts.join("\n");
+    return result.length > maxChars ? result.slice(0, maxChars) + "\n[...truncated]" : result;
+  } catch {
+    return null;
+  }
+}
+
+function extractLastDirectiveSummary(traceDirectory: string, maxChars: number): string | null {
+  const turnsDir = join(traceDirectory, "turns");
+  try {
+    if (!existsSync(turnsDir)) return null;
+    const directives = readdirSync(turnsDir)
+      .filter((f) => f.endsWith(".directive.json"))
+      .sort();
+    if (directives.length === 0) return null;
+    const last = readFileSync(join(turnsDir, directives[directives.length - 1]!), "utf8");
+    const data = JSON.parse(last);
+    const parts: string[] = [];
+    if (data.directiveSummary || data.summary) parts.push(String(data.directiveSummary ?? data.summary));
+    if (data.outputPreview) parts.push(`Output: ${String(data.outputPreview).slice(0, 300)}`);
+    if (data.status) parts.push(`Status: ${data.status}`);
+    const result = parts.join("\n");
+    return result.length > maxChars ? result.slice(0, maxChars) + "\n[...truncated]" : result;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read actual trace content from a prior attempt directory, respecting a char budget.
+ * Returns inline-ready content instead of file path references.
+ */
+export function readTraceContent(traceDirectory: string, budget: number): TraceContentSlice {
+  let remaining = budget;
+  let truncated = false;
+
+  // 1. Handoff — always first (concise, highest value)
+  const handoffBudget = Math.min(Math.floor(budget * 0.35), 2500);
+  const handoffMarkdown = safeReadFileSlice(join(traceDirectory, "handoff.md"), handoffBudget);
+  if (handoffMarkdown) remaining -= handoffMarkdown.length;
+
+  // 2. Checkpoint summary — structured resume state
+  const checkpointBudget = Math.min(Math.floor(budget * 0.2), 1500);
+  const checkpointSummary = remaining > 200 ? extractCheckpointSummary(join(traceDirectory, "checkpoint.json"), Math.min(checkpointBudget, remaining)) : null;
+  if (checkpointSummary) remaining -= checkpointSummary.length;
+
+  // 3. Diff patch — truncated to remaining
+  const diffBudget = Math.min(Math.floor(budget * 0.3), remaining);
+  const diffPatch = remaining > 200 ? safeReadFileSlice(join(traceDirectory, "diff.patch"), Math.min(diffBudget, remaining)) : null;
+  if (diffPatch) remaining -= diffPatch.length;
+
+  // 4. Last directive summary
+  const directiveBudget = Math.min(Math.floor(budget * 0.15), remaining);
+  const lastDirectiveSummary = remaining > 100 ? extractLastDirectiveSummary(traceDirectory, Math.min(directiveBudget, remaining)) : null;
+  if (lastDirectiveSummary) remaining -= lastDirectiveSummary.length;
+
+  const totalChars = budget - remaining;
+  if (totalChars >= budget * 0.95) truncated = true;
+
+  return { handoffMarkdown, checkpointSummary, diffPatch, lastDirectiveSummary, totalChars, truncated };
 }
 
 function workspaceSafePath(workspacePath: string): string {

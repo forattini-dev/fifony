@@ -3,11 +3,12 @@ import { join, relative } from "node:path";
 import type {
   AgentProviderDefinition,
   IssueEntry,
+  RetryContextBudget,
 } from "../types.ts";
 import { renderPrompt } from "./prompting.ts";
 import { buildRecurringFailureContext } from "./review-failure-history.ts";
 import { loadCrossAttemptAnalysis } from "../domains/cross-attempt-analysis.ts";
-import { traceDir } from "../domains/trace-bundle.ts";
+import { traceDir, readTraceContent } from "../domains/trace-bundle.ts";
 import { findSimilarIssueTraces, persistSimilarTraceSelection, type SimilarTraceHit } from "../domains/trace-retrieval.ts";
 
 /** Build retry context from previous failed attempts for injection into prompts. */
@@ -57,6 +58,25 @@ function renderAttemptCompressed(s: NonNullable<IssueEntry["previousAttemptSumma
 const DEFAULT_RETRY_CONTEXT_MAX_CHARS = 10_000;
 const TRACE_REFERENCE_ATTEMPTS = 2;
 
+/**
+ * Compute a model-aware retry context budget.
+ * Larger context windows get proportionally more budget for trace content.
+ */
+export function computeRetryBudget(modelName?: string): RetryContextBudget {
+  const ctxWindow = resolveContextWindow(modelName);
+  // Budget as fraction of context window: ~3.5% for 200K, ~1.5% for 1M (diminishing returns)
+  const totalChars = ctxWindow
+    ? Math.min(60_000, Math.max(15_000, Math.round(ctxWindow * 0.04)))
+    : DEFAULT_RETRY_CONTEXT_MAX_CHARS;
+  return {
+    totalChars,
+    traceContentChars: Math.round(totalChars * 0.50),
+    crossAttemptChars: Math.round(totalChars * 0.20),
+    similarIssueChars: Math.round(totalChars * 0.15),
+    gradingChars: Math.round(totalChars * 0.15),
+  };
+}
+
 function hasTraceArtifacts(issue: IssueEntry, worktreePath: string): boolean {
   return (issue.previousAttemptSummaries ?? []).some((summary) =>
     existsSync(traceDir(worktreePath, summary.planVersion, summary.executeAttempt)),
@@ -81,39 +101,46 @@ function renderTraceAttempt(
   worktreePath: string,
   summary: NonNullable<IssueEntry["previousAttemptSummaries"]>[number],
   index: number,
+  perAttemptBudget = 5000,
 ): string {
   const tracePath = traceDir(worktreePath, summary.planVersion, summary.executeAttempt);
   if (!existsSync(tracePath)) {
     return renderAttemptFull(summary, index);
   }
 
-  const handoffPath = relative(worktreePath, join(tracePath, "handoff.md"));
-  const checkpointPath = relative(worktreePath, join(tracePath, "checkpoint.json"));
-  const railsPath = relative(worktreePath, join(tracePath, "rails.json"));
-  const manifestPath = relative(worktreePath, join(tracePath, "attempt.json"));
-  const diffPatchPath = relative(worktreePath, join(tracePath, "diff.patch"));
-  const lastDirectivePath = findLastDirectiveRelativePath(worktreePath, tracePath);
-  const lines = [
-    renderAttemptFull(summary, index).trimEnd(),
-    "**Trace files to inspect selectively:**",
-  ];
-  if (existsSync(join(tracePath, "handoff.md"))) {
-    lines.push(`- \`${handoffPath}\` *(start here for the concise resume summary)*`);
+  // Read actual trace content instead of listing file paths
+  const content = readTraceContent(tracePath, perAttemptBudget);
+  const lines = [renderAttemptFull(summary, index).trimEnd()];
+
+  if (content.handoffMarkdown) {
+    lines.push("\n**Handoff from previous attempt:**");
+    lines.push(content.handoffMarkdown.trim());
   }
-  if (existsSync(join(tracePath, "checkpoint.json"))) {
-    lines.push(`- \`${checkpointPath}\``);
+
+  if (content.checkpointSummary) {
+    lines.push("\n**Checkpoint state:**");
+    lines.push(content.checkpointSummary.trim());
   }
-  if (existsSync(join(tracePath, "rails.json"))) {
-    lines.push(`- \`${railsPath}\` *(active harness rails, budgets, and policy decisions)*`);
+
+  if (content.lastDirectiveSummary) {
+    lines.push("\n**Last agent directive:**");
+    lines.push(content.lastDirectiveSummary.trim());
   }
-  lines.push(`- \`${manifestPath}\``);
-  if (lastDirectivePath) {
-    lines.push(`- \`${lastDirectivePath}\``);
+
+  if (content.diffPatch) {
+    lines.push("\n**Workspace changes (diff):**");
+    lines.push("```diff");
+    lines.push(content.diffPatch.trim());
+    lines.push("```");
   }
-  if (existsSync(join(tracePath, "diff.patch"))) {
-    lines.push(`- \`${diffPatchPath}\``);
+
+  // Fallback: list remaining trace paths for artifacts that didn't fit
+  if (content.truncated) {
+    const railsPath = relative(worktreePath, join(tracePath, "rails.json"));
+    const manifestPath = relative(worktreePath, join(tracePath, "attempt.json"));
+    lines.push(`\n*Additional trace artifacts (not inlined due to budget): \`${railsPath}\`, \`${manifestPath}\`*`);
   }
-  lines.push("*Start with the handoff/checkpoint artifacts, then inspect raw artifacts only if they matter for the failure mode before retrying the same path.*");
+
   lines.push("");
   return lines.join("\n");
 }
@@ -123,42 +150,33 @@ function renderCrossAttemptContext(issue: IssueEntry, worktreePath: string): str
   const analysis = loadCrossAttemptAnalysis(currentTraceDir);
   if (!analysis) return "";
 
-  const analysisPath = relative(worktreePath, join(currentTraceDir, "cross-attempt.json"));
   const lines = [
     "## Cross-Attempt Patterns\n",
-    `Read \`${analysisPath}\` if you need the full deterministic comparison.`,
     ...analysis.summary.map((entry) => `- ${entry}`),
-    "",
-  ];
-  return lines.join("\n");
-}
-
-function renderSimilarIssueTraceContext(
-  worktreePath: string,
-  currentTraceDir: string,
-  hits: SimilarTraceHit[],
-): string {
-  if (hits.length === 0) return "";
-
-  const selectionArtifactPath = relative(worktreePath, join(currentTraceDir, "similar-traces.json"));
-
-  const lines = [
-    "## Similar Prior Failures Across Issues\n",
-    "These traces come from other issues with overlapping failure signals. Reuse them only if the match is real, and start with the handoff/checkpoint artifacts before opening raw diffs.\n",
-    `Read \`${selectionArtifactPath}\` if you need the full ranked selection and scoring rationale.`,
   ];
 
-  for (const hit of hits) {
-    lines.push(`- **${hit.issueIdentifier}** (score ${hit.score}): ${hit.reasons.join("; ")}`);
-    if (hit.files.handoff) {
-      lines.push(`  - \`${hit.files.handoff}\``);
+  // Causal hypotheses (Phase 2)
+  if (analysis.hypotheses && analysis.hypotheses.length > 0) {
+    lines.push("\n### Causal Hypotheses\n");
+    for (const h of analysis.hypotheses) {
+      lines.push(`- **Signal:** ${h.signal}`);
+      lines.push(`  **Hypothesis:** ${h.hypothesis}`);
+      lines.push(`  **Try:** ${h.suggestion}`);
     }
-    if (hit.files.checkpoint) {
-      lines.push(`  - \`${hit.files.checkpoint}\``);
-    }
-    lines.push(`  - \`${hit.files.attempt}\``);
-    if (hit.files.diffPatch) {
-      lines.push(`  - \`${hit.files.diffPatch}\``);
+  }
+
+  // Strategy pivot
+  if (analysis.strategyPivot) {
+    lines.push(`\n### Strategy Pivot Required\n`);
+    lines.push(`**${analysis.strategyPivot.consecutiveRegressions} consecutive regressions.** ${analysis.strategyPivot.reason}.`);
+    lines.push(`**Action:** ${analysis.strategyPivot.suggestedApproach}`);
+  }
+
+  // Confounds
+  if (analysis.confounds && analysis.confounds.length > 0) {
+    lines.push(`\n### Likely Irrelevant Changes\n`);
+    for (const c of analysis.confounds) {
+      lines.push(`- ${c}`);
     }
   }
 
@@ -166,18 +184,60 @@ function renderSimilarIssueTraceContext(
   return lines.join("\n");
 }
 
+function renderSimilarIssueTraceContext(
+  _worktreePath: string,
+  _currentTraceDir: string,
+  hits: SimilarTraceHit[],
+): string {
+  if (hits.length === 0) return "";
+
+  const lines = [
+    "## Similar Prior Failures Across Issues\n",
+    "These are lessons extracted from other issues with overlapping failure signals. Apply them only if the match is genuinely relevant.\n",
+  ];
+
+  for (const hit of hits) {
+    lines.push(`### ${hit.issueIdentifier} (score ${hit.score}): ${hit.reasons.join("; ")}`);
+
+    if (hit.lesson) {
+      lines.push(`**Outcome:** ${hit.lesson.outcome}`);
+      if (hit.lesson.whatFailed) {
+        lines.push(`**What failed:** ${hit.lesson.whatFailed}`);
+      }
+      if (hit.lesson.whatWorked) {
+        lines.push(`**What worked:** ${hit.lesson.whatWorked}`);
+      }
+      if (hit.lesson.reviewBlockers.length > 0) {
+        lines.push(`**Review blockers:** ${hit.lesson.reviewBlockers.join(", ")}`);
+      }
+      if (hit.lesson.handoffSummary) {
+        lines.push(`**Handoff excerpt:**`);
+        lines.push(hit.lesson.handoffSummary.trim());
+      }
+    } else {
+      // Fallback to file references if no lesson extracted
+      if (hit.files.handoff) lines.push(`  - \`${hit.files.handoff}\``);
+      lines.push(`  - \`${hit.files.attempt}\``);
+    }
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
 export function buildRetryContext(
   issue: IssueEntry,
   worktreePath?: string,
-  options: { maxChars?: number } = {},
+  options: { budget?: RetryContextBudget; maxChars?: number; modelName?: string } = {},
 ): string {
   const summaries = issue.previousAttemptSummaries;
   const recurringFailureContext = buildRecurringFailureContext(issue);
   if ((!summaries || summaries.length === 0) && !recurringFailureContext) return "";
 
+  const budget = options.budget ?? computeRetryBudget(options.modelName);
   const lines: string[] = [];
-  const maxChars = options.maxChars ?? DEFAULT_RETRY_CONTEXT_MAX_CHARS;
-  const canUseTraceRefs = Boolean(worktreePath && hasTraceArtifacts(issue, worktreePath));
+  const maxChars = budget.totalChars;
+  const canUseTraces = Boolean(worktreePath && hasTraceArtifacts(issue, worktreePath));
   const currentTraceDir = worktreePath ? traceDir(worktreePath, issue.planVersion ?? 1, issue.executeAttempt ?? 1) : "";
   const crossAttemptContext = worktreePath ? renderCrossAttemptContext(issue, worktreePath) : "";
   const similarIssueTraceHits = worktreePath ? findSimilarIssueTraces(issue, worktreePath, { maxResults: 2 }) : [];
@@ -191,8 +251,8 @@ export function buildRetryContext(
   if (summaries && summaries.length > 0) {
     lines.push("## Previous Attempts\n");
     lines.push("The following previous attempts FAILED. Do NOT repeat the same approach. Try a fundamentally different strategy.\n");
-    if (canUseTraceRefs) {
-      lines.push("This context is not fully self-contained. Read the referenced trace files selectively before repeating the same implementation path.\n");
+    if (canUseTraces) {
+      lines.push("**This context includes inline trace content from prior attempts** — handoffs, diffs, and checkpoint data are embedded below. Use this evidence to understand exactly what was tried and why it failed.\n");
     } else {
       lines.push("**This context is self-contained** — all evidence you need is below. Do not assume prior knowledge. Read the specific errors, file paths, and suggestions carefully before starting.\n");
     }
@@ -206,12 +266,13 @@ export function buildRetryContext(
     lines.push(similarIssueTraceContext);
   }
 
-  if (canUseTraceRefs && summaries && summaries.length > 0) {
+  if (canUseTraces && summaries && summaries.length > 0) {
     const recentAttempts = summaries.slice(-TRACE_REFERENCE_ATTEMPTS);
+    const perAttemptBudget = Math.floor(budget.traceContentChars / Math.max(1, recentAttempts.length));
     lines.push("### Most Relevant Prior Attempts\n");
     for (let i = 0; i < recentAttempts.length; i++) {
       const absoluteIndex = summaries.length - recentAttempts.length + i;
-      lines.push(renderTraceAttempt(worktreePath!, recentAttempts[i], absoluteIndex));
+      lines.push(renderTraceAttempt(worktreePath!, recentAttempts[i], absoluteIndex, perAttemptBudget));
     }
   } else if (summaries && summaries.length >= 5) {
     // Smart context selection for 5+ attempts: cluster by error type, deduplicate,

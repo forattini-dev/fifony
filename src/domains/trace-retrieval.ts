@@ -37,6 +37,14 @@ type SimilarTraceRails = {
   }>;
 };
 
+export type SimilarTraceLessonExtract = {
+  outcome: string;
+  handoffSummary: string | null;
+  reviewBlockers: string[];
+  whatWorked: string | null;
+  whatFailed: string | null;
+};
+
 export type SimilarTraceHit = {
   issueId: string;
   issueIdentifier: string;
@@ -48,6 +56,8 @@ export type SimilarTraceHit = {
     attempt: string;
     diffPatch?: string;
   };
+  /** Extracted lesson from the similar trace (deterministic, no LLM) */
+  lesson?: SimilarTraceLessonExtract | null;
 };
 
 type SimilarTraceSelectionArtifact = {
@@ -369,6 +379,56 @@ export function persistSimilarTraceSelection(
   }
 }
 
+// ── Lesson extraction (Phase 3: Meta-Harness alignment) ─────────────────────
+
+function extractLessonFromTrace(tracePath: string): SimilarTraceLessonExtract | null {
+  const manifest = loadAttemptManifest(tracePath);
+  if (!manifest) return null;
+
+  const outcome = manifest.outcome ?? "unknown";
+
+  // Read first 500 chars of handoff
+  let handoffSummary: string | null = null;
+  try {
+    const handoffPath = join(tracePath, "handoff.md");
+    if (existsSync(handoffPath)) {
+      const raw = readFileSync(handoffPath, "utf8");
+      handoffSummary = raw.length > 500 ? raw.slice(0, 500) + "..." : raw;
+    }
+  } catch { /* ignore */ }
+
+  // Extract review blockers from checkpoint
+  const checkpoint = readJsonFile<SimilarTraceCheckpoint>(join(tracePath, "checkpoint.json"));
+  const reviewBlockers = (checkpoint?.reviewBlockers ?? [])
+    .map((b) => b.id)
+    .filter((v): v is string => typeof v === "string" && v.length > 0);
+
+  // Derive what worked/failed based on outcome
+  let whatWorked: string | null = null;
+  let whatFailed: string | null = null;
+
+  if (outcome === "success") {
+    // Extract strategy from last directive
+    const turnsDir = join(tracePath, "turns");
+    try {
+      if (existsSync(turnsDir)) {
+        const directives = readdirSync(turnsDir).filter((f) => f.endsWith(".directive.json")).sort();
+        if (directives.length > 0) {
+          const last = readJsonFile<{ directiveSummary?: string; summary?: string }>(join(turnsDir, directives[directives.length - 1]!));
+          whatWorked = last?.directiveSummary ?? last?.summary ?? null;
+        }
+      }
+    } catch { /* ignore */ }
+  } else {
+    whatFailed = manifest.error ?? null;
+    if (!whatFailed && checkpoint?.remainingWork?.length) {
+      whatFailed = `Remaining: ${checkpoint.remainingWork.slice(0, 3).join("; ")}`;
+    }
+  }
+
+  return { outcome, handoffSummary, reviewBlockers, whatWorked, whatFailed };
+}
+
 export function findSimilarIssueTraces(
   issue: IssueEntry,
   workspacePath: string,
@@ -444,6 +504,7 @@ export function findSimilarIssueTraces(
             ? relative(workspacePath, join(tracePath, "diff.patch"))
             : undefined,
         },
+        lesson: extractLessonFromTrace(tracePath),
       });
     }
   }

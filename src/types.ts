@@ -182,6 +182,25 @@ export type AttemptSummary = {
   };
 };
 
+/** Inline trace content extracted from a prior attempt's trace directory. */
+export type TraceContentSlice = {
+  handoffMarkdown: string | null;
+  checkpointSummary: string | null;
+  diffPatch: string | null;
+  lastDirectiveSummary: string | null;
+  totalChars: number;
+  truncated: boolean;
+};
+
+/** Structured budget for retry context sections (model-aware). */
+export type RetryContextBudget = {
+  totalChars: number;
+  traceContentChars: number;
+  crossAttemptChars: number;
+  similarIssueChars: number;
+  gradingChars: number;
+};
+
 export type ValidationResult = {
   passed: boolean;
   output: string;
