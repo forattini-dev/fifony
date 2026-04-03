@@ -582,18 +582,22 @@ export async function runAgentPipeline(
   }
 
   if (issue.attempts > 0) {
+    // Select template variant (Phase 5: harness search foundation)
+    const { selectVariant } = await import("./template-variants.ts");
+    const variantSelection = selectVariant("default");
+
     const retryCtx = buildRetryContext(issue, workspacePath, { modelName: effectiveProvider.model });
     if (retryCtx) {
       providerPrompt = `${providerPrompt}\n\n${retryCtx}`;
     }
-    // Persist context metrics for Pareto tracking (Phase 4)
+    // Persist context metrics + variant selection for Pareto tracking (Phase 4-5)
     const retryMetrics = getLastRetryContextMetrics();
-    if (retryMetrics && workspacePath) {
+    if (workspacePath) {
       try {
-        const { persistContextMetrics } = await import("../domains/trace-bundle.ts");
-        const { traceDir: td } = await import("../domains/trace-bundle.ts");
+        const { persistContextMetrics, finalizeAttemptManifest, traceDir: td } = await import("../domains/trace-bundle.ts");
         const metricsDir = td(workspacePath, issue.planVersion ?? 1, issue.executeAttempt ?? 1);
-        persistContextMetrics(metricsDir, retryMetrics.metrics);
+        if (retryMetrics) persistContextMetrics(metricsDir, retryMetrics.metrics);
+        finalizeAttemptManifest(metricsDir, { templateVariant: variantSelection } as import("../domains/trace-bundle.ts").AttemptManifestPatch);
       } catch { /* non-critical */ }
     }
   }

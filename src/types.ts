@@ -226,6 +226,29 @@ export type HarnessOutcomeMetrics = {
   similarIssuesUsed: number;
 };
 
+/** A registered prompt template variant for A/B testing and harness search. */
+export type TemplateVariant = {
+  id: string;
+  description: string;
+  /** Selection weight (0-1) for weighted-random selection. */
+  weight: number;
+  active: boolean;
+  /** Variant-specific parameters that override defaults in buildRetryContext. */
+  parameters: {
+    budgetMultiplier?: number;
+    inlineTraceContent?: boolean;
+    hypothesisGeneration?: boolean;
+    lessonExtraction?: boolean;
+  };
+};
+
+/** Records which variant was selected for an attempt. */
+export type TemplateVariantSelection = {
+  variantId: string;
+  selectedAt: string;
+  selectionMethod: "default" | "weighted-random" | "adaptive";
+};
+
 export type ValidationResult = {
   passed: boolean;
   output: string;
@@ -760,6 +783,8 @@ export type RuntimeConfig = {
   proxyRoutes?: ProxyRoute[];
   /** Local domain used by the HTTPS reverse proxy, e.g. "spark.local". A cert for domain + *.domain is auto-generated. */
   localDomain?: string;
+  /** Registered template variants for A/B testing and harness search. */
+  templateVariants?: TemplateVariant[];
 };
 
 export interface ProxyRoute {

@@ -22,6 +22,8 @@ export type AttemptManifest = {
   nextIssueState?: IssueState;
   exitCode?: number | null;
   error?: string;
+  /** Template variant used for this attempt (Phase 5: harness search foundation). */
+  templateVariant?: import("../types.ts").TemplateVariantSelection;
   files: {
     attemptManifest: string;
     transcript: string;
@@ -47,6 +49,7 @@ export type AttemptManifestPatch = {
   error?: string;
   rawOutputs?: string[];
   files?: Partial<AttemptManifest["files"]>;
+  templateVariant?: import("../types.ts").TemplateVariantSelection;
 };
 
 export type TraceBundle = {

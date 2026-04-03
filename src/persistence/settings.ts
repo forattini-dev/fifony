@@ -59,6 +59,7 @@ export const SETTING_ID_REVERSE_PROXY_ENABLED = "runtime.reverseProxyEnabled";
 export const SETTING_ID_REVERSE_PROXY_PORT = "runtime.reverseProxyPort";
 export const SETTING_ID_PROXY_ROUTES = "runtime.proxyRoutes";
 export const SETTING_ID_LOCAL_DOMAIN = "runtime.localDomain";
+export const SETTING_ID_TEMPLATE_VARIANTS = "runtime.templateVariants";
 
 const LOCAL_DOMAIN_PORT_SUFFIX = /:\d+$/;
 
@@ -425,6 +426,12 @@ export function applyPersistedSettings(config: RuntimeConfig, settings: RuntimeS
       case SETTING_ID_LOCAL_DOMAIN: {
         const d = normalizeLocalDomain(setting.value);
         if (d) nextConfig.localDomain = d;
+        break;
+      }
+      case SETTING_ID_TEMPLATE_VARIANTS: {
+        if (Array.isArray(setting.value)) {
+          nextConfig.templateVariants = setting.value as import("../types.ts").TemplateVariant[];
+        }
         break;
       }
       default:
