@@ -421,18 +421,7 @@ async function main() {
   agentWatcher = startManagedAgentWatcher(
     () => apiState.issues,
     STATE_ROOT,
-    (t) => {
-      logger.info({ issueId: t.issueId, identifier: t.identifier, from: t.from, to: t.to, reason: t.reason }, "[AgentFSM] Transition");
-      broadcastToWebSocketClients({
-        type: "agent-fsm",
-        issueId: t.issueId,
-        identifier: t.identifier,
-        operation: t.operation,
-        state: t.to,
-        running: t.to === "running" || t.to === "preparing",
-        pid: t.pid ?? null,
-      });
-    },
+    () => {},  // WS broadcast handled in domain layer (startManagedAgentWatcher)
   );
 
   // Runtime sidecars must survive Fifony shutdown; do not stop them here.

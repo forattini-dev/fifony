@@ -26,7 +26,21 @@ export function startManagedAgentWatcher(
   fifonyDir: string,
   onTransition: (t: AgentTransition) => void,
 ): { stop: () => void } {
-  return initAgentWatcher(getIssues, fifonyDir, onTransition);
+  return initAgentWatcher(getIssues, fifonyDir, (t) => {
+    // Broadcast agent state to frontend via WS
+    import("../routes/websocket.ts").then(({ broadcastToWebSocketClients }) => {
+      broadcastToWebSocketClients({
+        type: "agent-fsm",
+        issueId: t.issueId,
+        identifier: t.identifier,
+        operation: t.operation,
+        state: t.to,
+        running: t.to === "running" || t.to === "preparing",
+        pid: t.pid ?? null,
+      });
+    }).catch(() => {});
+    onTransition(t);
+  });
 }
 
 export function canDispatchManagedAgent(

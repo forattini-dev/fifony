@@ -1831,7 +1831,10 @@ export function initAgentWatcher(
     const issues = getIssues();
     if (issues.length === 0) return;
     const transitions = tickAgentWatcher(issues, fifonyDir);
-    for (const t of transitions) onTransition(t);
+    for (const t of transitions) {
+      logger.info({ issueId: t.issueId, identifier: t.identifier, from: t.from, to: t.to, reason: t.reason }, "[AgentFSM] Transition");
+      onTransition(t);
+    }
   }, AGENT_WATCHER_INTERVAL_MS);
 
   return { stop: () => clearInterval(intervalId) };
