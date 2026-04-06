@@ -24,13 +24,12 @@ type Entry = {
 
 const active = new Map<string, Entry>();
 
-export async function startServiceLogBroadcasting(id: string, fifonyDir: string): Promise<void> {
+export function startServiceLogBroadcasting(id: string, fifonyDir: string): void {
   if (active.has(id)) return;
 
   const logPath = serviceLogPath(fifonyDir, id);
   if (!existsSync(logPath)) return;
 
-  // Start tailing from current EOF — the HTTP initial fetch handles history
   const tail = new TailFile(logPath, {
     startPos: null,             // null = start from EOF
     pollFileIntervalMs: 250,    // 250ms poll — fast enough for real-time feel
@@ -86,24 +85,28 @@ export async function startServiceLogBroadcasting(id: string, fifonyDir: string)
     logger.warn({ id, err }, "[ServiceLogBroadcaster] Tail error");
   });
 
+  // Register BEFORE async start — so stopServiceLogBroadcasting can find it
   active.set(id, entry);
 
-  try {
-    await tail.start();
+  // start() is async but we fire-and-forget — the data listener is already
+  // attached so chunks will flow as soon as start completes.
+  tail.start().then(() => {
     logger.debug({ id, logPath }, "[ServiceLogBroadcaster] Started tailing");
-  } catch (err) {
+  }).catch((err) => {
     logger.warn({ id, err }, "[ServiceLogBroadcaster] Failed to start tail");
     active.delete(id);
-  }
+  });
 }
 
-export async function stopServiceLogBroadcasting(id: string): Promise<void> {
+export function stopServiceLogBroadcasting(id: string): void {
   const entry = active.get(id);
   if (!entry) return;
-  try { await entry.tail.quit(); } catch {}
+  // Delete from map SYNCHRONOUSLY so a subsequent start() won't early-return
   active.delete(id);
+  // Quit the tail asynchronously — fire-and-forget
+  entry.tail.quit().catch(() => {});
 }
 
-export async function stopAllServiceLogBroadcasting(): Promise<void> {
-  for (const id of [...active.keys()]) await stopServiceLogBroadcasting(id);
+export function stopAllServiceLogBroadcasting(): void {
+  for (const id of [...active.keys()]) stopServiceLogBroadcasting(id);
 }
