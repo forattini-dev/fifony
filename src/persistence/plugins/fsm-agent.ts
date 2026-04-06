@@ -167,6 +167,133 @@ export function cleanAgentJobState(fifonyDir: string, issueId: string): void {
   try { rmSync(jobStatePath(fifonyDir, issueId), { force: true }); } catch {}
 }
 
+// ── Agent State Machine Config (s3db.js StateMachinePlugin) ─────────────────
+
+export const AGENT_STATE_MACHINE_ID = "agent-lifecycle";
+
+export const agentStateMachineConfig = {
+  persistTransitions: true,
+  workerId: `fifony-agent-${process.pid}`,
+  lockTimeout: 5_000,
+  lockTTL: 30,
+  enableFunctionTriggers: true,
+  triggerCheckInterval: AGENT_WATCHER_INTERVAL_MS,
+
+  stateMachines: {
+    [AGENT_STATE_MACHINE_ID]: {
+      stateField: "state",
+      initialState: "idle" as AgentState,
+      autoCleanup: false,
+
+      hooks: {
+        afterTransition: "onAgentTransition",
+      },
+
+      states: {
+        idle: {
+          on: { PREPARE: "preparing" },
+        },
+
+        preparing: {
+          on: {
+            SPAWN: "running",
+            FAIL: "failed",
+            COMPLETE: "done",
+          },
+        },
+
+        running: {
+          on: {
+            COMPLETE: "done",
+            FAIL: "failed",
+            CRASH: "crashed",
+          },
+          // Detect agent process death via PID check
+          triggers: [{
+            type: "function" as const,
+            interval: AGENT_WATCHER_INTERVAL_MS,
+            condition: async (context: Record<string, unknown>, entityId: string): Promise<boolean> => {
+              const job = readJobState(STATE_ROOT, entityId);
+              if (!job || job.state !== "running") return false;
+              if (!job.workspacePath || !existsSync(job.workspacePath)) return false;
+              const pidInfo = readAgentPid(job.workspacePath);
+              if (!pidInfo) return false;
+              return !isProcessAlive(pidInfo.pid);
+            },
+            sendEvent: "CRASH",
+          }],
+        },
+
+        crashed: {
+          type: "final" as const,
+          on: {},
+          afterEnter: "onAgentCrash",
+        },
+
+        done: {
+          type: "final" as const,
+          on: {},
+          afterEnter: "onAgentDone",
+        },
+
+        failed: {
+          type: "final" as const,
+          on: {},
+          afterEnter: "onAgentFailed",
+        },
+      },
+    },
+  },
+
+  actions: {
+    onAgentTransition: async (context: Record<string, unknown>, _event: string, machine: { entityId: string }) => {
+      const job = readJobState(STATE_ROOT, machine.entityId);
+      const state = job?.state ?? "idle";
+      logger.info({ issueId: machine.entityId, event: _event, state }, "[AgentFSM] Transition (hook)");
+
+      // WS broadcast
+      try {
+        const { broadcastToWebSocketClients } = await import("../../routes/websocket.ts");
+        broadcastToWebSocketClients({
+          type: "agent-fsm",
+          issueId: machine.entityId,
+          identifier: job?.identifier ?? machine.entityId,
+          operation: job?.operation ?? null,
+          state,
+          running: state === "running" || state === "preparing",
+          pid: null,
+        });
+      } catch {}
+    },
+
+    onAgentCrash: async (context: Record<string, unknown>, _event: string, machine: { entityId: string }) => {
+      const job = readJobState(STATE_ROOT, machine.entityId);
+      if (!job) return;
+      const crashCount = (job.crashCount ?? 0) + 1;
+      writeJobState(STATE_ROOT, { ...job, state: "crashed", crashCount, lastCrashAt: now(), updatedAt: now() });
+      logger.warn({ issueId: machine.entityId, identifier: job.identifier, crashCount }, "[AgentFSM] Agent crashed (PID gone)");
+    },
+
+    onAgentDone: async (_context: Record<string, unknown>, _event: string, machine: { entityId: string }) => {
+      cleanAgentJobState(STATE_ROOT, machine.entityId);
+      try {
+        const { stopIssueLogBroadcasting } = await import("./issue-log-broadcaster.ts");
+        stopIssueLogBroadcasting(machine.entityId);
+      } catch {}
+    },
+
+    onAgentFailed: async (_context: Record<string, unknown>, _event: string, machine: { entityId: string }) => {
+      cleanAgentJobState(STATE_ROOT, machine.entityId);
+      try {
+        const { stopIssueLogBroadcasting } = await import("./issue-log-broadcaster.ts");
+        stopIssueLogBroadcasting(machine.entityId);
+      } catch {}
+    },
+  },
+
+  guards: {},
+};
+
 // ── Operation derivation ──────────────────────────────────────────────────────
 
 /**
@@ -1771,73 +1898,6 @@ export async function runExecutePhase(
     onTransition?.({ issueId: issue.id, identifier: issue.identifier, operation: _op, from: "running", to: "done", pid: null, reason: "execute phase complete", at: now() });
     import("./issue-log-broadcaster.ts").then(({ stopIssueLogBroadcasting }) => stopIssueLogBroadcasting(issue.id)).catch(() => {});
   }
-}
-
-// ── Watcher tick ──────────────────────────────────────────────────────────────
-
-function tickOneAgent(
-  issue: IssueEntry,
-  fifonyDir: string,
-): AgentTransition | null {
-  const job = readJobState(fifonyDir, issue.id);
-  if (!job) return null;
-  if (job.state === "done" || job.state === "failed" || job.state === "idle" || job.state === "crashed") return null;
-
-  if (job.state === "running" || job.state === "preparing") {
-    if (!job.workspacePath || !existsSync(job.workspacePath)) return null;
-    const pidInfo = readAgentPid(job.workspacePath);
-    const alive = pidInfo ? isProcessAlive(pidInfo.pid) : false;
-
-    if (!alive && pidInfo) {
-      const crashCount = (job.crashCount ?? 0) + 1;
-      writeJobState(fifonyDir, { ...job, state: "crashed", crashCount, lastCrashAt: now(), updatedAt: now() });
-      logger.warn({ issueId: issue.id, identifier: issue.identifier, crashCount }, "[AgentFSM] FSM: running → crashed (PID gone)");
-      return {
-        issueId: issue.id, identifier: issue.identifier,
-        operation: job.operation, from: "running", to: "crashed",
-        pid: null, reason: `agent process died (crash #${crashCount})`, at: now(),
-      };
-    }
-  }
-
-  return null;
-}
-
-export function tickAgentWatcher(
-  issues: IssueEntry[],
-  fifonyDir: string,
-): AgentTransition[] {
-  const transitions: AgentTransition[] = [];
-  for (const issue of issues) {
-    if (issue.state !== "Running" && issue.state !== "Reviewing" && issue.state !== "Planning") continue;
-    try {
-      const t = tickOneAgent(issue, fifonyDir);
-      if (t) transitions.push(t);
-    } catch (err) {
-      logger.warn({ err, issueId: issue.id }, "[AgentFSM] Watcher tick error");
-    }
-  }
-  return transitions;
-}
-
-// ── Watcher lifecycle ─────────────────────────────────────────────────────────
-
-export function initAgentWatcher(
-  getIssues: () => IssueEntry[],
-  fifonyDir: string,
-  onTransition: (t: AgentTransition) => void,
-): { stop: () => void } {
-  const intervalId = setInterval(() => {
-    const issues = getIssues();
-    if (issues.length === 0) return;
-    const transitions = tickAgentWatcher(issues, fifonyDir);
-    for (const t of transitions) {
-      logger.info({ issueId: t.issueId, identifier: t.identifier, from: t.from, to: t.to, reason: t.reason }, "[AgentFSM] Transition");
-      onTransition(t);
-    }
-  }, AGENT_WATCHER_INTERVAL_MS);
-
-  return { stop: () => clearInterval(intervalId) };
 }
 
 // ── Boot reconciliation ───────────────────────────────────────────────────────

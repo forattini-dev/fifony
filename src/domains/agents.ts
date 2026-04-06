@@ -3,7 +3,6 @@ import {
   agentLogPath,
   canDispatchAgent,
   getAgentStatus,
-  initAgentWatcher,
   reconcileAgentStates,
   runExecutePhase,
   runPlanPhase,
@@ -19,28 +18,6 @@ export function reconcileAgentStateTransitions(
   fifonyDir: string,
 ): AgentTransition[] {
   return reconcileAgentStates(issues, fifonyDir);
-}
-
-export function startManagedAgentWatcher(
-  getIssues: () => IssueEntry[],
-  fifonyDir: string,
-  onTransition: (t: AgentTransition) => void,
-): { stop: () => void } {
-  return initAgentWatcher(getIssues, fifonyDir, (t) => {
-    // Broadcast agent state to frontend via WS
-    import("../routes/websocket.ts").then(({ broadcastToWebSocketClients }) => {
-      broadcastToWebSocketClients({
-        type: "agent-fsm",
-        issueId: t.issueId,
-        identifier: t.identifier,
-        operation: t.operation,
-        state: t.to,
-        running: t.to === "running" || t.to === "preparing",
-        pid: t.pid ?? null,
-      });
-    }).catch(() => {});
-    onTransition(t);
-  });
 }
 
 export function canDispatchManagedAgent(

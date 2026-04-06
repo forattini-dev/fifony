@@ -36,7 +36,6 @@ import {
 import { setServiceRuntime } from "./persistence/plugins/fsm-service.ts";
 import {
   reconcileAgentStateTransitions,
-  startManagedAgentWatcher,
 } from "./domains/agents.ts";
 import { broadcastToWebSocketClients } from "./routes/websocket.ts";
 import {
@@ -89,7 +88,6 @@ function usage() {
 }
 
 async function main() {
-  let agentWatcher: { stop: () => void } | null = null;
   debugBoot("main:start");
 
   const args = CLI_ARGS;
@@ -418,11 +416,9 @@ async function main() {
   // timeout, auto-restart). WS broadcast + log broadcaster are driven by
   // the machine-level afterTransition hook in serviceStateMachineConfig.
 
-  agentWatcher = startManagedAgentWatcher(
-    () => apiState.issues,
-    STATE_ROOT,
-    () => {},  // WS broadcast handled in domain layer (startManagedAgentWatcher)
-  );
+  // Agent watcher removed — s3db.js StateMachinePlugin function triggers
+  // now detect agent process death and fire CRASH event. The afterEnter hook
+  // on "crashed" state handles job file update + WS broadcast.
 
   // Runtime sidecars must survive Fifony shutdown; do not stop them here.
   process.once("SIGINT", () => {
@@ -484,7 +480,6 @@ async function main() {
     state.updatedAt = now();
     state.metrics = computeMetrics(state.issues);
     await persistStateFull(state);
-    try { agentWatcher?.stop(); } catch {}
     try { await stopQueueWorkers(); } catch {}
     await closeStateStore();
   }

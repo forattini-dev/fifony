@@ -48,6 +48,7 @@ let contextFragmentResource: S3dbResource | null = null;
 let activeApiPlugin: { stop?: () => Promise<void> } | null = null;
 let activeStateMachinePlugin: { stop?: () => Promise<void> } | null = null;
 let activeServiceStateMachinePlugin: { stop?: () => Promise<void> } | null = null;
+let activeAgentStateMachinePlugin: { stop?: () => Promise<void> } | null = null;
 let activeEcPlugin: S3dbModule["EventualConsistencyPlugin"] extends new (...a: never[]) => infer R ? R | null : null = null;
 
 import {
@@ -242,6 +243,22 @@ export async function initStateStore(): Promise<void> {
       logger.info("Service StateMachinePlugin installed.");
     } catch (error) {
       logger.warn(`Service StateMachinePlugin failed to install: ${String(error)}`);
+    }
+  }
+
+  // ── Agent State Machine Plugin ──────────────────────────────────────────────
+  if (StateMachinePlugin) {
+    try {
+      const { agentStateMachineConfig } = await import("./plugins/fsm-agent.ts");
+      const agentSmPlugin = await stateDb.usePlugin(
+        new StateMachinePlugin(agentStateMachineConfig) as unknown,
+        "agent-state-machine",
+      ) as Record<string, unknown>;
+
+      activeAgentStateMachinePlugin = agentSmPlugin as { stop?: () => Promise<void> };
+      logger.info("Agent StateMachinePlugin installed.");
+    } catch (error) {
+      logger.warn(`Agent StateMachinePlugin failed to install: ${String(error)}`);
     }
   }
 
@@ -758,6 +775,15 @@ export async function closeStateStore(): Promise<void> {
       logger.warn(`Failed to stop Service StateMachine plugin: ${String(error)}`);
     } finally {
       activeServiceStateMachinePlugin = null;
+    }
+  }
+  if (activeAgentStateMachinePlugin?.stop) {
+    try {
+      await activeAgentStateMachinePlugin.stop();
+    } catch (error) {
+      logger.warn(`Failed to stop Agent StateMachine plugin: ${String(error)}`);
+    } finally {
+      activeAgentStateMachinePlugin = null;
     }
   }
   if (activeStateMachinePlugin?.stop) {
