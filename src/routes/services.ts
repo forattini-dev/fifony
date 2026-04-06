@@ -655,17 +655,18 @@ export function registerServiceRoutes(
       }),
     );
 
-    // Stop network runtimes
-    if (state.config.meshEnabled) {
+    // Stop network runtimes without mutating the persisted config —
+    // pass overrides so applyNetworkRuntimeConfig stops them, but the
+    // user's enabled flags are preserved for next start.
+    const hadMesh = state.config.meshEnabled ?? false;
+    const hadProxy = state.config.reverseProxyEnabled ?? false;
+    if (hadMesh || hadProxy) {
       try {
-        state.config.meshEnabled = false;
-        await applyNetworkRuntimeConfig(buildNetworkRuntimeOptions());
-      } catch { /* already stopped */ }
-    }
-    if (state.config.reverseProxyEnabled) {
-      try {
-        state.config.reverseProxyEnabled = false;
-        await applyNetworkRuntimeConfig(buildNetworkRuntimeOptions());
+        await applyNetworkRuntimeConfig({
+          ...buildNetworkRuntimeOptions(),
+          meshEnabled: false,
+          reverseProxyEnabled: false,
+        });
       } catch { /* already stopped */ }
     }
 
