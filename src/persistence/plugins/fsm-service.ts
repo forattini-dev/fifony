@@ -210,12 +210,33 @@ function spawnProcess(
   return { pid: child.pid, command };
 }
 
-// ── Port cleanup helper ──────────────────────────────────────────────────────
+// ── Process cleanup helpers ──────────────────────────────────────────────────
+
+/**
+ * Kill the entire process tree rooted at `pid` — recursively kills children
+ * first (bottom-up), then the process itself. Catches orphaned grandchildren
+ * that escaped the process group (e.g. nodemon → node → vite).
+ */
+function killProcessTree(pid: number): void {
+  try {
+    // Find all descendants via pgrep -P (recursive with --parent)
+    const children = execSync(`pgrep -P ${pid} 2>/dev/null || true`, { encoding: "utf8" }).trim();
+    if (children) {
+      for (const childStr of children.split("\n")) {
+        const childPid = parseInt(childStr.trim(), 10);
+        if (!isNaN(childPid) && childPid > 0) {
+          killProcessTree(childPid); // recurse
+        }
+      }
+    }
+    try { process.kill(pid, "SIGKILL"); } catch {}
+  } catch {
+    // non-critical
+  }
+}
 
 /**
  * Kill any process listening on the given port.
- * Catches orphaned child processes (e.g. Vite workers) that survived the
- * process-group kill because they called setsid() or escaped the group.
  */
 function killProcessesOnPort(port: number): void {
   try {
@@ -231,6 +252,35 @@ function killProcessesOnPort(port: number): void {
   } catch {
     // lsof may not be available — non-critical
   }
+}
+
+/**
+ * Full cleanup for a service: kill the process tree + clean the configured port.
+ * Also finds ALL ports the process was using and kills anything still bound.
+ */
+function cleanupServiceProcesses(pid: number | null, port: number | undefined): void {
+  if (pid && pid > 0) {
+    // Find all ports this process tree is using BEFORE killing
+    let allPorts: number[] = [];
+    try {
+      const lsofOut = execSync(`lsof -aPi tcp -sTCP:LISTEN -p ${pid} -Fn 2>/dev/null || true`, { encoding: "utf8" });
+      for (const line of lsofOut.split("\n")) {
+        if (line.startsWith("n")) {
+          const match = line.match(/:(\d+)$/);
+          if (match) allPorts.push(parseInt(match[1], 10));
+        }
+      }
+    } catch {}
+    // Kill the process tree
+    try { process.kill(-pid, "SIGKILL"); } catch {}
+    killProcessTree(pid);
+    // Kill anything still bound to ports this process was using
+    for (const p of allPorts) {
+      killProcessesOnPort(p);
+    }
+  }
+  // Always clean the configured port as fallback
+  if (port) killProcessesOnPort(port);
 }
 
 // ── Auto-restart helpers ──────────────────────────────────────────────────────
@@ -344,8 +394,8 @@ export function reconcileServiceStates(entries: ServiceEntry[], fifonyDir: strin
     if (!info) continue;
     if (info.state === "stopped") continue;
     if (!isProcessAlive(info.pid)) {
-      // Process is dead but port may still be held by orphaned children
-      if (entry.port) killProcessesOnPort(entry.port);
+      // Process is dead but children may still hold ports
+      cleanupServiceProcesses(info.pid, entry.port);
       const crashCount = (info.crashCount ?? 0) + 1;
       writePidInfo(fifonyDir, entry.id, {
         ...info,
@@ -424,12 +474,8 @@ export async function sendServiceEvent(
   if (event === "START") {
     // Kill existing process if any
     const existing = readPidInfo(fifonyDir, entityId);
-    if (existing && isProcessAlive(existing.pid)) {
-      try { process.kill(-existing.pid, "SIGKILL"); } catch {}
-      try { process.kill(existing.pid, "SIGKILL"); } catch {}
-    }
-    // Kill orphaned processes on the configured port (escaped children from previous runs)
-    if (entry?.port) killProcessesOnPort(entry.port);
+    // Kill existing process tree + any orphaned children holding ports
+    cleanupServiceProcesses(existing?.pid ?? null, entry?.port);
     if (!entry) throw new Error(`Service entry not found: ${entityId}`);
     const globalEnv = getGlobalEnv() ?? {};
     const serviceVaulterEnv = serviceRuntime.getServiceEnv?.(entityId) ?? {};
@@ -889,15 +935,13 @@ function tickOne(
     }
     case "stopping": {
       if (!alive) {
-        if (entry.port) killProcessesOnPort(entry.port);
+        cleanupServiceProcesses(info.pid, entry.port);
         removePidInfo(fifonyDir, entry.id);
         return { id: entry.id, from: "stopping", to: "stopped", reason: "process exited", pid: null };
       }
       const stoppingAgeMs = info.stoppingAt ? nowMs - Date.parse(info.stoppingAt) : STOPPING_KILL_MS + 1;
       if (stoppingAgeMs >= STOPPING_KILL_MS) {
-        try { process.kill(-info.pid, "SIGKILL"); } catch {}
-        try { process.kill(info.pid, "SIGKILL"); } catch {}
-        if (entry.port) killProcessesOnPort(entry.port);
+        cleanupServiceProcesses(info.pid, entry.port);
         removePidInfo(fifonyDir, entry.id);
         return { id: entry.id, from: "stopping", to: "stopped", reason: "SIGKILL after timeout", pid: info.pid };
       }
