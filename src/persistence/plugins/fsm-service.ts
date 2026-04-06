@@ -4,6 +4,7 @@ import {
   openSync,
   readFileSync,
   readSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -64,6 +65,34 @@ function pidPath(fifonyDir: string, id: string): string {
 
 export function serviceLogPath(fifonyDir: string, id: string): string {
   return join(fifonyDir, `service-${id}.log`);
+}
+
+export function serviceLogGenerationPath(fifonyDir: string, id: string, generation: number): string {
+  const base = serviceLogPath(fifonyDir, id);
+  return generation === 0 ? base : `${base}.${generation}`;
+}
+
+/**
+ * Rotate service logs: keep last 3 executions.
+ * .log → .log.1, .log.1 → .log.2, .log.2 deleted.
+ * Skips rotation if the current log is empty.
+ */
+function rotateServiceLogs(fifonyDir: string, id: string): void {
+  const base = serviceLogPath(fifonyDir, id);
+  // Skip rotation if current log doesn't exist or is empty
+  try {
+    if (!existsSync(base) || statSync(base).size === 0) return;
+  } catch { return; }
+  // Delete oldest
+  try { if (existsSync(`${base}.2`)) rmSync(`${base}.2`); } catch {}
+  // .1 → .2
+  try { if (existsSync(`${base}.1`)) renameSync(`${base}.1`, `${base}.2`); } catch {}
+  // current → .1
+  try { renameSync(base, `${base}.1`); } catch {}
+  // Clear error count cache for all generations
+  errorCountCache.delete(base);
+  errorCountCache.delete(`${base}.1`);
+  errorCountCache.delete(`${base}.2`);
 }
 
 const ERROR_PATTERN = /\b(ERROR|Exception|FATAL|FAIL)\b/gi;
@@ -161,7 +190,8 @@ function spawnProcess(
     }
     : {};
   const command = buildServiceCommand(entry.command, mergedGlobalEnv, entry.env, enforcedEnv);
-  // Truncate log on each start so the viewer shows a clean session
+  // Rotate previous log into history, then truncate for the new session
+  rotateServiceLogs(fifonyDir, entry.id);
   try { writeFileSync(log, ""); } catch {}
   // Use fd inheritance — OS redirects child stdout/stderr to file.
   // This works after child.unref() because the OS, not Node.js, handles the I/O.
@@ -178,6 +208,29 @@ function spawnProcess(
     throw new Error(`Failed to spawn service process: ${command}`);
   }
   return { pid: child.pid, command };
+}
+
+// ── Port cleanup helper ──────────────────────────────────────────────────────
+
+/**
+ * Kill any process listening on the given port.
+ * Catches orphaned child processes (e.g. Vite workers) that survived the
+ * process-group kill because they called setsid() or escaped the group.
+ */
+function killProcessesOnPort(port: number): void {
+  try {
+    const pids = execSync(`lsof -ti tcp:${port} 2>/dev/null || true`, { encoding: "utf8" }).trim();
+    if (!pids) return;
+    for (const pidStr of pids.split("\n")) {
+      const pid = parseInt(pidStr.trim(), 10);
+      if (!isNaN(pid) && pid > 0) {
+        try { process.kill(pid, "SIGKILL"); } catch {}
+      }
+    }
+    logger.debug({ port, pids }, "[ServiceFSM] Killed orphaned processes on port");
+  } catch {
+    // lsof may not be available — non-critical
+  }
 }
 
 // ── Auto-restart helpers ──────────────────────────────────────────────────────
@@ -246,13 +299,12 @@ export function getAllServiceStatuses(
 
 // ── Log reader ────────────────────────────────────────────────────────────────
 
-export function readServiceLogTail(id: string, fifonyDir: string, bytes = 8192): string {
-  const log = serviceLogPath(fifonyDir, id);
-  if (!existsSync(log)) return "";
+function readLogFileTail(filePath: string, bytes: number): string {
+  if (!existsSync(filePath)) return "";
   try {
-    const size = statSync(log).size;
+    const size = statSync(filePath).size;
     const readSize = Math.min(size, bytes);
-    const fd = openSync(log, "r");
+    const fd = openSync(filePath, "r");
     const buf = Buffer.alloc(readSize);
     readSync(fd, buf, 0, readSize, Math.max(0, size - readSize));
     closeSync(fd);
@@ -260,6 +312,24 @@ export function readServiceLogTail(id: string, fifonyDir: string, bytes = 8192):
   } catch {
     return "";
   }
+}
+
+export function readServiceLogTail(id: string, fifonyDir: string, bytes = 8192): string {
+  return readLogFileTail(serviceLogPath(fifonyDir, id), bytes);
+}
+
+export function readServiceLogGenerationTail(id: string, fifonyDir: string, generation: number, bytes = 16_384): string {
+  return readLogFileTail(serviceLogGenerationPath(fifonyDir, id, generation), bytes);
+}
+
+/** Returns which log generations (0=current, 1=previous, 2=oldest) exist for a service. */
+export function listServiceLogGenerations(fifonyDir: string, id: string): number[] {
+  const base = serviceLogPath(fifonyDir, id);
+  const generations: number[] = [];
+  if (existsSync(base)) generations.push(0);
+  if (existsSync(`${base}.1`)) generations.push(1);
+  if (existsSync(`${base}.2`)) generations.push(2);
+  return generations;
 }
 
 // ── Boot helpers ──────────────────────────────────────────────────────────────
@@ -356,6 +426,8 @@ export async function sendServiceEvent(
       try { process.kill(-existing.pid, "SIGKILL"); } catch {}
       try { process.kill(existing.pid, "SIGKILL"); } catch {}
     }
+    // Kill orphaned processes on the configured port (escaped children from previous runs)
+    if (entry?.port) killProcessesOnPort(entry.port);
     if (!entry) throw new Error(`Service entry not found: ${entityId}`);
     const globalEnv = getGlobalEnv() ?? {};
     const serviceVaulterEnv = serviceRuntime.getServiceEnv?.(entityId) ?? {};
@@ -822,6 +894,7 @@ function tickOne(
       if (stoppingAgeMs >= STOPPING_KILL_MS) {
         try { process.kill(-info.pid, "SIGKILL"); } catch {}
         try { process.kill(info.pid, "SIGKILL"); } catch {}
+        if (entry.port) killProcessesOnPort(entry.port);
         removePidInfo(fifonyDir, entry.id);
         return { id: entry.id, from: "stopping", to: "stopped", reason: "SIGKILL after timeout", pid: info.pid };
       }

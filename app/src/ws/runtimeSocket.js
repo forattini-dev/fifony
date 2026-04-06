@@ -23,7 +23,7 @@ const WS_STATUS = {
   ERROR: "error",
 };
 
-const STATUS_ANY = "__all__";
+const STATUS_ANY = "*";
 const MAX_BACKOFF_MS = 30_000;
 const BASE_BACKOFF_MS = 2_000;
 const PING_INTERVAL_MS = 25_000;

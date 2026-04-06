@@ -8,6 +8,9 @@ import {
   startManagedService,
   stopManagedService,
   readServiceLogTail,
+  readServiceLogGenerationTail,
+  listServiceLogGenerations,
+  serviceLogGenerationPath,
   getManagedServiceLogPath,
 } from "../domains/services.ts";
 import { assignServicePort, collectReservedPorts } from "../domains/service-port.ts";
@@ -499,6 +502,33 @@ export function registerServiceRoutes(
     }
     // Full tail: last 16KB
     const logTail = entry ? readServiceLogTail(id, STATE_ROOT, 16_384) : readServiceLogTail("reverse-proxy", STATE_ROOT, 16_384);
+    const truncated = logSize > 16_384;
+    return c.json({ ok: true, logTail, logSize, truncated });
+  });
+
+  // GET /api/services/:id/log/generations — list available log generations (0=current, 1=previous, 2=oldest)
+  app.get("/api/services/:id/log/generations", (c) => {
+    const id = c.req.param("id");
+    const entry = findManagedService(id);
+    if (!entry && !isRuntimeService(id)) return c.json({ ok: false, error: "Service not found." }, 404);
+    const generations = listServiceLogGenerations(STATE_ROOT, id);
+    return c.json({ ok: true, generations });
+  });
+
+  // GET /api/services/:id/log/history/:generation — read a previous log generation (1 or 2)
+  app.get("/api/services/:id/log/history/:generation", (c) => {
+    const id = c.req.param("id");
+    const gen = parseInt(c.req.param("generation"), 10);
+    if (isNaN(gen) || gen < 1 || gen > 2) return c.json({ ok: false, error: "Invalid generation (1 or 2)." }, 400);
+    const entry = findManagedService(id);
+    if (!entry && !isRuntimeService(id)) return c.json({ ok: false, error: "Service not found." }, 404);
+    const logFile = serviceLogGenerationPath(STATE_ROOT, id, gen);
+    let logSize = 0;
+    if (existsSync(logFile)) {
+      try { logSize = statSync(logFile).size; } catch {}
+    }
+    if (logSize === 0) return c.json({ ok: true, logTail: "", logSize: 0, truncated: false });
+    const logTail = readServiceLogGenerationTail(id, STATE_ROOT, gen, 16_384);
     const truncated = logSize > 16_384;
     return c.json({ ok: true, logTail, logSize, truncated });
   });

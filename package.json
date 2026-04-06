@@ -63,6 +63,7 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^4.0.0",
+    "@logdna/tail-file": "^4.0.2",
     "@viz-js/viz": "^3.25.0",
     "@xyflow/react": "^12.10.2",
     "cli-args-parser": "^1.0.6",

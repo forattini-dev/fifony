@@ -14,7 +14,7 @@ function applyRuntimeStateTransitionFromMessage(qc, payload) {
   qc.setQueriesData({ queryKey: ["runtime-state"] }, (cur) => {
     if (!cur || !Array.isArray(cur.issues)) return cur;
     const issues = cur.issues.some((i) => i.id === payload.issue.id)
-      ? cur.issues.map((i) => i.id === payload.issue.id ? payload.issue : i)
+      ? cur.issues.map((i) => i.id === payload.issue.id ? { ...i, ...payload.issue } : i)
       : [...cur.issues, payload.issue];
     return { ...cur, issues };
   });

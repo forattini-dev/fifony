@@ -1,108 +1,109 @@
 /**
  * Service log broadcaster — pushes new log chunks to connected WebSocket clients.
  *
- * Primary: fs.watch (inotify on Linux) for zero-latency delivery.
- * Fallback: 500ms polling to catch events fs.watch misses silently on some
- * filesystems / kernel versions / Docker bind mounts.
+ * Uses @logdna/tail-file for robust file tailing:
+ * - Tracks inode for proper rotation handling (rename + recreate)
+ * - Handles truncation (copytruncate) automatically
+ * - Poll-based with configurable interval — no fragile fs.watch
+ * - Readable stream API — data events fire only when bytes are appended
  */
 
-import {
-  closeSync,
-  existsSync,
-  openSync,
-  readSync,
-  statSync,
-  watch,
-  type FSWatcher,
-} from "node:fs";
+import { existsSync, statSync } from "node:fs";
+import TailFile from "@logdna/tail-file";
 import { sendToServiceLogRoom, serviceLogRoomSize } from "../../routes/websocket.ts";
 import { serviceLogPath } from "./fsm-service.ts";
 import { logger } from "../../concerns/logger.ts";
 
 const MAX_CHUNK_BYTES = 16_384;
-const POLL_INTERVAL_MS = 500;
 
-type Entry = { stop: () => void; position: number };
+type Entry = {
+  tail: TailFile;
+  buffer: string;
+  position: number;
+};
 
 const active = new Map<string, Entry>();
 
-function readNewBytes(
-  logPath: string,
-  position: number,
-): { chunk: string; newPosition: number } | null {
-  try {
-    const size = statSync(logPath).size;
-    if (size <= position) return null;
-    const toRead = Math.min(size - position, MAX_CHUNK_BYTES);
-    const buf = Buffer.alloc(toRead);
-    const fd = openSync(logPath, "r");
-    const n = readSync(fd, buf, 0, toRead, position);
-    closeSync(fd);
-    if (n <= 0) return null;
-    return { chunk: buf.slice(0, n).toString("utf8"), newPosition: position + n };
-  } catch {
-    return null;
-  }
-}
-
-export function startServiceLogBroadcasting(id: string, fifonyDir: string): void {
+export async function startServiceLogBroadcasting(id: string, fifonyDir: string): Promise<void> {
   if (active.has(id)) return;
 
   const logPath = serviceLogPath(fifonyDir, id);
   if (!existsSync(logPath)) return;
 
-  let initialPosition = 0;
+  // Start tailing from current EOF — the HTTP initial fetch handles history
+  const tail = new TailFile(logPath, {
+    startPos: null,             // null = start from EOF
+    pollFileIntervalMs: 250,    // 250ms poll — fast enough for real-time feel
+    maxPollFailures: 30,        // tolerate temporary file absence (rotation)
+    encoding: "utf8",
+  });
+
+  const entry: Entry = { tail, buffer: "", position: 0 };
   try {
-    initialPosition = statSync(logPath).size;
-  } catch {
-    initialPosition = 0;
-  }
+    entry.position = statSync(logPath).size;
+  } catch {}
 
-  const entry: Entry = { stop: () => {}, position: initialPosition };
+  // Buffer incoming chunks and flush to WS subscribers
+  tail.on("data", (chunk: Buffer | string) => {
+    const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+    if (!text) return;
 
-  const flush = () => {
-    try {
-      // Reset position on truncation (new service session)
-      const size = statSync(logPath).size;
-      if (size < entry.position) entry.position = 0;
-    } catch { return; }
-    const result = readNewBytes(logPath, entry.position);
-    if (!result) return;
-    entry.position = result.newPosition;
-    sendToServiceLogRoom(id, JSON.stringify({ type: "service:log", id, chunk: result.chunk }));
-  };
+    entry.position += Buffer.byteLength(text, "utf8");
 
-  // Primary: fs.watch for zero-latency delivery (inotify on Linux)
-  let watcher: FSWatcher | null = null;
-  try {
-    watcher = watch(logPath, { persistent: false }, flush);
-    watcher.on("error", () => { watcher = null; });
-  } catch {
-    // fs.watch unavailable — polling will cover it
-  }
+    // If nobody is listening, buffer up to MAX_CHUNK_BYTES so we can
+    // deliver a catch-up burst when a subscriber joins
+    if (serviceLogRoomSize(id) === 0) {
+      entry.buffer += text;
+      if (entry.buffer.length > MAX_CHUNK_BYTES) {
+        entry.buffer = entry.buffer.slice(-MAX_CHUNK_BYTES);
+      }
+      return;
+    }
 
-  // Fallback: 500ms poll to catch events fs.watch misses silently
-  const pollTimer = setInterval(flush, POLL_INTERVAL_MS);
+    // Flush any buffered content first
+    let payload = entry.buffer + text;
+    entry.buffer = "";
 
-  entry.stop = () => {
-    if (watcher) try { watcher.close(); } catch {}
-    clearInterval(pollTimer);
-  };
+    // Cap outbound chunk size
+    if (payload.length > MAX_CHUNK_BYTES) {
+      payload = payload.slice(-MAX_CHUNK_BYTES);
+    }
+
+    sendToServiceLogRoom(id, JSON.stringify({ type: "service:log", id, chunk: payload }));
+  });
+
+  tail.on("truncated", (info) => {
+    logger.debug({ id, info }, "[ServiceLogBroadcaster] File truncated (rotation/restart)");
+    entry.position = 0;
+    entry.buffer = "";
+  });
+
+  tail.on("renamed", (info) => {
+    logger.debug({ id, info }, "[ServiceLogBroadcaster] File renamed (log rotation)");
+  });
+
+  tail.on("tail_error", (err) => {
+    logger.warn({ id, err }, "[ServiceLogBroadcaster] Tail error");
+  });
 
   active.set(id, entry);
-  logger.debug({ id }, "[ServiceLogBroadcaster] Started");
 
-  // Flush immediately to catch bytes written before watcher was registered
-  flush();
+  try {
+    await tail.start();
+    logger.debug({ id, logPath }, "[ServiceLogBroadcaster] Started tailing");
+  } catch (err) {
+    logger.warn({ id, err }, "[ServiceLogBroadcaster] Failed to start tail");
+    active.delete(id);
+  }
 }
 
-export function stopServiceLogBroadcasting(id: string): void {
+export async function stopServiceLogBroadcasting(id: string): Promise<void> {
   const entry = active.get(id);
   if (!entry) return;
-  entry.stop();
+  try { await entry.tail.quit(); } catch {}
   active.delete(id);
 }
 
-export function stopAllServiceLogBroadcasting(): void {
-  for (const id of [...active.keys()]) stopServiceLogBroadcasting(id);
+export async function stopAllServiceLogBroadcasting(): Promise<void> {
+  for (const id of [...active.keys()]) await stopServiceLogBroadcasting(id);
 }

@@ -3,14 +3,17 @@ import type { ServiceEnvironment } from "./service-env.ts";
 import {
   getAllServiceStatuses,
   getServiceStatus,
+  listServiceLogGenerations,
+  readServiceLogGenerationTail,
   readServiceLogTail,
   reconcileServiceStates,
   sendServiceEvent,
+  serviceLogGenerationPath,
   serviceLogPath,
   type ServiceTransition,
 } from "../persistence/plugins/fsm-service.ts";
 
-export { getAllServiceStatuses, getServiceStatus, readServiceLogTail, serviceLogPath };
+export { getAllServiceStatuses, getServiceStatus, listServiceLogGenerations, readServiceLogGenerationTail, readServiceLogTail, serviceLogGenerationPath, serviceLogPath };
 export type { ServiceTransition };
 
 /**

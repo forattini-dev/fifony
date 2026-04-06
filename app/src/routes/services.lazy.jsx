@@ -133,11 +133,13 @@ const REFRESH_PRESETS = [
   { label: "1m",   value: 60_000 },
 ];
 
+const AUTO_FALLBACK_POLL_MS = 1_000;
+
 function LogViewer({ id, running, state }) {
   const { liveMode } = useDashboard();
   const [log, setLog] = useState("");
   const [logSize, setLogSize] = useState(0);
-  const [status, setStatus] = useState("idle"); // idle | loading | live | stale | error
+  const [status, setStatus] = useState("idle"); // idle | loading | live | error
   const [error, setError] = useState(null);
   const [pollInterval, setPollInterval] = useState(0); // 0 = auto (WS + fallback), >0 = forced poll
   const [showPollControls, setShowPollControls] = useState(false);
@@ -147,9 +149,7 @@ function LogViewer({ id, running, state }) {
   const html = useMemo(() => (log ? ansiToHtml(log) : ""), [log]);
   const hasLog = Boolean(log && log.trim());
   const lastSizeRef = useRef(0);
-  const lastChunkAtRef = useRef(0); // timestamp of last WS chunk
-  const wsChunkCountRef = useRef(0);
-  const [lastChunkAgo, setLastChunkAgo] = useState(null); // seconds since last chunk
+  const previousLiveModeRef = useRef(liveMode);
 
   // Initial full fetch
   const fetchFull = useCallback(async () => {
@@ -193,9 +193,6 @@ function LogViewer({ id, running, state }) {
     lastSizeRef.current = 0;
     setLogSize(0);
     setStatus("idle");
-    wsChunkCountRef.current = 0;
-    lastChunkAtRef.current = 0;
-    setLastChunkAgo(null);
     if (!id) return;
 
     fetchFull();
@@ -204,8 +201,6 @@ function LogViewer({ id, running, state }) {
     const unsub = onServiceLog(id, (chunk) => {
       setLog((prev) => prev + chunk);
       lastSizeRef.current += new TextEncoder().encode(chunk).length;
-      lastChunkAtRef.current = Date.now();
-      wsChunkCountRef.current++;
       setStatus("live");
     });
 
@@ -215,22 +210,23 @@ function LogViewer({ id, running, state }) {
     };
   }, [id, fetchFull]);
 
-  // Safety-net poll: always runs when service is running, regardless of WS state.
-  // WS push is the primary path (zero-latency). HTTP poll is the fallback:
-  // skipped if WS delivered a chunk in the last 5s to avoid redundant requests.
+  // Auto fallback: only poll when the runtime websocket is disconnected.
+  // While WS is healthy, logs should be near-real-time via pushed chunks only.
   useEffect(() => {
-    if (!running || !id || pollInterval > 0) return;
-    const checker = setInterval(() => {
-      const elapsed = lastChunkAtRef.current ? (Date.now() - lastChunkAtRef.current) / 1000 : null;
-      setLastChunkAgo(elapsed);
-      const wsRecentlyAlive = wsChunkCountRef.current > 0 && lastChunkAtRef.current && Date.now() - lastChunkAtRef.current < 5_000;
-      if (!wsRecentlyAlive) fetchIncremental();
-      if (lastChunkAtRef.current && Date.now() - lastChunkAtRef.current > 15_000) {
-        setStatus("stale");
-      }
-    }, 5_000);
-    return () => clearInterval(checker);
-  }, [running, id, pollInterval, fetchIncremental]);
+    if (!running || !id || pollInterval > 0 || liveMode) return;
+    setStatus((prev) => (prev === "error" || prev === "loading" ? prev : "live"));
+    const timer = setInterval(fetchIncremental, AUTO_FALLBACK_POLL_MS);
+    return () => clearInterval(timer);
+  }, [running, id, pollInterval, liveMode, fetchIncremental]);
+
+  // When WS comes back, catch up on any bytes emitted during the disconnect gap.
+  useEffect(() => {
+    const wasLive = previousLiveModeRef.current;
+    previousLiveModeRef.current = liveMode;
+    if (!id || wasLive || !liveMode) return;
+    fetchIncremental();
+    if (running) setStatus("live");
+  }, [liveMode, id, running, fetchIncremental]);
 
   // Explicit polling when user selects an interval
   useEffect(() => {
@@ -252,9 +248,11 @@ function LogViewer({ id, running, state }) {
     setAutoScroll(scrollTop + clientHeight >= scrollHeight - 40);
   }, []);
 
-  const agoText = lastChunkAgo != null && lastChunkAgo > 5
-    ? `${Math.round(lastChunkAgo)}s ago`
-    : null;
+  const transportLabel = pollInterval > 0
+    ? `poll ${pollInterval / 1000}s`
+    : liveMode
+      ? "ws"
+      : `fallback ${AUTO_FALLBACK_POLL_MS / 1000}s`;
 
   const statusBadge = status === "loading"
     ? <span className="flex items-center gap-1.5 text-xs opacity-40"><Loader2 className="size-2.5 animate-spin" />loading</span>
@@ -262,10 +260,8 @@ function LogViewer({ id, running, state }) {
       ? <span className="text-xs text-error/70">error</span>
     : hasLog && state === "crashed"
       ? <span className="flex items-center gap-1.5 text-xs text-error/70"><Circle className="size-2 fill-current" />crash log</span>
-    : status === "stale"
-      ? <span className="flex items-center gap-1.5 text-xs text-warning/70"><Circle className="size-2 fill-warning animate-pulse" />stale{agoText ? ` · ${agoText}` : ""}</span>
     : status === "live"
-      ? <span className="flex items-center gap-1.5 text-xs text-success"><Circle className="size-2 fill-success" />{pollInterval > 0 ? `poll ${pollInterval / 1000}s` : "ws"}{agoText ? ` · ${agoText}` : ""}</span>
+      ? <span className="flex items-center gap-1.5 text-xs text-success"><Circle className="size-2 fill-success" />{transportLabel}</span>
     : hasLog
       ? <span className="text-xs opacity-45">saved log</span>
     : <span className="text-xs opacity-25">no output</span>;
@@ -349,6 +345,75 @@ function LogViewer({ id, running, state }) {
   );
 }
 
+// ── History log viewer (read-only, no WS) ─────────────────────────────────────
+
+function HistoryLogViewer({ id, generation }) {
+  const [log, setLog] = useState("");
+  const [logSize, setLogSize] = useState(0);
+  const [truncated, setTruncated] = useState(false);
+  const [status, setStatus] = useState("idle");
+  const [copied, setCopied] = useState(false);
+  const logRef = useRef(null);
+  const html = useMemo(() => (log ? ansiToHtml(log) : ""), [log]);
+
+  useEffect(() => {
+    setLog("");
+    setLogSize(0);
+    setStatus("loading");
+    api.get(`/services/${encodeURIComponent(id)}/log/history/${generation}`)
+      .then((res) => {
+        setLog(res.logTail ?? "");
+        setLogSize(res.logSize ?? 0);
+        setTruncated(res.truncated ?? false);
+        setStatus(res.logTail ? "loaded" : "empty");
+      })
+      .catch(() => setStatus("error"));
+  }, [id, generation]);
+
+  const label = generation === 1 ? "Previous session" : "Oldest session";
+  const sizeStr = logSize > 0 ? `${(logSize / 1024).toFixed(1)}KB` : null;
+
+  return (
+    <div className="flex flex-col flex-1 min-h-0">
+      <div className="flex items-center justify-between px-4 py-2 bg-base-200/40 border-t border-b border-base-200 shrink-0">
+        <div className="flex items-center gap-2">
+          <Terminal className="size-3.5 opacity-30" />
+          <span className="text-[10px] font-medium opacity-40 uppercase tracking-widest">{label}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          {status === "loading" && <span className="flex items-center gap-1.5 text-xs opacity-40"><Loader2 className="size-2.5 animate-spin" />loading</span>}
+          {status === "loaded" && sizeStr && <span className="text-xs opacity-40">{sizeStr}{truncated ? " (truncated)" : ""}</span>}
+          {status === "error" && <span className="text-xs text-error/70">error</span>}
+          {status === "empty" && <span className="text-xs opacity-25">empty</span>}
+          {log && (
+            <button
+              className="btn btn-xs btn-ghost opacity-40 hover:opacity-80 px-1.5"
+              title="Copy log"
+              onClick={() => {
+                navigator.clipboard.writeText(log).then(() => {
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 1500);
+                });
+              }}
+            >
+              {copied ? <Check className="size-3 text-success" /> : <Copy className="size-3" />}
+            </button>
+          )}
+        </div>
+      </div>
+      <pre
+        ref={logRef}
+        className="flex-1 overflow-y-auto p-4 text-xs font-mono whitespace-pre-wrap break-all leading-relaxed bg-base-100 min-h-0"
+        dangerouslySetInnerHTML={{
+          __html: html || (status === "error"
+            ? '<span style="opacity:0.3">Failed to load log.</span>'
+            : '<span style="opacity:0.2">No output in this session.</span>'),
+        }}
+      />
+    </div>
+  );
+}
+
 // ── DrawerSparkline ────────────────────────────────────────────────────────────
 
 function DrawerSparkline({ id, running }) {
@@ -390,7 +455,21 @@ function ServiceDrawerBody({ service, onClose, onRefresh, graph, proxyRoutes, lo
   const [fixing, setFixing] = useState(false);
   const [fixDrawer, setFixDrawer] = useState({ open: false, defaultValues: null });
   const [fixDiagnosis, setFixDiagnosis] = useState(null); // null | { healthy: true } | { healthy: false, title, description, issueType } | { error: string }
+  const [logGenerations, setLogGenerations] = useState([0]);
+  const [activeLogTab, setActiveLogTab] = useState(0);
   const { createIssue, showToast } = useDashboard();
+
+  // Fetch available log generations
+  const refreshGenerations = useCallback(() => {
+    api.get(`/services/${encodeURIComponent(service.id)}/log/generations`)
+      .then((res) => setLogGenerations(res.generations?.length ? res.generations : [0]))
+      .catch(() => setLogGenerations([0]));
+  }, [service.id]);
+
+  useEffect(() => {
+    refreshGenerations();
+    setActiveLogTab(0);
+  }, [service.id, refreshGenerations]);
 
   const state = service.state ?? (service.running ? "running" : "stopped");
   const info = stateInfo(state);
@@ -411,9 +490,9 @@ function ServiceDrawerBody({ service, onClose, onRefresh, graph, proxyRoutes, lo
 
   const handleStart = useCallback(async () => {
     setBusy(true);
-    try { await api.post(`/services/${service.id}/start`, {}); await onRefresh(); }
+    try { await api.post(`/services/${service.id}/start`, {}); await onRefresh(); setActiveLogTab(0); setTimeout(refreshGenerations, 500); }
     finally { setBusy(false); }
-  }, [service.id, onRefresh]);
+  }, [service.id, onRefresh, refreshGenerations]);
 
   const handleStop = useCallback(async () => {
     setBusy(true);
@@ -423,9 +502,9 @@ function ServiceDrawerBody({ service, onClose, onRefresh, graph, proxyRoutes, lo
 
   const handleRestart = useCallback(async () => {
     setBusy(true);
-    try { await api.post(`/services/${service.id}/restart`, {}); await onRefresh(); }
+    try { await api.post(`/services/${service.id}/restart`, {}); await onRefresh(); setActiveLogTab(0); setTimeout(refreshGenerations, 500); }
     finally { setBusy(false); }
-  }, [service.id, onRefresh]);
+  }, [service.id, onRefresh, refreshGenerations]);
 
   const handleDetect = useCallback(async () => {
     setDetecting(true);
@@ -665,8 +744,33 @@ function ServiceDrawerBody({ service, onClose, onRefresh, graph, proxyRoutes, lo
       {/* Log volume sparkline — running services only */}
       {service.running && <DrawerSparkline id={service.id} running={service.running} />}
 
-      {/* Log viewer */}
-      <LogViewer id={service.id} running={service.running} state={state} />
+      {/* Log generation tabs — only visible when history exists */}
+      {logGenerations.length > 1 && (
+        <div className="flex items-center gap-0 px-3 border-t border-base-200/60 shrink-0 bg-base-200/20">
+          {logGenerations.map((gen) => {
+            const label = gen === 0 ? "Current" : gen === 1 ? "Previous" : "Oldest";
+            const isActive = activeLogTab === gen;
+            return (
+              <button
+                key={gen}
+                onClick={() => setActiveLogTab(gen)}
+                className={`px-3 py-1.5 text-[11px] font-medium border-b-2 transition-colors ${
+                  isActive
+                    ? "border-primary text-primary"
+                    : "border-transparent opacity-50 hover:opacity-80"
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {activeLogTab === 0 ? (
+        <LogViewer id={service.id} running={service.running} state={state} />
+      ) : (
+        <HistoryLogViewer id={service.id} generation={activeLogTab} />
+      )}
 
       {/* Fix: Create issue drawer */}
       <CreateIssueDrawer
@@ -1607,32 +1711,263 @@ function buildFlowElements(graph, selectedEdge, selectedServiceId, proxyRoutes, 
   return { nodes, edges };
 }
 
+function escapeDot(value) {
+  return String(value ?? "")
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, "\\n");
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+const DEFAULT_MESH_THEME = {
+  base: "#ffffff",
+  surface: "#f8fafc",
+  surfaceAlt: "#eef2ff",
+  border: "#cbd5e1",
+  borderStrong: "#94a3b8",
+  text: "#0f172a",
+  textMuted: "#64748b",
+  primary: "#2563eb",
+  success: "#16a34a",
+  error: "#dc2626",
+  warning: "#d97706",
+};
+
+function hslTripletToHex(raw, fallback) {
+  const match = String(raw ?? "").trim().match(/^([0-9.]+)\s+([0-9.]+)%\s+([0-9.]+)%$/);
+  if (!match) return fallback;
+  const h = Number(match[1]) / 360;
+  const s = Number(match[2]) / 100;
+  const l = Number(match[3]) / 100;
+  if (![h, s, l].every((value) => Number.isFinite(value))) return fallback;
+
+  if (s === 0) {
+    const gray = Math.round(l * 255);
+    const hex = gray.toString(16).padStart(2, "0");
+    return `#${hex}${hex}${hex}`;
+  }
+
+  const hueToRgb = (p, q, t) => {
+    let value = t;
+    if (value < 0) value += 1;
+    if (value > 1) value -= 1;
+    if (value < 1 / 6) return p + (q - p) * 6 * value;
+    if (value < 1 / 2) return q;
+    if (value < 2 / 3) return p + (q - p) * (2 / 3 - value) * 6;
+    return p;
+  };
+
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  const r = Math.round(hueToRgb(p, q, h + 1 / 3) * 255);
+  const g = Math.round(hueToRgb(p, q, h) * 255);
+  const b = Math.round(hueToRgb(p, q, h - 1 / 3) * 255);
+  return `#${[r, g, b].map((value) => value.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function readMeshTheme() {
+  if (typeof window === "undefined") return DEFAULT_MESH_THEME;
+  const styles = getComputedStyle(document.documentElement);
+  const read = (name, fallback) => {
+    const raw = styles.getPropertyValue(name).trim();
+    return raw ? hslTripletToHex(raw, fallback) : fallback;
+  };
+
+  return {
+    base: read("--b1", DEFAULT_MESH_THEME.base),
+    surface: read("--b2", DEFAULT_MESH_THEME.surface),
+    surfaceAlt: read("--b3", DEFAULT_MESH_THEME.surfaceAlt),
+    border: read("--b3", DEFAULT_MESH_THEME.border),
+    borderStrong: read("--n", DEFAULT_MESH_THEME.borderStrong),
+    text: read("--bc", DEFAULT_MESH_THEME.text),
+    textMuted: read("--nc", DEFAULT_MESH_THEME.textMuted),
+    primary: read("--p", DEFAULT_MESH_THEME.primary),
+    success: read("--su", DEFAULT_MESH_THEME.success),
+    error: read("--er", DEFAULT_MESH_THEME.error),
+    warning: read("--wa", DEFAULT_MESH_THEME.warning),
+  };
+}
+
+function buildMeshDot(graph, selectedEdge, selectedServiceId, theme) {
+  if (!graph?.nodes?.length) {
+    return { dot: "", edgeLookup: new Map() };
+  }
+
+  const selectedEdgeId = selectedEdge ? meshEdgeIdentity(selectedEdge) : null;
+  const selectedNeighbors = new Set();
+  if (selectedServiceId != null) {
+    selectedNeighbors.add(selectedServiceId);
+    for (const edge of graph.edges ?? []) {
+      const src = typeof edge.source === "object" ? edge.source.id : edge.source;
+      const tgt = typeof edge.target === "object" ? edge.target.id : edge.target;
+      if (src === selectedServiceId && tgt) selectedNeighbors.add(tgt);
+      if (tgt === selectedServiceId && src) selectedNeighbors.add(src);
+    }
+  }
+
+  const maxEdgeRequests = Math.max(...(graph.edges ?? []).map((edge) => Number(edge.requestCount ?? 0)), 1);
+  const nodeIds = new Map();
+  graph.nodes.forEach((node, index) => {
+    nodeIds.set(node.id, `node_${index}`);
+  });
+
+  const edgeLookup = new Map();
+  const lines = [
+    "digraph ServiceMesh {",
+    '  graph [rankdir=LR, bgcolor="transparent", pad="0.3", nodesep="0.45", ranksep="0.85", overlap=false, splines=true, concentrate=true];',
+    `  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=11, margin="0.18,0.14", color="${theme.border}", fillcolor="${theme.base}", fontcolor="${theme.text}", penwidth=1.1];`,
+    `  edge [fontname="Helvetica", fontsize=9, color="${theme.borderStrong}", arrowsize=0.7, penwidth=1.6];`,
+  ];
+
+  for (const node of graph.nodes) {
+    const dotId = nodeIds.get(node.id);
+    const isExternal = node.external === true;
+    const inboundReq = Number(node.requestsIn ?? 0);
+    const inboundErr = Number(node.errorsIn ?? 0);
+    const errorRate = inboundReq > 0 ? Math.round((inboundErr / inboundReq) * 100) : 0;
+    const selected = selectedServiceId === node.id;
+    const deemphasized = selectedServiceId != null && !selectedNeighbors.has(node.id);
+    const baseColor = isExternal ? theme.borderStrong : node.state === "crashed" ? theme.error : node.state === "running" || node.state === "starting" ? theme.success : theme.borderStrong;
+    const borderColor = selected ? theme.primary : deemphasized ? theme.border : baseColor;
+    const fillColor = selected ? theme.surfaceAlt : deemphasized ? theme.surface : isExternal ? theme.surface : theme.base;
+    const fontColor = deemphasized ? theme.textMuted : theme.text;
+    const metricColor = deemphasized ? theme.textMuted : selected ? theme.primary : theme.textMuted;
+    const penwidth = selected ? 2.4 : 1.2;
+    const style = isExternal ? "rounded,dashed,filled" : "rounded,filled";
+    const metrics = [];
+    if (node.port) metrics.push(`:${node.port}`);
+    if (!isExternal && inboundReq > 0) metrics.push(`${inboundReq} req`);
+    if (!isExternal && errorRate > 0) metrics.push(`${errorRate}% err`);
+    const title = escapeHtml(node.name);
+    const subtitle = metrics.length > 0 ? escapeHtml(metrics.join(" · ")) : "";
+    const label = subtitle
+      ? `<
+        <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="0">
+          <TR><TD><FONT POINT-SIZE="12"><B>${title}</B></FONT></TD></TR>
+          <TR><TD><FONT POINT-SIZE="9" COLOR="${metricColor}">${subtitle}</FONT></TD></TR>
+        </TABLE>
+      >`
+      : `<
+        <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="0">
+          <TR><TD><FONT POINT-SIZE="12"><B>${title}</B></FONT></TD></TR>
+        </TABLE>
+      >`;
+
+    lines.push(
+      `  ${dotId} [label=${label}, color="${borderColor}", fillcolor="${fillColor}", fontcolor="${fontColor}", penwidth=${penwidth}, style="${style}", URL="mesh://node/${encodeURIComponent(node.id)}", tooltip="${escapeDot(node.name)}"];`,
+    );
+  }
+
+  for (const edge of graph.edges ?? []) {
+    const sourceId = typeof edge.source === "object" ? edge.source.id : edge.source;
+    const targetId = typeof edge.target === "object" ? edge.target.id : edge.target;
+    if (!nodeIds.has(sourceId) || !nodeIds.has(targetId)) continue;
+
+    const edgeId = meshEdgeIdentity(edge);
+    edgeLookup.set(edgeId, edge);
+
+    const requestCount = Number(edge.requestCount ?? 0);
+    const errorCount = Number(edge.errorCount ?? 0);
+    const latency = Number(edge.avgLatencyMs ?? 0);
+    const errRate = requestCount > 0 ? errorCount / requestCount : 0;
+    const selected = selectedEdgeId === edgeId;
+    const touchesSelectedService = selectedServiceId != null && (sourceId === selectedServiceId || targetId === selectedServiceId);
+    const deemphasized = selectedServiceId != null && !touchesSelectedService;
+    const baseWidth = 1.4 + (Math.log1p(requestCount) / Math.log1p(maxEdgeRequests)) * 4.2;
+    const color = selected
+      ? theme.primary
+      : deemphasized
+        ? theme.border
+        : errorCount > 0
+          ? errRate >= 0.15 ? theme.error : theme.warning
+          : theme.borderStrong;
+    const penwidth = selected ? (baseWidth + 1.4).toFixed(2) : baseWidth.toFixed(2);
+    const tooltip = `${sourceId} → ${targetId} | ${requestCount} req | ${formatProtocol(edge.dominantProtocol)}${latency > 0 ? ` | ${latency}ms` : ""}${errorCount > 0 ? ` | ${errorCount} err` : ""}`;
+
+    lines.push(
+      `  ${nodeIds.get(sourceId)} -> ${nodeIds.get(targetId)} [color="${color}", penwidth=${penwidth}, URL="mesh://edge/${encodeURIComponent(edgeId)}", tooltip="${escapeDot(tooltip)}"];`,
+    );
+  }
+
+  lines.push("}");
+  return { dot: lines.join("\n"), edgeLookup };
+}
+
 function MeshGraph({ graph, onSelectEdge, selectedEdge, selectedServiceId, proxyRoutes, localDomain, proxyPort, onSelectService }) {
-  const [nowTs, setNowTs] = useState(() => Date.now());
+  const [svg, setSvg] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [theme, setTheme] = useState(() => DEFAULT_MESH_THEME);
   useEffect(() => {
-    const timer = setInterval(() => setNowTs(Date.now()), 2_000);
-    return () => clearInterval(timer);
+    if (typeof window === "undefined") return undefined;
+    const applyTheme = () => setTheme(readMeshTheme());
+    applyTheme();
+    const observer = new MutationObserver(() => applyTheme());
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme", "class", "style"],
+    });
+    return () => observer.disconnect();
   }, []);
-  const { nodes: flowNodes, edges: flowEdges } = useMemo(
-    () => buildFlowElements(graph, selectedEdge, selectedServiceId, proxyRoutes, localDomain, proxyPort, nowTs),
-    [graph, selectedEdge, selectedServiceId, proxyRoutes, localDomain, proxyPort, nowTs],
+  const { dot, edgeLookup } = useMemo(
+    () => buildMeshDot(graph, selectedEdge, selectedServiceId, theme),
+    [graph, selectedEdge, selectedServiceId, theme],
   );
 
-  const [nodes, setNodes, onNodesChange] = useNodesState(flowNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(flowEdges);
+  useEffect(() => {
+    if (!dot) {
+      setSvg(null);
+      return;
+    }
 
-  // Sync when graph data changes
-  useEffect(() => { setNodes(flowNodes); }, [flowNodes, setNodes]);
-  useEffect(() => { setEdges(flowEdges); }, [flowEdges, setEdges]);
+    let alive = true;
+    setLoading(true);
+    setError(null);
 
-  const onEdgeClick = useCallback((_event, edge) => {
-    const graphEdge = graph?.edges?.find((e) => meshEdgeIdentity(e) === edge.id);
-    onSelectEdge?.(graphEdge ?? null);
-  }, [graph, onSelectEdge]);
+    (async () => {
+      try {
+        const { instance } = await import("@viz-js/viz");
+        const viz = await instance();
+        const rendered = viz.renderString(dot, { format: "svg", engine: "dot" });
+        if (alive) setSvg(rendered);
+      } catch (err) {
+        if (alive) setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
 
-  const onNodeClick = useCallback((_event, node) => {
-    if (node?.id) onSelectService?.(node.id);
-  }, [onSelectService]);
+    return () => {
+      alive = false;
+    };
+  }, [dot]);
+
+  const handleSvgClick = useCallback((event) => {
+    const anchor = event.target?.closest?.("a");
+    if (!anchor) return;
+
+    const href = anchor.getAttribute("xlink:href") || anchor.getAttribute("href") || "";
+    if (!href.startsWith("mesh://")) return;
+    event.preventDefault();
+
+    if (href.startsWith("mesh://node/")) {
+      const id = decodeURIComponent(href.slice("mesh://node/".length));
+      if (id) onSelectService?.(id);
+      return;
+    }
+
+    if (href.startsWith("mesh://edge/")) {
+      const id = decodeURIComponent(href.slice("mesh://edge/".length));
+      onSelectEdge?.(edgeLookup.get(id) ?? null);
+    }
+  }, [edgeLookup, onSelectEdge, onSelectService]);
 
   if (!graph || !graph.nodes.length) {
     return (
@@ -1644,29 +1979,25 @@ function MeshGraph({ graph, onSelectEdge, selectedEdge, selectedServiceId, proxy
   }
 
   return (
-    <ReactFlow
-      nodes={nodes}
-      edges={edges}
-      onNodesChange={onNodesChange}
-      onEdgesChange={onEdgesChange}
-      onNodeClick={onNodeClick}
-      onEdgeClick={onEdgeClick}
-      nodeTypes={meshNodeTypes}
-      edgeTypes={meshEdgeTypes}
-      fitView
-      fitViewOptions={{ padding: 0.55, maxZoom: 0.75 }}
-      proOptions={{ hideAttribution: true }}
-      className="[&_.react-flow__edge]:cursor-pointer [&_.react-flow__node]:cursor-pointer"
-    >
-      <Background gap={20} size={1} color="currentColor" className="opacity-[0.03]" />
-      <MiniMap
-        nodeColor={(n) => stateColor(n.data?.state)}
-        maskColor="rgba(0,0,0,0.7)"
-        className="!bg-base-200/80 !border-base-content/10 !rounded"
-        pannable
-        zoomable
-      />
-    </ReactFlow>
+    <div className="w-full h-full overflow-auto rounded-box bg-base-100/40 border border-base-content/[0.06]">
+      {loading && (
+        <div className="flex items-center justify-center h-full text-sm opacity-40">
+          Rendering graph...
+        </div>
+      )}
+      {error && (
+        <div className="flex items-center justify-center h-full text-sm text-error/70 px-6 text-center">
+          Failed to render service mesh: {error}
+        </div>
+      )}
+      {!loading && !error && svg && (
+        <div
+          className="min-w-max min-h-full p-4 [&_svg]:max-w-none [&_svg]:h-auto [&_svg]:cursor-default [&_a]:cursor-pointer"
+          onClick={handleSvgClick}
+          dangerouslySetInnerHTML={{ __html: svg }}
+        />
+      )}
+    </div>
   );
 }
 
@@ -1677,30 +2008,29 @@ function MeshLegend() {
         <div className="font-semibold opacity-45 uppercase tracking-wider">Graph Legend</div>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1">
-            <div className="h-[2px] w-5 rounded-full bg-success/80" />
-            <div className="h-[2px] w-8 rounded-full bg-success/80" />
+            <div className="h-[2px] w-5 rounded-full bg-base-content/35" />
+            <div className="h-[2px] w-8 rounded-full bg-base-content/35" />
           </div>
           <span className="opacity-45">width = volume</span>
         </div>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1">
             <div className="h-[2px] w-6 rounded-full bg-success/80" />
-            <div className="h-[2px] w-6 rounded-full bg-success/25" />
+            <div className="h-[2px] w-6 rounded-full bg-error/80" />
           </div>
-          <span className="opacity-45">fade = recency</span>
+          <span className="opacity-45">edge color = health</span>
         </div>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1">
-            <div className="h-[2px] w-4 rounded-full" style={{ backgroundColor: protocolColor("http") }} />
-            <div className="h-[2px] w-4 rounded-full" style={{ backgroundColor: protocolColor("https") }} />
-            <div className="h-[2px] w-4 rounded-full" style={{ backgroundColor: protocolColor("ws") }} />
+            <div className="size-4 rounded border-2 bg-base-100 border-success/80" />
+            <div className="size-4 rounded border-2 bg-base-100 border-error/80" />
+            <div className="size-4 rounded border-2 border-dashed bg-base-100 border-base-content/40" />
           </div>
-          <span className="opacity-45">color = protocol</span>
+          <span className="opacity-45">node border = state</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="size-4 rounded border-2 border-success/70 bg-base-200/80" />
-          <div className="size-4 rounded border-2 border-error/80 bg-base-200/80" />
-          <span className="opacity-45">node border = error</span>
+          <div className="px-2 py-0.5 rounded bg-info/20 border border-info/60 text-[9px] font-mono">click</div>
+          <span className="opacity-45">click node/edge to inspect</span>
         </div>
       </div>
     </div>

@@ -350,7 +350,7 @@ async function main() {
           running: t.to === "starting" || t.to === "running",
           pid: t.pid ?? null,
         });
-        if (t.to === "starting") startServiceLogBroadcasting(t.id, STATE_ROOT);
+        if (t.to === "starting") { stopServiceLogBroadcasting(t.id); startServiceLogBroadcasting(t.id, STATE_ROOT); }
         else if (t.to === "stopped" || t.to === "crashed") stopServiceLogBroadcasting(t.id);
       },
     });
@@ -433,7 +433,7 @@ async function main() {
         running: t.to === "starting" || t.to === "running",
         pid: t.pid ?? null,
       });
-      if (t.to === "starting") startServiceLogBroadcasting(t.id, STATE_ROOT);
+      if (t.to === "starting") { stopServiceLogBroadcasting(t.id); startServiceLogBroadcasting(t.id, STATE_ROOT); }
       else if (t.to === "stopped" || t.to === "crashed") stopServiceLogBroadcasting(t.id);
     },
   );

@@ -11,6 +11,9 @@ importers:
       '@huggingface/transformers':
         specifier: ^4.0.0
         version: 4.0.0
+      '@logdna/tail-file':
+        specifier: ^4.0.2
+        version: 4.0.2
       '@viz-js/viz':
         specifier: ^3.25.0
         version: 3.25.0
@@ -715,6 +718,10 @@ packages:
 
   '@js-sdsl/ordered-map@4.4.2':
     resolution: {integrity: sha512-iUKgm52T8HOE/makSxjqoWhe95ZJA1/G1sYsGev2JDKUSS14KAgg1LHb+Ba+IPow0xflbnSkOsZcO08C7w1gYw==}
+
+  '@logdna/tail-file@4.0.2':
+    resolution: {integrity: sha512-aEZF3LanJoewsQ9J1CRk5wvOqvQvw4lhxitSMXz3sQPgfezamzwW+pGvKXxvht7EvJEYSlYPxfSjL6T2bDSEkg==}
+    engines: {node: '>= 18'}
 
   '@maxmind/geoip2-node@6.3.4':
     resolution: {integrity: sha512-BTRFHCX7Uie4wVSPXsWQfg0EVl4eGZgLCts0BTKAP+Eiyt1zmF2UPyuUZkaj0R59XSDYO+84o1THAtaenUoQYg==}
@@ -4250,6 +4257,8 @@ snapshots:
       '@jridgewell/sourcemap-codec': 1.5.5
 
   '@js-sdsl/ordered-map@4.4.2': {}
+
+  '@logdna/tail-file@4.0.2': {}
 
   '@maxmind/geoip2-node@6.3.4':
     dependencies:
