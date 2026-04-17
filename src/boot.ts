@@ -446,6 +446,18 @@ async function main() {
 
   logger.info("[Boot] Runtime ready");
   hydrateTokenLedger(state.issues);
+
+  // Prime the global chat CLI session in the background so the user's first
+  // message resumes an already-situated assistant. Non-blocking; swallows
+  // its own errors.
+  if (!runOnce) {
+    try {
+      const { bootstrapGlobalChat } = await import("./agents/chat/bootstrap.ts");
+      bootstrapGlobalChat(state);
+    } catch (err) {
+      logger.warn({ err }, "[Boot] Failed to schedule global chat bootstrap");
+    }
+  }
   logger.info(`Loaded issues: ${state.issues.length}`);
   logger.info(`Worker concurrency: ${state.config.workerConcurrency}`);
   logger.info(`Max attempts: ${state.config.maxAttemptsDefault}`);
