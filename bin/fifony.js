@@ -2,7 +2,15 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
-import { cwd, env, exit, argv } from "node:process";
+import { cwd, env, exit, argv, stderr } from "node:process";
+
+// Immediate visual feedback before any heavy import. Module loading + tsx
+// transpilation can take several seconds on first run; without this the
+// terminal sits silent and the user thinks nothing is happening.
+const QUIET = argv.includes("--quiet") || argv.includes("--silent") || argv.includes("--help") || argv.includes("-h");
+if (!QUIET) {
+  stderr.write("fifony: starting…\n");
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

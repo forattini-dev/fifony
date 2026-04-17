@@ -175,6 +175,7 @@ export async function loadS3dbModule(): Promise<S3dbModule> {
 
 export async function initStateStore(): Promise<void> {
   debugBoot("initStateStore:start");
+  logger.info("[Boot] Loading s3db.js module…");
   const { S3db, SqliteClient, StateMachinePlugin, VectorPlugin } = await loadS3dbModule();
   debugBoot("initStateStore:module-loaded");
 
@@ -182,12 +183,15 @@ export async function initStateStore(): Promise<void> {
     client: new SqliteClient({ basePath: S3DB_DATABASE_PATH }),
   });
 
+  logger.info({ db: S3DB_DATABASE_PATH }, "[Boot] Connecting to SQLite database…");
   await stateDb.connect();
   debugBoot("initStateStore:connected");
 
+  logger.info({ count: NATIVE_RESOURCE_CONFIGS.length }, "[Boot] Registering resources…");
   for (const resourceConfig of NATIVE_RESOURCE_CONFIGS) {
     await stateDb.createResource(resourceConfig);
   }
+  logger.info("[Boot] Installing plugins…");
 
   if (VectorPlugin) {
     try {
