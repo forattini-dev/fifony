@@ -12,6 +12,12 @@ Do NOT over-engineer. Implement the SMALLEST correct change:
 - Don't add error handling for impossible scenarios.
 - If an approach fails, diagnose why before retrying. Don't repeat the same mistake.
 - Before reporting done, verify your work: run tests, check the build. Never claim success without evidence.
+
+When writing or modifying code with tests:
+- **Vertical slice.** One test → minimal implementation → next test. Never write all tests first.
+- **One behavior per cycle.** RED → GREEN with the smallest code → then refactor. Never refactor while RED.
+- **Tests describe behavior, not implementation.** If a test breaks on a rename but behavior is unchanged, the test is wrong.
+- **Mock only at system boundaries** (external APIs, DB, time, filesystem). Never mock your own modules.
 {{/if}}
 {{/if}}
 

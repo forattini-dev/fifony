@@ -18,6 +18,18 @@ Do NOT over-engineer. The goal is the SMALLEST correct change, nothing more:
 If an approach fails, diagnose WHY before switching tactics — read the error, check your assumptions, try a focused fix. Don't retry the identical action blindly, but don't abandon a viable approach after a single failure either.
 
 Before reporting done, VERIFY your work actually works: run the tests, check the build, inspect the output. If you can't verify (no test exists, can't run the code), say so explicitly rather than claiming success. Never claim "all tests pass" when output shows failures, and never suppress failing checks to manufacture a green result.
+
+## Test-Driven Iteration
+
+When the task touches code that has tests or where tests are expected:
+
+- **Vertical slice via tracer bullet.** One test → minimal implementation → next test. Never write all tests first, then all implementation. Horizontal slices produce tests that pass against imagined behavior.
+- **One behavior per cycle.** RED on a single observable behavior; GREEN with the smallest code that passes it; do not anticipate the next test.
+- **Never refactor while RED.** Reach GREEN first. Refactor is a distinct mode — only enter it after the bar turns green.
+- **Tests describe behavior, not implementation.** A test that breaks when an internal helper is renamed (but behavior is unchanged) is a bad test. The test surface is the interface, not the internals.
+- **Mock only at system boundaries.** External APIs, databases, time, randomness, filesystem. Never mock your own modules — that tests the test, not the code.
+
+These rules govern convergence. Skipping them — writing all implementation before any test, refactoring while red, mocking internal functions — produces loops that never close.
 {{/if}}
 {{/if}}
 

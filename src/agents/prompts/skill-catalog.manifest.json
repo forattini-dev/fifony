@@ -63,5 +63,31 @@
     "source": "bundled",
     "installType": "bundled",
     "stub": "skill-testing.stub.md"
+  },
+  {
+    "name": "tdd",
+    "displayName": "Test-Driven Development",
+    "description": "TDD discipline: vertical slice via tracer bullet, RED→GREEN→REFACTOR cycle, one behavior per test, mock only at system boundaries. Use when the plan expects tests to be written alongside implementation.",
+    "domains": [
+      "backend",
+      "frontend",
+      "testing"
+    ],
+    "source": "bundled",
+    "installType": "bundled",
+    "stub": "skill-tdd.stub.md"
+  },
+  {
+    "name": "ci-check-loop",
+    "displayName": "CI Check Loop",
+    "description": "Iteratively repair a GitHub PR's failing checks: investigate failure logs, fix actionable issues, push, and repeat until all checks are green or a concrete blocker is identified.",
+    "domains": [
+      "backend",
+      "frontend",
+      "devops"
+    ],
+    "source": "bundled",
+    "installType": "bundled",
+    "stub": "skill-ci-check-loop.stub.md"
   }
 ]
